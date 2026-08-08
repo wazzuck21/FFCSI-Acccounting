@@ -430,7 +430,7 @@ export function getRuleDeadlineForMonth(
   rule: CustomDeadlineRule, 
   m: string, 
   targetYear: number = 2026,
-  client?: ClientProfile
+  client?: Partial<ClientProfile>
 ): { dueDateStr: string; label: string; isNotRequired?: boolean } | null {
   const mIdx = MONTH_INDEX[m];
   if (mIdx === undefined) return null;

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { CustomDeadlineRule, MonthlyDeadlineSchedule } from '../types';
-import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS } from '../data/masterTables';
+import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS, getRuleDeadlineForMonth } from '../data/masterTables';
 import { 
   Settings, 
   Plus, 
@@ -74,8 +74,14 @@ export const MasterTablesView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [matrixFilterCategory, setMatrixFilterCategory] = useState<'ALL' | 'BIR' | 'Benefits'>('ALL');
 
-  // Matrix Table View Year Selector State
+  // Matrix Table View Year & Basis Selector State
   const [matrixYear, setMatrixYear] = useState<number>(2026);
+  const [matrixYearType, setMatrixYearType] = useState<'Calendar' | 'Fiscal'>('Calendar');
+  const [matrixFiscalMonth, setMatrixFiscalMonth] = useState<string>('June');
+  const [showMorePreviousYears, setShowMorePreviousYears] = useState<boolean>(false);
+
+  const defaultYears = [2023, 2024, 2025, 2026, 2027];
+  const matrixYearsList = showMorePreviousYears ? [2018, 2019, 2020, 2021, 2022, ...defaultYears] : defaultYears;
 
   // Form Linkages Modal State
   const [showFormLinkageModal, setShowFormLinkageModal] = useState(false);
@@ -175,91 +181,7 @@ export const MasterTablesView: React.FC = () => {
     return `${m}-${shortYear}`;
   };
 
-  // Helper: Get Deadline string for a rule in a given month and target year
-  const getRuleDeadlineForMonth = (rule: CustomDeadlineRule, m: string, targetYear: number = matrixYear): { dueDateStr: string; label: string; isNotRequired?: boolean } | null => {
-    if (rule.monthlySchedule2026 && rule.monthlySchedule2026.length > 0) {
-      const match = rule.monthlySchedule2026.find(s => s.month === m);
-      if (match) {
-        if (match.dueDate === 'NONE' || match.dueDate === 'N/A' || match.periodLabel === 'N/A' || match.periodLabel === 'Not Required' || !match.dueDate) {
-          return { dueDateStr: 'N/A', label: 'Not Required', isNotRequired: true };
-        }
 
-        const parts = match.dueDate.split('-');
-        let dayStr = String(rule.deadlineDay || 15).padStart(2, '0');
-        if (parts.length === 3) {
-          dayStr = String(parseInt(parts[2], 10) || 15).padStart(2, '0');
-        }
-
-        const mIdx = MONTH_INDEX[m];
-        const mStr = String(mIdx + 1).padStart(2, '0');
-        const adjustedDueDate = `${targetYear}-${mStr}-${dayStr}`;
-
-        let adjustedLabel = match.periodLabel || '';
-        if (!adjustedLabel || targetYear !== 2026) {
-          adjustedLabel = getDynamicPeriodLabel(rule.code, rule.frequency || 'Monthly', m, targetYear);
-        }
-
-        return { dueDateStr: adjustedDueDate, label: adjustedLabel, isNotRequired: false };
-      }
-      // If the rule explicitly defines a monthlySchedule2026 array and month m isn't listed, it means no deadline for month m
-      return null;
-    }
-
-    // Default fallback rules if no specific month entry exists
-    const mIdx = MONTH_INDEX[m];
-    if (mIdx === undefined) return null;
-
-    const mStr = String(mIdx + 1).padStart(2, '0');
-
-    if (rule.frequency === 'Monthly') {
-      const day = String(rule.deadlineDay || 10).padStart(2, '0');
-      return { 
-        dueDateStr: `${targetYear}-${mStr}-${day}`, 
-        label: `${m}-${String(targetYear).slice(-2)}`,
-        isNotRequired: false
-      };
-    }
-
-    if (rule.frequency === 'Custom') {
-      if (rule.applicableMonths && rule.applicableMonths.length > 0) {
-        if (!rule.applicableMonths.includes(m as any)) {
-          return { dueDateStr: 'N/A', label: 'Not Required', isNotRequired: true };
-        }
-      }
-      const day = String(rule.deadlineDay || 15).padStart(2, '0');
-      return { 
-        dueDateStr: `${targetYear}-${mStr}-${day}`, 
-        label: `${m}-${String(targetYear).slice(-2)}`,
-        isNotRequired: false
-      };
-    }
-
-    if (rule.frequency === 'Quarterly') {
-      if (['Jan', 'Apr', 'Jul', 'Oct'].includes(m) && ['1601EQ', '2550Q', '2551Q'].includes(rule.code)) {
-        const day = String(rule.deadlineDay || 25).padStart(2, '0');
-        const qLabel = m === 'Jan' ? `4Q-${targetYear - 1}` : m === 'Apr' ? `1Q-${targetYear}` : m === 'Jul' ? `2Q-${targetYear}` : `3Q-${targetYear}`;
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: qLabel, isNotRequired: false };
-      }
-      if (m === 'May' && rule.code === '1702Q') {
-        return { dueDateStr: `${targetYear}-05-15`, label: `1Q-${targetYear}`, isNotRequired: false };
-      }
-      if (m === 'May' && rule.code === '1701Q') {
-        return { dueDateStr: `${targetYear}-05-30`, label: `1Q-${targetYear}`, isNotRequired: false };
-      }
-      if (m === 'Aug' && ['1701Q', '1702Q'].includes(rule.code)) {
-        return { dueDateStr: `${targetYear}-08-15`, label: `2Q-${targetYear}`, isNotRequired: false };
-      }
-      if (m === 'Nov' && ['1701Q', '1702Q'].includes(rule.code)) {
-        return { dueDateStr: `${targetYear}-11-15`, label: `3Q-${targetYear}`, isNotRequired: false };
-      }
-    }
-
-    if (rule.frequency === 'Annually' && m === 'Apr' && rule.code === 'ITR') {
-      return { dueDateStr: `${targetYear}-04-15`, label: `TY-${targetYear - 1}`, isNotRequired: false };
-    }
-
-    return null;
-  };
 
   // Reset to PDF 2026 Schedule Defaults
   const handleLoadPdf2026Defaults = () => {
@@ -620,27 +542,64 @@ export const MasterTablesView: React.FC = () => {
                   PDF & Multi-Year Calendar Analyzer
                 </span>
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  {matrixYear} Interactive BIR & Statutory Deadline Schedule Matrix
+                  {matrixYear} {matrixYearType === 'Fiscal' ? `Fiscal Year (Ended ${matrixFiscalMonth})` : 'Calendar Year'} BIR & Statutory Deadline Schedule Matrix
                 </h3>
               </div>
               <p className="text-[11px] text-slate-300">
-                Click on any deadline date cell in the matrix below to open the <strong>Interactive Calendar Date Picker</strong> and customize specific monthly filing dates for all clients!
+                Click on any deadline date cell in the matrix below to view deadlines based on <strong>{matrixYearType} Year ({matrixYearType === 'Fiscal' ? `FY Ends ${matrixFiscalMonth}` : 'Calendar'})</strong>.
               </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 shrink-0">
-              {/* Matrix Year Switcher */}
+              {/* Year Switcher */}
               <div className="flex items-center gap-2 bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700 text-xs">
-                <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Matrix Year:</label>
+                <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Year:</label>
                 <select
                   value={matrixYear}
                   onChange={e => setMatrixYear(Number(e.target.value))}
                   className="bg-slate-900 border border-slate-600 text-white font-bold text-xs px-2.5 py-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
                 >
-                  {[2024, 2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035].map(y => (
-                    <option key={y} value={y}>{y} Fiscal Year</option>
+                  {matrixYearsList.map(y => (
+                    <option key={y} value={y}>{y}</option>
                   ))}
                 </select>
+
+                {!showMorePreviousYears && (
+                  <button
+                    type="button"
+                    onClick={() => setShowMorePreviousYears(true)}
+                    className="text-[10px] text-indigo-300 hover:text-white underline font-semibold px-1 cursor-pointer"
+                    title="Load earlier previous years"
+                  >
+                    + Earlier
+                  </button>
+                )}
+              </div>
+
+              {/* Calendar vs Fiscal Year Option */}
+              <div className="flex items-center gap-2 bg-slate-800/90 px-3 py-1.5 rounded-xl border border-slate-700 text-xs">
+                <label className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">Basis:</label>
+                <select
+                  value={matrixYearType}
+                  onChange={e => setMatrixYearType(e.target.value as 'Calendar' | 'Fiscal')}
+                  className="bg-slate-900 border border-slate-600 text-white font-bold text-xs px-2.5 py-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
+                >
+                  <option value="Calendar">Calendar Year</option>
+                  <option value="Fiscal">Fiscal Year</option>
+                </select>
+
+                {matrixYearType === 'Fiscal' && (
+                  <select
+                    value={matrixFiscalMonth}
+                    onChange={e => setMatrixFiscalMonth(e.target.value)}
+                    className="bg-slate-900 border border-slate-600 text-indigo-300 font-bold text-xs px-2.5 py-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/40 cursor-pointer"
+                    title="Fiscal Year End Month"
+                  >
+                    {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map(m => (
+                      <option key={m} value={m}>Ends {m}</option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="bg-slate-800/80 p-1 rounded-xl border border-slate-700/80 flex items-center text-xs">
@@ -713,7 +672,12 @@ export const MasterTablesView: React.FC = () => {
 
                         {/* Month Deadline Cells */}
                         {MONTHS_LIST.map(m => {
-                          const deadlineInfo = getRuleDeadlineForMonth(rule, m, matrixYear);
+                          const deadlineInfo = getRuleDeadlineForMonth(
+                            rule, 
+                            m, 
+                            matrixYear,
+                            matrixYearType === 'Fiscal' ? { accountingPeriod: 'Fiscal', fiscalYearEndMonth: matrixFiscalMonth } : undefined
+                          );
                           
                           if (!deadlineInfo) {
                             return (
