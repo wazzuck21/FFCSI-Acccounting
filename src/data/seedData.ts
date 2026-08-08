@@ -1,0 +1,1050 @@
+import { 
+  User, 
+  ClientProfile, 
+  DynamicSection, 
+  PayableRecord, 
+  ComplianceItem, 
+  DocumentItem, 
+  TaskItem, 
+  InvoiceItem, 
+  AuditLog,
+  CompanyEmployee,
+  LeaveRecord,
+  ValeRecord,
+  PayrollRun,
+  CompanyExpense
+} from '../types';
+
+export const INITIAL_USERS: User[] = [
+  {
+    id: 'user_super_admin_1',
+    fullName: 'Maria Teresa Santos',
+    username: 'superadmin1',
+    password: 'password123',
+    contactNumber: '+63 917 123 4567',
+    role: 'SUPER_ADMIN',
+    status: 'Active',
+    lastLogin: '2026-08-03 08:30:00',
+    permissions: {
+      clients: true,
+      billing: true,
+      compliance: true,
+      reports: true,
+      payroll: true,
+      documents: true,
+      dashboard: true,
+      settings: true,
+      userManagement: true,
+      dynamicFields: true,
+      payables: true,
+    }
+  },
+  {
+    id: 'user_billing_1',
+    fullName: 'Clarissa Reyes',
+    username: 'billing_user',
+    password: 'password123',
+    contactNumber: '+63 919 444 8888',
+    role: 'BILLING',
+    status: 'Active',
+    lastLogin: '2026-08-03 06:50:00',
+    permissions: {
+      clients: true,
+      billing: true,
+      compliance: false,
+      reports: true,
+      payroll: false,
+      documents: true,
+      dashboard: true,
+      settings: false,
+      userManagement: false,
+      dynamicFields: false,
+      payables: true,
+    }
+  },
+  {
+    id: 'user_accounting_1',
+    fullName: 'Juan dela Cruz',
+    username: 'accountant1',
+    password: 'password123',
+    contactNumber: '+63 920 555 1234',
+    role: 'ACCOUNTING',
+    status: 'Active',
+    lastLogin: '2026-08-03 07:15:00',
+    permissions: {
+      clients: true,
+      billing: false,
+      compliance: true,
+      reports: true,
+      payroll: true,
+      documents: true,
+      dashboard: true,
+      settings: false,
+      userManagement: false,
+      dynamicFields: false,
+      payables: true,
+    }
+  },
+  {
+    id: 'user_benefits_1',
+    fullName: 'Atty. Roberto Cruz',
+    username: 'benefits1',
+    password: 'password123',
+    contactNumber: '+63 918 987 6543',
+    role: 'BENEFITS',
+    status: 'Active',
+    lastLogin: '2026-08-02 17:45:00',
+    permissions: {
+      clients: true,
+      billing: false,
+      compliance: true,
+      reports: true,
+      payroll: true,
+      documents: true,
+      dashboard: true,
+      settings: false,
+      userManagement: false,
+      dynamicFields: false,
+      payables: true,
+    }
+  },
+  {
+    id: 'user_staff_1',
+    fullName: 'Mark Anthony V.',
+    username: 'staff1',
+    password: 'password123',
+    contactNumber: '+63 915 222 3333',
+    role: 'STAFF',
+    status: 'Active',
+    lastLogin: '2026-08-03 08:00:00',
+    permissions: {
+      clients: true,
+      billing: false,
+      compliance: true,
+      reports: false,
+      payroll: false,
+      documents: true,
+      dashboard: true,
+      settings: false,
+      userManagement: false,
+      dynamicFields: false,
+      payables: false,
+    }
+  }
+];
+
+export const INITIAL_CLIENTS: ClientProfile[] = [
+  {
+    id: 'client_001',
+    companyName: 'Apex Global Logistics Corp. (Head Office)',
+    tinNumber: '009-023-023-000',
+    baseTin: '009-023-023',
+    isBranch: false,
+    branchCode: '000',
+    address: 'Suite 1204, Cyberpark Tower 1, Cubao, Quezon City',
+    rdoNumber: '038',
+    businessNature: ['Logistics & Freight Services', 'Import & Export Trading'],
+    status: 'Active',
+    registrationMethod: 'eFPS',
+    entityType: 'Corporation',
+    secRegistrationNumber: 'CS2015098712',
+    annualMeetingDate: '2026-04-20',
+    birTaxServices: ['0619E', '1601EQ', '2550Q', '1702Q', 'ITR'],
+    benefitsServices: ['SSS Contribution', 'SSS Salary Loan', 'HDMF Contribution', 'HDMF Loan', 'PhilHealth Cont.'],
+    contactPerson: 'Engr. Ferdinand Ramos',
+    mobileNumber: '+63 917 555 9900',
+    telephoneNumber: '(02) 8888-1234',
+    emailAddress: 'finance@apexlogistics.ph',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    retainersFee: 45000,
+    tags: ['Head Office', 'eFPS', 'Corporate Group'],
+    notes: 'Main Head Office holding corporate TIN 009-023-023.',
+    createdAt: '2025-01-10',
+    updatedAt: '2026-07-28'
+  },
+  {
+    id: 'client_004',
+    companyName: 'Apex Global Logistics Corp. - Cebu Branch',
+    tinNumber: '009-023-023-001',
+    baseTin: '009-023-023',
+    isBranch: true,
+    parentClientId: 'client_001',
+    parentClientName: 'Apex Global Logistics Corp. (Head Office)',
+    branchCode: '001',
+    address: 'Pier 4 Commercial Complex, North Reclamation Area, Cebu City',
+    rdoNumber: '081',
+    businessNature: ['Logistics & Freight Services'],
+    status: 'Active',
+    registrationMethod: 'eFPS',
+    entityType: 'Corporation',
+    secRegistrationNumber: 'CS2015098712-BR1',
+    birTaxServices: ['0619E', '1601EQ', '2550Q'],
+    benefitsServices: ['SSS Contribution', 'HDMF Contribution', 'PhilHealth Cont.'],
+    contactPerson: 'Mark Anthony V.',
+    mobileNumber: '+63 917 888 7766',
+    emailAddress: 'cebu@apexlogistics.ph',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    retainersFee: 20000,
+    tags: ['Cebu Branch', 'Corporate Group'],
+    notes: 'Cebu Port Branch office linked to Main TIN 009-023-023.',
+    createdAt: '2025-05-15',
+    updatedAt: '2026-08-02'
+  },
+  {
+    id: 'client_002',
+    companyName: 'Manila Bistro & Hospitality Group Inc.',
+    tinNumber: '987654321000',
+    address: 'G/F High Street Central, Bonifacio Global City, Taguig',
+    rdoNumber: '044',
+    businessNature: ['Restaurant & Food Services', 'Hospitality & Tourism'],
+    status: 'Active',
+    registrationMethod: 'Manual',
+    entityType: 'Corporation',
+    secRegistrationNumber: 'CS2019884422',
+    annualMeetingDate: '2026-05-15',
+    birTaxServices: ['0619E', '1601EQ', '2550Q', '1702Q', 'ITR'],
+    benefitsServices: ['SSS Contribution', 'HDMF Contribution', 'PhilHealth Cont.'],
+    contactPerson: 'Chef Marco Rossi',
+    mobileNumber: '+63 918 333 4455',
+    emailAddress: 'accounting@manilabistro.com',
+    assignedStaffId: 'user_staff_2',
+    assignedStaffName: 'Clarissa Reyes',
+    retainersFee: 32000,
+    tags: ['Hospitality', 'POS Integrated'],
+    notes: 'POS audit required quarterly.',
+    createdAt: '2025-03-15',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'client_003',
+    companyName: 'Reyes Architecture & Design Studio',
+    tinNumber: '456789123',
+    address: 'Unit 4B, Solenad Commercial Center, Sta. Rosa, Laguna',
+    rdoNumber: '050',
+    businessNature: ['Professional Consulting Services', 'Construction & Contracting'],
+    status: 'For Compliance',
+    registrationMethod: 'Manual',
+    entityType: 'Proprietor',
+    dtiRegistrationNumber: 'DTI-2022-881923',
+    dtiExpirationDate: '2026-08-15',
+    proprietorFirstName: 'Ar. Benjamin',
+    proprietorLastName: 'Reyes',
+    proprietorMiddleName: 'Gomez',
+    birTaxServices: ['0619E', '1601EQ', '2550Q', '1701Q', 'ITR'],
+    benefitsServices: ['SSS Contribution', 'HDMF Contribution', 'PhilHealth Cont.'],
+    contactPerson: 'Ar. Benjamin Reyes',
+    mobileNumber: '+63 920 111 2233',
+    emailAddress: 'benjamin@reyesarch.ph',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    retainersFee: 18000,
+    tags: ['Sole Proprietor', 'DTI Renewal Due'],
+    notes: 'DTI license expiring this month! Follow up renewal.',
+    createdAt: '2025-06-01',
+    updatedAt: '2026-08-02'
+  }
+];
+
+export const INITIAL_DYNAMIC_SECTIONS: DynamicSection[] = [
+  {
+    id: 'sec_bank_accounts',
+    title: 'Bank Accounts & Financial Details',
+    description: 'Deposit bank accounts, account numbers, and maintaining balance information for tax payments.',
+    isRepeatable: true,
+    industryTemplate: 'General',
+    fields: [
+      {
+        id: 'f_bank_name',
+        label: 'Bank Name',
+        type: 'Dropdown',
+        options: ['BDO Unibank', 'BPI', 'Metrobank', 'Landbank', 'UnionBank', 'Security Bank', 'GCash', 'Maya'],
+        validation: { required: true }
+      },
+      {
+        id: 'f_account_no',
+        label: 'Account Number',
+        type: 'Text',
+        placeholder: 'e.g. 00123-4567-89',
+        validation: { required: true, minLength: 10 }
+      },
+      {
+        id: 'f_account_type',
+        label: 'Account Type',
+        type: 'Radio',
+        options: ['Checking (Current)', 'Savings', 'Dollar Account']
+      },
+      {
+        id: 'f_branch',
+        label: 'Branch of Account',
+        type: 'Text',
+        placeholder: 'e.g. BGC High Street'
+      }
+    ],
+    createdAt: '2025-01-01'
+  },
+  {
+    id: 'sec_business_permits',
+    title: 'Local Government Business Permits',
+    description: 'Mayor\'s Permit, Barangay Clearance, Fire Safety, and Sanitary Certificate details.',
+    isRepeatable: true,
+    industryTemplate: 'Restaurant',
+    fields: [
+      {
+        id: 'f_permit_no',
+        label: 'Mayor\'s Permit Number',
+        type: 'Text',
+        validation: { required: true }
+      },
+      {
+        id: 'f_lgu_name',
+        label: 'LGU / City / Municipality',
+        type: 'Text',
+        placeholder: 'e.g. Taguig City'
+      },
+      {
+        id: 'f_expiration',
+        label: 'Expiration Date',
+        type: 'Date',
+        includeDeadline: true,
+        validation: { required: true }
+      },
+      {
+        id: 'f_permit_file',
+        label: 'Scanned Permit Document',
+        type: 'FileUpload'
+      }
+    ],
+    createdAt: '2025-01-05'
+  }
+];
+
+export const INITIAL_PAYABLES: PayableRecord[] = [
+  {
+    id: 'pay_001',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    category: 'BIR',
+    itemName: '0619E',
+    month: '2026-08',
+    year: 2026,
+    payableAmount: 18500,
+    status: 'Paid',
+    createdById: 'user_staff_1',
+    createdByName: 'Juan dela Cruz',
+    createdAt: '2026-08-01 10:00:00',
+    paymentDetails: {
+      paidDate: '2026-08-02',
+      paymentMethod: 'Bank',
+      bankName: 'BDO Unibank',
+      amountPaid: 18500,
+      taggedById: 'user_super_admin_1',
+      taggedByName: 'Maria Teresa Santos',
+      referenceNumber: 'OR-BDO-992101',
+      notes: 'Paid via online banking auto-debit.'
+    }
+  },
+  {
+    id: 'pay_002',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    category: 'Benefits',
+    itemName: 'SSS Contribution',
+    month: '2026-08',
+    year: 2026,
+    payableAmount: 42000,
+    status: 'Unpaid',
+    createdById: 'user_staff_1',
+    createdByName: 'Juan dela Cruz',
+    createdAt: '2026-08-01 10:30:00'
+  },
+  {
+    id: 'pay_003',
+    clientId: 'client_002',
+    clientName: 'Manila Bistro & Hospitality Group Inc.',
+    category: 'BIR',
+    itemName: '0619E',
+    month: '2026-08',
+    year: 2026,
+    payableAmount: 12400,
+    status: 'Unpaid',
+    createdById: 'user_staff_2',
+    createdByName: 'Clarissa Reyes',
+    createdAt: '2026-08-02 09:15:00'
+  },
+  {
+    id: 'pay_004',
+    clientId: 'client_003',
+    clientName: 'Reyes Architecture & Design Studio',
+    category: 'Benefits',
+    itemName: 'PhilHealth Cont.',
+    month: '2026-08',
+    year: 2026,
+    payableAmount: 0,
+    status: 'No Payment',
+    createdById: 'user_staff_1',
+    createdByName: 'Juan dela Cruz',
+    createdAt: '2026-08-02 11:00:00'
+  }
+];
+
+export const INITIAL_COMPLIANCE: ComplianceItem[] = [
+  {
+    id: 'comp_001',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    title: 'BIR Form 0619E Withholding Tax Remittance',
+    category: 'BIR',
+    dueDate: '2026-08-10',
+    status: 'Already Paid',
+    assignedStaffName: 'Juan dela Cruz',
+    amountDue: 18500,
+    paidDate: '2026-08-02'
+  },
+  {
+    id: 'comp_002',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    title: 'SSS Monthly Contribution Remittance',
+    category: 'Benefits',
+    dueDate: '2026-08-30',
+    status: 'Pending',
+    assignedStaffName: 'Juan dela Cruz',
+    amountDue: 42000
+  },
+  {
+    id: 'comp_003',
+    clientId: 'client_003',
+    clientName: 'Reyes Architecture & Design Studio',
+    title: 'DTI Registration Renewal Expiration',
+    category: 'DTI',
+    dueDate: '2026-08-15',
+    status: 'Due Today',
+    assignedStaffName: 'Juan dela Cruz'
+  },
+  {
+    id: 'comp_004',
+    clientId: 'client_002',
+    clientName: 'Manila Bistro & Hospitality Group Inc.',
+    title: 'BIR Form 1601EQ Q3 Remittance',
+    category: 'BIR',
+    dueDate: '2026-10-31',
+    status: 'Pending',
+    assignedStaffName: 'Clarissa Reyes',
+    amountDue: 35000
+  }
+];
+
+export const INITIAL_TASKS: TaskItem[] = [
+  {
+    id: 'task_001',
+    clientId: 'client_003',
+    clientName: 'Reyes Architecture & Design Studio',
+    title: 'Process DTI Business Name Certificate Renewal',
+    description: 'File DTI online portal renewal before August 15 expiration date.',
+    category: 'Compliance',
+    recurrence: 'One-Time',
+    dueDate: '2026-08-10',
+    priority: 'Urgent',
+    status: 'In Progress',
+    assignedToId: 'user_staff_1',
+    assignedToName: 'Juan dela Cruz'
+  },
+  {
+    id: 'task_002',
+    clientId: 'client_002',
+    clientName: 'Manila Bistro & Hospitality Group Inc.',
+    title: 'Monthly Bookkeeping & Sales Journal Encoding',
+    description: 'Encode July POS sales receipts and verify VAT computation.',
+    category: 'Bookkeeping',
+    recurrence: 'Monthly',
+    dueDate: '2026-08-12',
+    priority: 'High',
+    status: 'Pending',
+    assignedToId: 'user_staff_2',
+    assignedToName: 'Clarissa Reyes'
+  },
+  {
+    id: 'task_003',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    title: 'Prepare Q3 2550Q VAT Return Computation',
+    description: 'Reconcile input VAT on logistics equipment purchases.',
+    category: 'Tax Filing',
+    recurrence: 'Quarterly',
+    dueDate: '2026-08-25',
+    priority: 'Medium',
+    status: 'Pending',
+    assignedToId: 'user_staff_1',
+    assignedToName: 'Juan dela Cruz'
+  }
+];
+
+export const INITIAL_INVOICES: InvoiceItem[] = [
+  {
+    id: 'inv_001',
+    invoiceNumber: 'INV-2026-0801',
+    collectionNumber: '1001',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    issueDate: '2026-08-01',
+    dueDate: '2026-08-15',
+    subtotal: 45000,
+    vatAmount: 5400,
+    totalAmount: 50400,
+    paidAmount: 50400,
+    status: 'Paid',
+    services: [
+      { description: 'Monthly Tax Compliance Retainer (August 2026)', amount: 45000 }
+    ],
+    officialReceiptNumber: 'C.R.# 1001',
+    collectionReceiptNumber: 'C.R.# 1001',
+    paymentDate: '2026-08-02',
+    paymentMethod: 'Bank Transfer (BDO)'
+  },
+  {
+    id: 'inv_002',
+    invoiceNumber: 'INV-2026-0802',
+    collectionNumber: '1002',
+    clientId: 'client_002',
+    clientName: 'Manila Bistro & Hospitality Group Inc.',
+    issueDate: '2026-08-01',
+    dueDate: '2026-08-15',
+    subtotal: 32000,
+    vatAmount: 3840,
+    totalAmount: 35840,
+    paidAmount: 0,
+    status: 'Sent',
+    services: [
+      { description: 'Monthly Bookkeeping & Retainer (August 2026)', amount: 32000 }
+    ]
+  }
+];
+
+export const INITIAL_CREDENTIALS: import('../types').CoreCredential[] = [
+  {
+    id: 'cred_001',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    portalType: 'eFPS',
+    portalName: 'BIR eFPS Tax Portal',
+    username: 'smltc_efps_admin',
+    password: 'efpsSecretKey2026!',
+    pinCode: '8821',
+    securityQuestions: 'Mother Maiden Name: Santos',
+    notes: 'Primary eFPS filing account for 0619E & 2550Q',
+    updatedBy: 'Maria Teresa Santos',
+    updatedAt: '2026-08-01 10:00:00'
+  },
+  {
+    id: 'cred_002',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    portalType: 'Bank',
+    portalName: 'Landbank iAccess Corporate',
+    username: 'smltc_lbp_biz',
+    password: 'LandbankPass2026#',
+    pinCode: '1423',
+    notes: 'Used for online government BIR tax e-payment',
+    updatedBy: 'Maria Teresa Santos',
+    updatedAt: '2026-08-01 10:15:00'
+  },
+  {
+    id: 'cred_003',
+    clientId: 'client_002',
+    clientName: 'Manila Bistro & Hospitality Group Inc.',
+    portalType: 'SSS',
+    portalName: 'SSS My.SSS Employer Portal',
+    username: 'manilabistro_sss',
+    password: 'SssEmployer2026!',
+    notes: 'Monthly SSS R3 contribution filing & loans',
+    updatedBy: 'Maria Teresa Santos',
+    updatedAt: '2026-08-02 11:30:00'
+  }
+];
+
+export const INITIAL_DOCUMENTS: DocumentItem[] = [
+  {
+    id: 'doc_001',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    title: 'BIR Form 2303 Certificate of Registration',
+    fileName: 'SMLTC_BIR_2303.pdf',
+    fileType: 'PDF',
+    fileSize: '1.2 MB',
+    category: 'BIR',
+    uploadDate: '2025-01-12',
+    version: '1.0',
+    uploadedBy: 'Juan dela Cruz'
+  },
+  {
+    id: 'doc_002',
+    clientId: 'client_001',
+    clientName: 'San Miguel Logistics & Trading Corp.',
+    title: 'SEC Certificate of Incorporation & Articles',
+    fileName: 'SEC_CS2015098712.pdf',
+    fileType: 'PDF',
+    fileSize: '3.4 MB',
+    category: 'SEC',
+    uploadDate: '2025-01-12',
+    version: '1.0',
+    uploadedBy: 'Juan dela Cruz'
+  },
+  {
+    id: 'doc_003',
+    clientId: 'client_003',
+    clientName: 'Reyes Architecture & Design Studio',
+    title: 'DTI Business Name Certificate (2021-2026)',
+    fileName: 'DTI_Reyes_Arch.pdf',
+    fileType: 'PDF',
+    fileSize: '850 KB',
+    category: 'Business Permits',
+    uploadDate: '2025-06-02',
+    expirationDate: '2026-08-15',
+    version: '1.0',
+    uploadedBy: 'Juan dela Cruz'
+  }
+];
+
+export const INITIAL_AUDIT_LOGS: AuditLog[] = [
+  {
+    id: 'log_001',
+    userId: 'user_super_admin_1',
+    userName: 'Maria Teresa Santos',
+    action: 'Payment Tagged & Verified',
+    details: 'Verified and marked 0619E payable (₱18,500) for San Miguel Logistics as PAID via BDO.',
+    timestamp: '2026-08-02 14:22:10',
+    ipAddress: '192.168.1.100'
+  },
+  {
+    id: 'log_002',
+    userId: 'user_staff_1',
+    userName: 'Juan dela Cruz',
+    action: 'Payable Assessment Created',
+    details: 'Created August 2026 SSS Contribution payable (₱42,000) for San Miguel Logistics.',
+    timestamp: '2026-08-01 10:30:15',
+    ipAddress: '192.168.1.105'
+  }
+];
+
+// ==========================================
+// INTERNAL FIRM EMPLOYEES SEED DATA
+// ==========================================
+export const INITIAL_EMPLOYEES: CompanyEmployee[] = [
+  {
+    id: 'emp_001',
+    employeeNo: 'EMP-001',
+    fullName: 'Maria Teresa Santos',
+    position: 'Managing Partner & CPA',
+    department: 'Executive / Tax',
+    dateHired: '2020-01-15',
+    employmentType: 'Regular',
+    monthlyBasicSalary: 65000,
+    dailyRate: 2988.51, // 65000 / 21.75
+    hourlyRate: 373.56,
+    tinNumber: '123-456-789-000',
+    sssNumber: '34-1234567-8',
+    philhealthNumber: '12-098765432-1',
+    pagibigNumber: '1210-9876-5432',
+    bankName: 'BDO Unibank',
+    accountNumber: '0012-3456-7890',
+    status: 'Active',
+    silBalance: 5,
+    vlBalance: 12,
+    slBalance: 10,
+    currentValeBalance: 0,
+    defaultValeDeduction: 0
+  },
+  {
+    id: 'emp_002',
+    employeeNo: 'EMP-002',
+    fullName: 'Juan dela Cruz',
+    position: 'Senior Tax Accountant',
+    department: 'Tax & Audit',
+    dateHired: '2021-06-01',
+    employmentType: 'Regular',
+    monthlyBasicSalary: 38000,
+    dailyRate: 1747.13,
+    hourlyRate: 218.39,
+    tinNumber: '234-567-890-000',
+    sssNumber: '34-2345678-9',
+    philhealthNumber: '12-198765432-2',
+    pagibigNumber: '1210-8765-4321',
+    bankName: 'BPI',
+    accountNumber: '3421-9876-54',
+    status: 'Active',
+    silBalance: 4,
+    vlBalance: 8,
+    slBalance: 7,
+    currentValeBalance: 3000,
+    defaultValeDeduction: 1000
+  },
+  {
+    id: 'emp_003',
+    employeeNo: 'EMP-003',
+    fullName: 'Clarissa Reyes',
+    position: 'Billing & Collection Specialist',
+    department: 'Finance & Billing',
+    dateHired: '2022-03-10',
+    employmentType: 'Regular',
+    monthlyBasicSalary: 28000,
+    dailyRate: 1287.36,
+    hourlyRate: 160.92,
+    tinNumber: '345-678-901-000',
+    sssNumber: '34-3456789-0',
+    philhealthNumber: '12-298765432-3',
+    pagibigNumber: '1210-7654-3210',
+    bankName: 'GCash / BDO',
+    accountNumber: '09194448888',
+    status: 'Active',
+    silBalance: 5,
+    vlBalance: 10,
+    slBalance: 8,
+    currentValeBalance: 1500,
+    defaultValeDeduction: 500
+  },
+  {
+    id: 'emp_004',
+    employeeNo: 'EMP-004',
+    fullName: 'Ana Gonzales',
+    position: 'Junior Bookkeeper / Audit Staff',
+    department: 'Accounting',
+    dateHired: '2023-11-02',
+    employmentType: 'Probationary',
+    monthlyBasicSalary: 22000,
+    dailyRate: 1011.49,
+    hourlyRate: 126.44,
+    tinNumber: '456-789-012-000',
+    sssNumber: '34-4567890-1',
+    philhealthNumber: '12-398765432-4',
+    pagibigNumber: '1210-6543-2109',
+    bankName: 'Maya Bank',
+    accountNumber: '09171112233',
+    status: 'Active',
+    silBalance: 3,
+    vlBalance: 5,
+    slBalance: 5,
+    currentValeBalance: 0,
+    defaultValeDeduction: 0
+  }
+];
+
+// ==========================================
+// LEAVE TRACKER SEED DATA
+// ==========================================
+export const INITIAL_LEAVE_RECORDS: LeaveRecord[] = [
+  {
+    id: 'leave_001',
+    employeeId: 'emp_002',
+    employeeName: 'Juan dela Cruz',
+    leaveType: 'Vacation Leave',
+    startDate: '2026-08-10',
+    endDate: '2026-08-11',
+    totalDays: 2,
+    reason: 'Family out of town trip to Baguio',
+    status: 'Approved',
+    approvedBy: 'Maria Teresa Santos',
+    isPaid: true,
+    createdAt: '2026-08-01'
+  },
+  {
+    id: 'leave_002',
+    employeeId: 'emp_003',
+    employeeName: 'Clarissa Reyes',
+    leaveType: 'Sick Leave',
+    startDate: '2026-08-04',
+    endDate: '2026-08-04',
+    totalDays: 1,
+    reason: 'Severe flu and fever, medical cert attached',
+    status: 'Approved',
+    approvedBy: 'Maria Teresa Santos',
+    isPaid: true,
+    createdAt: '2026-08-04'
+  },
+  {
+    id: 'leave_003',
+    employeeId: 'emp_004',
+    employeeName: 'Ana Gonzales',
+    leaveType: 'Service Incentive Leave (SIL)',
+    startDate: '2026-08-18',
+    endDate: '2026-08-18',
+    totalDays: 1,
+    reason: 'Personal errand - NBI / Passport renewal',
+    status: 'Pending',
+    isPaid: true,
+    createdAt: '2026-08-05'
+  }
+];
+
+// ==========================================
+// VALE (CASH ADVANCE) TRACKER SEED DATA
+// ==========================================
+export const INITIAL_VALE_RECORDS: ValeRecord[] = [
+  {
+    id: 'vale_001',
+    employeeId: 'emp_002',
+    employeeName: 'Juan dela Cruz',
+    amountGiven: 5000,
+    dateGiven: '2026-07-01',
+    purpose: 'Emergency medical expenses for child',
+    cutoffDeductionAmount: 1000,
+    remainingBalance: 3000,
+    status: 'Active',
+    repayments: [
+      {
+        id: 'rep_001',
+        date: '2026-07-15',
+        amountPaid: 1000,
+        payrollCutoffLabel: 'July 1-15, 2026',
+        remarks: 'Auto-deducted in Payroll Run'
+      },
+      {
+        id: 'rep_002',
+        date: '2026-07-31',
+        amountPaid: 1000,
+        payrollCutoffLabel: 'July 16-31, 2026',
+        remarks: 'Auto-deducted in Payroll Run'
+      }
+    ],
+    createdAt: '2026-07-01'
+  },
+  {
+    id: 'vale_002',
+    employeeId: 'emp_003',
+    employeeName: 'Clarissa Reyes',
+    amountGiven: 2500,
+    dateGiven: '2026-07-10',
+    purpose: 'Home appliance repair emergency',
+    cutoffDeductionAmount: 500,
+    remainingBalance: 1500,
+    status: 'Active',
+    repayments: [
+      {
+        id: 'rep_003',
+        date: '2026-07-15',
+        amountPaid: 500,
+        payrollCutoffLabel: 'July 1-15, 2026',
+        remarks: 'Auto-deducted in Payroll Run'
+      },
+      {
+        id: 'rep_004',
+        date: '2026-07-31',
+        amountPaid: 500,
+        payrollCutoffLabel: 'July 16-31, 2026',
+        remarks: 'Auto-deducted in Payroll Run'
+      }
+    ],
+    createdAt: '2026-07-10'
+  }
+];
+
+// ==========================================
+// HISTORICAL PAYROLL RUNS SEED DATA
+// ==========================================
+export const INITIAL_PAYROLL_RUNS: PayrollRun[] = [
+  {
+    id: 'pr_2026_07_2',
+    cutoffPeriod: 'July 16-31, 2026',
+    periodType: '2nd Half (16-30/31)',
+    payDate: '2026-07-31',
+    status: 'Paid',
+    totalGrossPay: 76500,
+    totalDeductions: 14850,
+    totalNetPay: 61650,
+    createdBy: 'Maria Teresa Santos',
+    approvedBy: 'Maria Teresa Santos',
+    createdAt: '2026-07-28',
+    items: [
+      {
+        id: 'pi_001',
+        payrollRunId: 'pr_2026_07_2',
+        employeeId: 'emp_001',
+        employeeName: 'Maria Teresa Santos',
+        position: 'Managing Partner & CPA',
+        monthlyBasic: 65000,
+        semiMonthlyBasic: 32500,
+        daysWorked: 11,
+        daysAbsent: 0,
+        absencesDeduction: 0,
+        tardinessMinutes: 0,
+        tardinessDeduction: 0,
+        undertimeMinutes: 0,
+        undertimeDeduction: 0,
+        otRegularHours: 4,
+        otRegularPay: 1867.80,
+        otRestDayHours: 0,
+        otRestDayPay: 0,
+        otHolidayHours: 0,
+        otHolidayPay: 0,
+        nightDiffHours: 0,
+        nightDiffPay: 0,
+        otherAllowances: 1000,
+        grossPay: 35367.80,
+        sssEE: 1350,
+        sssER: 2850,
+        philHealthEE: 812.50,
+        philHealthER: 812.50,
+        pagIbigEE: 100,
+        pagIbigER: 100,
+        birWithholdingTax: 4120.50,
+        valeDeduction: 0,
+        otherDeductions: 0,
+        totalDeductions: 6383.00,
+        netPay: 28984.80
+      },
+      {
+        id: 'pi_002',
+        payrollRunId: 'pr_2026_07_2',
+        employeeId: 'emp_002',
+        employeeName: 'Juan dela Cruz',
+        position: 'Senior Tax Accountant',
+        monthlyBasic: 38000,
+        semiMonthlyBasic: 19000,
+        daysWorked: 11,
+        daysAbsent: 0,
+        absencesDeduction: 0,
+        tardinessMinutes: 15,
+        tardinessDeduction: 54.60,
+        undertimeMinutes: 0,
+        undertimeDeduction: 0,
+        otRegularHours: 6,
+        otRegularPay: 1637.92,
+        otRestDayHours: 0,
+        otRestDayPay: 0,
+        otHolidayHours: 0,
+        otHolidayPay: 0,
+        nightDiffHours: 0,
+        nightDiffPay: 0,
+        otherAllowances: 500,
+        grossPay: 21083.32,
+        sssEE: 900,
+        sssER: 1900,
+        philHealthEE: 475,
+        philHealthER: 475,
+        pagIbigEE: 100,
+        pagIbigER: 100,
+        birWithholdingTax: 1650.20,
+        valeDeduction: 1000,
+        otherDeductions: 0,
+        totalDeductions: 4125.20,
+        netPay: 16958.12
+      }
+    ]
+  }
+];
+
+// ==========================================
+// COMPANY OPERATING EXPENSES & BILLS SEED DATA
+// ==========================================
+export const INITIAL_COMPANY_EXPENSES: CompanyExpense[] = [
+  {
+    id: 'exp_001',
+    title: 'Meralco Office Electricity (Unit 402)',
+    category: 'Electricity',
+    vendorProvider: 'Meralco',
+    accountNumber: '1098-7654-3210',
+    amountType: 'Manual Statement',
+    amount: 14850.25,
+    dueDateType: 'Fixed Monthly Day',
+    fixedDueDay: 18,
+    dueDate: '2026-08-18',
+    monthYear: 'August 2026',
+    status: 'Unpaid',
+    notes: 'Aircon heavy usage during BIR tax filing month',
+    createdAt: '2026-08-01'
+  },
+  {
+    id: 'exp_002',
+    title: 'PLDT Fiber Biz Unli Internet 500Mbps',
+    category: 'Internet',
+    vendorProvider: 'PLDT Enterprise',
+    accountNumber: '0200-5544-11',
+    amountType: 'Fixed Monthly',
+    amount: 4500.00,
+    dueDateType: 'Fixed Monthly Day',
+    fixedDueDay: 15,
+    dueDate: '2026-08-15',
+    monthYear: 'August 2026',
+    status: 'Paid',
+    paidDetails: {
+      paidDate: '2026-08-02',
+      paidAmount: 4500.00,
+      paymentMethod: 'Bank Transfer (BDO)',
+      referenceNo: 'PLDT-20260802-9981'
+    },
+    notes: 'Fixed monthly subscription for main office line',
+    createdAt: '2026-08-01'
+  },
+  {
+    id: 'exp_003',
+    title: 'Cyberzone Tower Office Rent (Unit 402)',
+    category: 'Office Rent',
+    vendorProvider: 'Megaworld Office Property Corp',
+    accountNumber: 'LEASE-2024-402',
+    amountType: 'Fixed Monthly',
+    amount: 45000.00,
+    dueDateType: 'Fixed Monthly Day',
+    fixedDueDay: 5,
+    dueDate: '2026-08-05',
+    monthYear: 'August 2026',
+    status: 'Paid',
+    paidDetails: {
+      paidDate: '2026-08-01',
+      paidAmount: 45000.00,
+      paymentMethod: 'Check',
+      referenceNo: 'CHK-009812'
+    },
+    notes: 'Monthly commercial office lease including VAT',
+    createdAt: '2026-08-01'
+  },
+  {
+    id: 'exp_004',
+    title: 'Maynilad Commercial Water Service',
+    category: 'Water',
+    vendorProvider: 'Maynilad Water',
+    accountNumber: '8877-6655-44',
+    amountType: 'Manual Statement',
+    amount: 1850.00,
+    dueDateType: 'Fixed Monthly Day',
+    fixedDueDay: 22,
+    dueDate: '2026-08-22',
+    monthYear: 'August 2026',
+    status: 'Unpaid',
+    notes: 'Pantry and restroom water bill',
+    createdAt: '2026-08-01'
+  },
+  {
+    id: 'exp_005',
+    title: 'BDO Executive Corporate Credit Card',
+    category: 'Credit Card',
+    vendorProvider: 'BDO Unibank',
+    accountNumber: '4532-xxxx-xxxx-1092',
+    amountType: 'Manual Statement',
+    amount: 12450.00,
+    dueDateType: 'Fixed Monthly Day',
+    fixedDueDay: 12,
+    dueDate: '2026-08-12',
+    monthYear: 'August 2026',
+    status: 'Unpaid',
+    notes: 'Office supplies, cloud server hosting, client coffee meetings',
+    createdAt: '2026-08-01'
+  },
+  {
+    id: 'exp_006',
+    title: 'Globe Mobile Business Postpaid Lines',
+    category: 'Phone & Mobile',
+    vendorProvider: 'Globe Telecom',
+    accountNumber: '0917-8899-221',
+    amountType: 'Fixed Monthly',
+    amount: 3200.00,
+    dueDateType: 'Fixed Monthly Day',
+    fixedDueDay: 28,
+    dueDate: '2026-08-28',
+    monthYear: 'August 2026',
+    status: 'Unpaid',
+    notes: 'Partners and Senior Accountants mobile lines',
+    createdAt: '2026-08-01'
+  }
+];
+
