@@ -27,7 +27,9 @@ import {
   Kanban,
   Columns,
   ArrowRight,
-  RotateCcw
+  RotateCcw,
+  AlertTriangle,
+  Lock
 } from 'lucide-react';
 
 export const ComplianceMonitoringView: React.FC = () => {
@@ -46,12 +48,40 @@ export const ComplianceMonitoringView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'GroupedByDate' | 'Kanban' | 'AllCards'>('Kanban');
 
+  // Revert Modal State & Toast Notifications
+  const [revertModalOpen, setRevertModalOpen] = useState(false);
+  const [itemToRevert, setItemToRevert] = useState<CompiledClientDeadline | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   // Revert form choice / reset item back to Action Pending in To-Do list
   const handleCancelFormChoice = (item: CompiledClientDeadline) => {
-    if (confirm(`Revert choice for ${item.clientName} (${item.ruleCode})?\n\nThis will remove any recorded assessment or payment tag and return the item back to Action Pending in the user's To-Do list.`)) {
-      resetPayableAssessment(item.clientId, item.ruleCode);
-      alert(`Reverted to pending for ${item.clientName} (${item.ruleCode})!`);
+    if (item.status === 'Already Paid' && !isSuperAdmin) {
+      setToastMessage(`Only Admin users are allowed to revert Settled & Paid items back to pending.`);
+      setTimeout(() => setToastMessage(null), 4500);
+      return;
     }
+    setItemToRevert(item);
+    setRevertModalOpen(true);
+  };
+
+  const confirmRevertToPending = () => {
+    if (!itemToRevert) return;
+    if (itemToRevert.status === 'Already Paid' && !isSuperAdmin) {
+      setToastMessage(`Only Admin users are allowed to revert Settled & Paid items back to pending.`);
+      setTimeout(() => setToastMessage(null), 4500);
+      setRevertModalOpen(false);
+      setItemToRevert(null);
+      return;
+    }
+    resetPayableAssessment(itemToRevert.clientId, itemToRevert.ruleCode);
+    setRevertModalOpen(false);
+    
+    // Show toast message confirmation
+    setToastMessage(`Filing status for ${itemToRevert.clientName} (${itemToRevert.ruleCode}) has been successfully reverted to Action Pending.`);
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4500);
+    setItemToRevert(null);
   };
 
   // Helper to format YYYY-MM-DD into "July 10, 2026"
@@ -587,9 +617,9 @@ export const ComplianceMonitoringView: React.FC = () => {
 
                 {/* Column Cards */}
                 <div className="space-y-3">
-                  {colItems.map(item => (
+                  {colItems.map((item, itemIdx) => (
                     <div
-                      key={item.id}
+                      key={`${col.id}_${item.id}_${itemIdx}`}
                       className={`p-3.5 rounded-xl border shadow-2xs transition-all space-y-2.5 bg-white flex flex-col justify-between ${
                         item.status === 'Already Paid'
                           ? 'border-emerald-200/90 hover:border-emerald-300 bg-emerald-50/20'
@@ -696,10 +726,18 @@ export const ComplianceMonitoringView: React.FC = () => {
                                 e.stopPropagation();
                                 handleCancelFormChoice(item);
                               }}
-                              className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md transition-colors cursor-pointer flex items-center justify-center shrink-0"
-                              title="Revert to pending"
+                              className={`p-1 border rounded-md transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
+                                item.status === 'Already Paid' && !isSuperAdmin
+                                  ? 'bg-slate-100 text-slate-400 border-slate-200'
+                                  : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                              }`}
+                              title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
                             >
-                              <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                              {item.status === 'Already Paid' && !isSuperAdmin ? (
+                                <Lock className="w-3.5 h-3.5 text-slate-400" />
+                              ) : (
+                                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                              )}
                             </button>
                           )}
                         </div>
@@ -758,9 +796,9 @@ export const ComplianceMonitoringView: React.FC = () => {
 
                   {/* List of Clients with Deadlines on this Date */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {itemsForDate.map(item => (
+                    {itemsForDate.map((item, itemIdx) => (
                       <div 
-                        key={item.id} 
+                        key={`${dueDateKey}_${item.id}_${itemIdx}`} 
                         className={`p-4 rounded-2xl border transition-all space-y-3 relative flex flex-col justify-between ${
                           item.status === 'Already Paid'
                             ? 'bg-emerald-50/40 border-emerald-200/80'
@@ -833,10 +871,18 @@ export const ComplianceMonitoringView: React.FC = () => {
                                   e.stopPropagation();
                                   handleCancelFormChoice(item);
                                 }}
-                                className="p-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-md transition-colors cursor-pointer flex items-center justify-center shrink-0"
-                                title="Revert to pending"
+                                className={`p-1 border rounded-md transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
+                                  item.status === 'Already Paid' && !isSuperAdmin
+                                    ? 'bg-slate-100 text-slate-400 border-slate-200'
+                                    : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                                }`}
+                                title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
                               >
-                                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                                {item.status === 'Already Paid' && !isSuperAdmin ? (
+                                  <Lock className="w-3.5 h-3.5 text-slate-400" />
+                                ) : (
+                                  <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                                )}
                               </button>
                             )}
                           </div>
@@ -864,8 +910,8 @@ export const ComplianceMonitoringView: React.FC = () => {
       {/* VIEW MODE 2: ALL CARDS VIEW */}
       {viewMode === 'AllCards' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredDeadlines.map(item => (
-            <div key={item.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3 relative flex flex-col justify-between">
+          {filteredDeadlines.map((item, itemIdx) => (
+            <div key={`${item.id}_${itemIdx}`} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3 relative flex flex-col justify-between">
               
               <div className="space-y-2">
                 <div className="flex justify-between items-start gap-2">
@@ -899,20 +945,44 @@ export const ComplianceMonitoringView: React.FC = () => {
                   <p className="font-mono font-bold text-indigo-900 text-sm">{item.formattedDateStr}</p>
                 </div>
 
-                <span className={`px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border ${
-                  item.status === 'Already Paid'
-                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                    : 'bg-slate-100 text-slate-600 border-slate-200'
-                }`}>
-                  {item.status === 'Already Paid' ? (
-                    <>
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Settled</span>
-                    </>
-                  ) : (
-                    <span>Pay in BIR/Benefits Payables</span>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border ${
+                    item.status === 'Already Paid'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                  }`}>
+                    {item.status === 'Already Paid' ? (
+                      <>
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Settled</span>
+                      </>
+                    ) : (
+                      <span>Pay in BIR/Benefits Payables</span>
+                    )}
+                  </span>
+
+                  {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCancelFormChoice(item);
+                      }}
+                      className={`p-1.5 border rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
+                        item.status === 'Already Paid' && !isSuperAdmin
+                          ? 'bg-slate-100 text-slate-400 border-slate-200'
+                          : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                      }`}
+                      title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
+                    >
+                      {item.status === 'Already Paid' && !isSuperAdmin ? (
+                        <Lock className="w-3.5 h-3.5 text-slate-400" />
+                      ) : (
+                        <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                      )}
+                    </button>
                   )}
-                </span>
+                </div>
               </div>
 
             </div>
@@ -923,6 +993,95 @@ export const ComplianceMonitoringView: React.FC = () => {
               No compliance records match your filters for {MONTH_FULL_NAMES[selectedMonth]} {selectedYear}.
             </div>
           )}
+        </div>
+      )}
+
+      {/* CUSTOM REVERT TO PENDING CONFIRMATION MODAL */}
+      {revertModalOpen && itemToRevert && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150">
+            
+            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl shrink-0">
+                  <RotateCcw className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">Revert Filing Status</h3>
+                  <p className="text-xs font-bold text-rose-600 mt-0.5">Are you sure you want to revert to pending?</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setRevertModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Item Overview */}
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Client / Company:</span>
+                <span className="font-extrabold text-slate-900">{itemToRevert.clientName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Requirement / Form:</span>
+                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  {itemToRevert.ruleCode}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Target Period Code:</span>
+                <span className="font-mono font-bold text-slate-800">{itemToRevert.periodLabel}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Current Status:</span>
+                <span className="font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                  {itemToRevert.status}
+                </span>
+              </div>
+            </div>
+
+            {/* Warning Details */}
+            <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                Reverting will remove any recorded tax assessment, zero payment entry, or payment tag for this form, returning the item back to <strong>Action Pending</strong> in the user's To-Do list.
+              </p>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setRevertModalOpen(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRevertToPending}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" /> Yes, Revert to Pending
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* TOAST NOTIFICATION BANNER */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-xs animate-in fade-in slide-in-from-bottom-5 duration-200 max-w-md">
+          <div className="p-1.5 bg-emerald-500/20 text-emerald-400 rounded-xl">
+            <Check className="w-4 h-4" />
+          </div>
+          <p className="font-medium">{toastMessage}</p>
         </div>
       )}
 

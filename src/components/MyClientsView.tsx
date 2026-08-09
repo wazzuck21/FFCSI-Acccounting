@@ -30,7 +30,8 @@ import {
   Download, 
   ExternalLink,
   Sparkles,
-  Layers
+  Layers,
+  Lock
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 
@@ -74,6 +75,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const [actionChoice, setActionChoice] = useState<'PAYABLE' | 'EXCESS_INPUT' | 'NO_PAYMENT' | 'FILED' | 'RESET'>('PAYABLE');
   const [payableAmountInput, setPayableAmountInput] = useState('');
   const [actionNotes, setActionNotes] = useState('');
+  const [actionPeriodLabel, setActionPeriodLabel] = useState('');
 
   // Assessment / Create Payable Modal State
   const [showCreateAssessmentModal, setShowCreateAssessmentModal] = useState(false);
@@ -93,9 +95,28 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     setTimeout(() => setToastMsg(null), 3500);
   };
 
-  // Month code label e.g., "08-2026"
+  // Calculate Target Applicable Month Period based on BIR & Statutory Schedule Matrix (e.g., Aug 2026 deadlines -> July 2026 target period)
+  const getTargetPeriodForMonth = (mName: MonthName, yr: number) => {
+    const mIdx = MONTH_INDEX[mName];
+    let prevMIdx = mIdx - 1;
+    let targetYr = yr;
+    if (prevMIdx < 0) {
+      prevMIdx = 11;
+      targetYr = yr - 1;
+    }
+    const prevMStr = String(prevMIdx + 1).padStart(2, '0');
+    const prevMName = MONTHS_LIST[prevMIdx];
+    const prevMFullName = MONTH_FULL_NAMES[prevMName];
+    return {
+      code: `${prevMStr}-${targetYr}`,
+      fullName: `${prevMFullName} ${targetYr}`,
+      shortName: `${prevMName}-${String(targetYr).slice(-2)}`
+    };
+  };
+
   const monthNumStr = String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0');
-  const currentPeriodCode = `${monthNumStr}-${selectedYear}`;
+  const targetPeriodInfo = getTargetPeriodForMonth(selectedMonth, selectedYear);
+  const currentPeriodCode = targetPeriodInfo.code; // e.g. "07-2026" for August 2026 deadline
 
   // Filter clients assigned to selected staff member
   const myAssignedClients = clients.filter(client => {
@@ -250,6 +271,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     setActionFormTitle(item.formTitle);
     setActionCategory(item.category);
     setActionDueDate(item.dueDateStr);
+    setActionPeriodLabel(item.periodLabel || currentPeriodCode);
     
     if (item.existingPayable) {
       if (item.existingPayable.payableAmount > 0) {
@@ -464,7 +486,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
         doc.setFont('helvetica', 'normal');
         doc.setTextColor(100, 116, 139);
-        doc.text(`Period: ${currentPeriodCode} | Form: ${item.formCode} | Status: ${item.status}`, 190, y, { align: 'right' });
+        doc.text(`Period: ${item.periodLabel || currentPeriodCode} | Form: ${item.formCode} | Status: ${item.status}`, 190, y, { align: 'right' });
         y += 5;
       });
 
@@ -647,9 +669,9 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               </p>
             </div>
           ) : (
-            toDoGroups.map((group) => (
+            toDoGroups.map((group, groupIdx) => (
               <div 
-                key={group.dueDateStr}
+                key={`${group.dueDateStr}_${groupIdx}`}
                 className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden text-xs"
               >
                 {/* Deadline Group Header as Requested in Sample */}
@@ -663,7 +685,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                         Deadline For {group.formattedDueDate} <span className="text-amber-300 font-mono">({group.formCodesStr})</span>
                       </h3>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        Target Month Period: <strong className="text-slate-200">{currentPeriodCode}</strong>
+                        Target Month Period: <strong className="text-amber-300 font-mono font-bold">{Array.from(new Set(group.items.map(i => i.periodLabel || currentPeriodCode))).join(' / ')}</strong> <span className="text-slate-300">({targetPeriodInfo.fullName})</span>
                       </p>
                     </div>
                   </div>
@@ -678,7 +700,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                   {group.items.map((item, index) => {
                     return (
                       <div 
-                        key={`${item.client.id}_${item.formCode}`}
+                        key={`${item.client.id}_${item.formCode}_${index}`}
                         className="p-4 hover:bg-slate-50/80 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                       >
                         <div className="flex items-start gap-3">
@@ -712,8 +734,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                                 {item.formCode}
                               </span>
 
-                              <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-bold rounded text-[10px]">
-                                Period: {currentPeriodCode}
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-mono font-bold rounded text-[10px] border border-slate-200">
+                                Period: {item.periodLabel || currentPeriodCode}
                               </span>
                             </div>
 
@@ -728,32 +750,42 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                         {/* Status Badge & Requested "Set Action" Button */}
                         <div className="flex items-center gap-3 shrink-0">
                           
-                          {/* Current Status Indicator */}
+                          {/* Current Status Indicator with Enlarged Prominent Amount */}
                           {item.status === 'PAYABLE_LOGGED' && (
-                            <div className="text-right">
-                              <span className="font-mono font-bold text-rose-700 text-xs block">
-                                ₱{item.existingPayable?.payableAmount?.toLocaleString()}
+                            <div className="text-right flex flex-col items-end">
+                              <span className="font-mono font-black text-rose-700 text-sm sm:text-base bg-rose-50 px-3 py-1 rounded-xl border border-rose-200 block shadow-2xs">
+                                ₱{item.existingPayable?.payableAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
-                              <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded border border-rose-200">
+                              <span className="text-[10px] font-bold text-rose-600 bg-rose-100/60 px-2 py-0.5 rounded border border-rose-200 mt-0.5">
                                 Unpaid Payable
                               </span>
                             </div>
                           )}
 
                           {item.status === 'NO_PAYMENT' && (
-                            <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold rounded-lg text-[10px] flex items-center gap-1">
-                              <Ban className="w-3 h-3 text-amber-600" /> No Payment / Zero Filed
-                            </span>
+                            <div className="text-right flex flex-col items-end">
+                              <span className="font-mono font-black text-amber-800 text-sm sm:text-base bg-amber-50 px-3 py-1 rounded-xl border border-amber-200 block shadow-2xs">
+                                ₱0.00
+                              </span>
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded border border-amber-200 mt-0.5">
+                                Zero Payment / Filed
+                              </span>
+                            </div>
                           )}
 
                           {item.status === 'FILED' && (
-                            <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[10px] flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Filed & Completed
-                            </span>
+                            <div className="text-right flex flex-col items-end">
+                              <span className="font-mono font-black text-emerald-800 text-sm sm:text-base bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 block shadow-2xs">
+                                ₱{item.existingPayable?.payableAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded border border-emerald-200 mt-0.5">
+                                Filed & Completed
+                              </span>
+                            </div>
                           )}
 
                           {item.status === 'NO_ACTION' && (
-                            <span className="text-[11px] text-slate-400 italic">
+                            <span className="px-2.5 py-1 bg-slate-100 text-slate-500 font-bold rounded-lg text-[10px] italic">
                               Action Pending
                             </span>
                           )}
@@ -798,9 +830,9 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               </p>
             </div>
           ) : (
-            doneFilingGroups.map((group) => (
+            doneFilingGroups.map((group, groupIdx) => (
               <div 
-                key={group.dueDateStr}
+                key={`${group.dueDateStr}_${groupIdx}`}
                 className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden text-xs"
               >
                 {/* Header */}
@@ -814,7 +846,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                         Done Filings for {group.formattedDueDate} <span className="text-emerald-300 font-mono">({group.formCodesStr})</span>
                       </h3>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        Target Month Period: <strong className="text-slate-200">{currentPeriodCode}</strong>
+                        Target Month Period: <strong className="text-emerald-300 font-mono font-bold">{Array.from(new Set(group.items.map(i => i.periodLabel || currentPeriodCode))).join(' / ')}</strong> <span className="text-slate-300">({targetPeriodInfo.fullName})</span>
                       </p>
                     </div>
                   </div>
@@ -828,7 +860,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                 <div className="divide-y divide-slate-100">
                   {group.items.map((item, index) => (
                     <div 
-                      key={`${item.client.id}_${item.formCode}`}
+                      key={`${item.client.id}_${item.formCode}_${index}`}
                       className="p-4 hover:bg-slate-50/80 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                     >
                       <div className="flex items-start gap-3">
@@ -856,8 +888,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                               {item.formCode}
                             </span>
 
-                            <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-mono font-bold rounded text-[10px]">
-                              Period: {currentPeriodCode}
+                            <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-mono font-bold rounded text-[10px] border border-slate-200">
+                              Period: {item.periodLabel || currentPeriodCode}
                             </span>
                           </div>
 
@@ -923,23 +955,28 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
       {/* SET ACTION MODAL (Entering Payable or Zero Payment) */}
       {actionModalOpen && actionClient && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-white space-y-4 text-xs">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150">
             
-            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-xl">
-                  <Zap className="w-5 h-5 text-amber-400" />
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-xl">
+                  <Zap className="w-5 h-5 text-indigo-600" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-base text-white">Set Action for {actionFormCode}</h3>
-                  <p className="text-xs text-slate-400">{actionClient.companyName} • Period: <strong className="text-amber-400">{currentPeriodCode}</strong></p>
+                  <h3 className="font-bold text-base text-slate-900">Set Action for {actionFormCode}</h3>
+                  <p className="text-xs text-slate-500 flex flex-wrap items-center gap-1.5 mt-0.5">
+                    <span>{actionClient.companyName}</span>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-800 font-mono font-bold text-[11px]">
+                      Target Month Period: {actionPeriodLabel || currentPeriodCode}
+                    </span>
+                  </p>
                 </div>
               </div>
 
               <button
                 onClick={() => setActionModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -948,126 +985,145 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
             <form onSubmit={handleSaveAction} className="space-y-4">
               
               <div>
-                <label className="block text-slate-400 font-medium mb-1">Company / Client</label>
+                <label className="block text-slate-600 font-bold mb-1 text-[11px]">Company / Client Profile</label>
                 <input
                   type="text"
                   readOnly
-                  value={actionClient.companyName}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-slate-200 font-bold"
+                  value={`${actionClient.companyName} (${actionClient.isBranch ? `Branch ${actionClient.branchCode || '001'}` : 'Main Office'})`}
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-bold"
                 />
               </div>
 
               {/* Action Choices Radio Selector */}
               <div className="space-y-2">
-                <label className="block text-slate-300 font-bold">Select Action Type:</label>
+                <label className="block text-slate-900 font-bold text-xs">Select Action Type:</label>
 
                 <div 
                   onClick={() => setActionChoice('PAYABLE')}
-                  className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                    actionChoice === 'PAYABLE' ? 'bg-indigo-950/50 border-indigo-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-400'
+                  className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                    actionChoice === 'PAYABLE' 
+                      ? 'bg-indigo-50/80 border-indigo-500 text-slate-900 ring-2 ring-indigo-200' 
+                      : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
                   }`}
                 >
                   <div className="space-y-0.5">
-                    <span className="font-bold text-xs block text-white">1. Enter Payable Amount (₱)</span>
-                    <p className="text-[10px] text-slate-400">Creates an assessment payable record for client billing & settlement.</p>
+                    <span className="font-bold text-xs block text-slate-900">1. Enter Payable Amount (₱)</span>
+                    <p className="text-[11px] text-slate-500">Creates an assessment payable record for client billing & settlement.</p>
                   </div>
-                  {actionChoice === 'PAYABLE' && <Check className="w-4 h-4 text-indigo-400" />}
+                  {actionChoice === 'PAYABLE' && <Check className="w-5 h-5 text-indigo-600 shrink-0" />}
                 </div>
 
                 {actionCategory === 'BIR' && (
                   <div 
                     onClick={() => setActionChoice('EXCESS_INPUT')}
-                    className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                      actionChoice === 'EXCESS_INPUT' ? 'bg-rose-950/50 border-rose-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-400'
+                    className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                      actionChoice === 'EXCESS_INPUT' 
+                        ? 'bg-purple-50/80 border-purple-500 text-slate-900 ring-2 ring-purple-200' 
+                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
                     }`}
                   >
                     <div className="space-y-0.5">
-                      <span className="font-bold text-xs block text-rose-300">2. Excess Input (Negative Payable Amount)</span>
-                      <p className="text-[10px] text-slate-400">Converts amount to negative (e.g. input 1,000 becomes -1,000 payable credit).</p>
+                      <span className="font-bold text-xs block text-purple-900">2. Excess Input (Negative Payable Amount)</span>
+                      <p className="text-[11px] text-slate-500">Converts amount to negative (e.g. input 1,000 becomes -1,000 payable credit).</p>
                     </div>
-                    {actionChoice === 'EXCESS_INPUT' && <Check className="w-4 h-4 text-rose-400" />}
+                    {actionChoice === 'EXCESS_INPUT' && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
                   </div>
                 )}
 
                 {viewMode === 'DONE_FILING' ? (
                   <div 
                     onClick={() => setActionChoice('RESET')}
-                    className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                      actionChoice === 'RESET' ? 'bg-amber-950/50 border-amber-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-400'
+                    className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                      actionChoice === 'RESET' 
+                        ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
+                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
                     }`}
                   >
                     <div className="space-y-0.5">
-                      <span className="font-bold text-xs block text-amber-300">
+                      <span className="font-bold text-xs block text-amber-900">
                         {actionCategory === 'BIR' ? '3. Cancel choice / reset to action pending' : '2. Cancel choice / reset to action pending'}
                       </span>
-                      <p className="text-[10px] text-slate-400">Removes logged assessment and returns item back to To-Do List.</p>
+                      <p className="text-[11px] text-slate-500">Removes logged assessment and returns item back to To-Do List.</p>
                     </div>
-                    {actionChoice === 'RESET' && <Check className="w-4 h-4 text-amber-400" />}
+                    {actionChoice === 'RESET' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
                   </div>
                 ) : (
                   <div 
                     onClick={() => setActionChoice('NO_PAYMENT')}
-                    className={`p-3 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                      actionChoice === 'NO_PAYMENT' ? 'bg-amber-950/50 border-amber-500 text-white' : 'bg-slate-800/60 border-slate-700 text-slate-400'
+                    className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                      actionChoice === 'NO_PAYMENT' 
+                        ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
+                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
                     }`}
                   >
                     <div className="space-y-0.5">
-                      <span className="font-bold text-xs block text-amber-300">
+                      <span className="font-bold text-xs block text-emerald-900">
                         {actionCategory === 'BIR' ? '3. No Payment Needed / Zero Tax Filed' : '2. No Payment Needed / Zero Tax Filed'}
                       </span>
-                      <p className="text-[10px] text-slate-400">Marks this return as filed with zero payment / no tax due.</p>
+                      <p className="text-[11px] text-slate-500">Marks this return as filed with zero payment / no tax due.</p>
                     </div>
-                    {actionChoice === 'NO_PAYMENT' && <Check className="w-4 h-4 text-amber-400" />}
+                    {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
                   </div>
                 )}
 
-                <div className="p-2.5 bg-slate-800/40 border border-slate-700/60 rounded-xl text-[10px] text-slate-400 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>Tagging payables as PAID is performed exclusively in BIR & Benefits Payables.</span>
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Tagging payables as PAID is performed in Payables Management.</span>
                 </div>
               </div>
 
-              {/* Amount Input (only if Payable or Excess Input) */}
+              {/* Amount Input (Prominent & Larger Text) */}
               {actionChoice === 'PAYABLE' && (
-                <div>
-                  <label className="block text-amber-300 font-bold mb-1">Enter Assessed Payable Amount (₱) *</label>
-                  <CurrencyInput
-                    placeholder="15,000.00"
-                    value={payableAmountInput}
-                    onChange={val => setPayableAmountInput(String(val))}
-                    className="w-full bg-slate-800 border border-amber-500/60 rounded-xl text-white font-mono font-bold text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40"
-                  />
+                <div className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-200 space-y-1.5">
+                  <label className="block text-indigo-950 font-extrabold text-sm">
+                    Enter Assessed Payable Amount (₱) *
+                  </label>
+                  <div className="relative">
+                    <CurrencyInput
+                      placeholder="0.00"
+                      value={payableAmountInput}
+                      onChange={val => setPayableAmountInput(String(val))}
+                      className="w-full bg-white border-2 border-indigo-500 rounded-xl px-4 py-3 text-slate-900 font-mono font-black text-xl shadow-xs focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Specify the assessed tax or statutory benefit payable for {actionFormCode}.
+                  </p>
                 </div>
               )}
 
               {actionChoice === 'EXCESS_INPUT' && (
-                <div>
-                  <label className="block text-rose-300 font-bold mb-1">Enter Excess Input Amount (Will convert to -₱) *</label>
-                  <CurrencyInput
-                    placeholder="1,000.00"
-                    value={payableAmountInput}
-                    onChange={val => setPayableAmountInput(String(val))}
-                    className="w-full bg-slate-800 border border-rose-500/60 rounded-xl text-rose-300 font-mono font-bold text-sm focus:outline-none focus:ring-2 focus:ring-rose-500/40"
-                  />
+                <div className="bg-purple-50/50 p-4 rounded-xl border border-purple-200 space-y-1.5">
+                  <label className="block text-purple-950 font-extrabold text-sm">
+                    Enter Excess Input Amount (Will convert to -₱) *
+                  </label>
+                  <div className="relative">
+                    <CurrencyInput
+                      placeholder="0.00"
+                      value={payableAmountInput}
+                      onChange={val => setPayableAmountInput(String(val))}
+                      className="w-full bg-white border-2 border-purple-500 rounded-xl px-4 py-3 text-purple-950 font-mono font-black text-xl shadow-xs focus:outline-none focus:ring-4 focus:ring-purple-100"
+                    />
+                  </div>
                   {payableAmountInput && Number(payableAmountInput) > 0 && (
-                    <p className="text-[11px] text-rose-400 font-bold mt-1">
+                    <p className="text-[11px] text-purple-700 font-bold">
                       Note: Will be saved as -₱{Number(payableAmountInput).toLocaleString()} credit.
                     </p>
                   )}
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setActionModalOpen(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold"
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center gap-1.5"
+                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
                 >
                   <Check className="w-4 h-4" /> Save Action
                 </button>
@@ -1133,8 +1189,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                   >
                     {assessmentCategory === 'BIR' ? (
                       masterChoices.birTaxOptions && masterChoices.birTaxOptions.length > 0 ? (
-                        masterChoices.birTaxOptions.map(opt => (
-                          <option key={opt.id} value={opt.code}>{opt.code} - {opt.name}</option>
+                        masterChoices.birTaxOptions.map((opt, idx) => (
+                          <option key={`bir_${opt.id}_${idx}`} value={opt.code}>{opt.code} - {opt.name}</option>
                         ))
                       ) : (
                         <>
@@ -1148,8 +1204,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                       )
                     ) : (
                       masterChoices.benefitsOptions && masterChoices.benefitsOptions.length > 0 ? (
-                        masterChoices.benefitsOptions.map(opt => (
-                          <option key={opt.id} value={opt.code}>{opt.code} - {opt.name}</option>
+                        masterChoices.benefitsOptions.map((opt, idx) => (
+                          <option key={`ben_${opt.id}_${idx}`} value={opt.code}>{opt.code} - {opt.name}</option>
                         ))
                       ) : (
                         <>

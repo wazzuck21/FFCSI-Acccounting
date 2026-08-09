@@ -19,7 +19,9 @@ import {
   Lock,
   RotateCcw,
   Edit2,
-  History
+  History,
+  X,
+  Check
 } from 'lucide-react';
 
 export const PayablesManagementView: React.FC = () => {
@@ -75,6 +77,20 @@ export const PayablesManagementView: React.FC = () => {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [historyPayable, setHistoryPayable] = useState<PayableRecord | null>(null);
 
+  // Custom Modal States & Toast Notifications
+  const [showRevokeConfirmModal, setShowRevokeConfirmModal] = useState(false);
+  const [revokePayableTarget, setRevokePayableTarget] = useState<PayableRecord | null>(null);
+
+  const [showResetConfirmModal, setShowResetConfirmModal] = useState(false);
+  const [resetPayableTarget, setResetPayableTarget] = useState<PayableRecord | null>(null);
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const triggerToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
   // Table Filters & Sort (Always default to All Categories, Unpaid/Awaiting Payment, Current Month & Year) ⭐
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'BIR' | 'Benefits'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'Unpaid' | 'Paid' | 'No Payment'>('Unpaid');
@@ -128,26 +144,38 @@ export const PayablesManagementView: React.FC = () => {
 
     amendPayablePayment(modifyPayable.id, updatedPayment, detailsStr, currentUser?.fullName || 'User');
     setShowModifyModal(false);
-    alert(`Payment tag details successfully modified for ${modifyPayable.clientName} (${modifyPayable.itemName})!`);
+    triggerToast(`Payment tag details successfully modified for ${modifyPayable.clientName} (${modifyPayable.itemName})!`);
   };
 
   // Revoke / Reset Payment Tag inside Modify Modal
   const handleRevokePaymentInModal = () => {
     if (!modifyPayable) return;
-    if (confirm(`Revoke and cancel payment tag for ${modifyPayable.clientName} (${modifyPayable.itemName})?\n\nThis will return the item back to Unpaid status.`)) {
-      const reason = modifyNotes.trim() || 'Re-audit / Revoked payment tag by admin';
-      cancelPayablePayment(modifyPayable.id, reason, currentUser?.fullName || 'User');
-      setShowModifyModal(false);
-      alert(`Payment tag revoked for ${modifyPayable.clientName}. Item returned to Unpaid status.`);
-    }
+    setRevokePayableTarget(modifyPayable);
+    setShowRevokeConfirmModal(true);
+  };
+
+  const confirmRevokePayment = () => {
+    if (!revokePayableTarget) return;
+    const reason = modifyNotes.trim() || 'Re-audit / Revoked payment tag by admin';
+    cancelPayablePayment(revokePayableTarget.id, reason, currentUser?.fullName || 'User');
+    setShowRevokeConfirmModal(false);
+    setShowModifyModal(false);
+    triggerToast(`Payment tag revoked for ${revokePayableTarget.clientName}. Item returned to Unpaid status.`);
+    setRevokePayableTarget(null);
   };
 
   // Handle Delete / Reset Payable Assessment
   const handleDeletePayableAssessment = (p: PayableRecord) => {
-    if (confirm(`Cancel and reset assessment for ${p.clientName} (${p.itemName})?\n\nThis will remove the recorded payable and return the item back to Action Pending in the To-Do list.`)) {
-      deletePayable(p.id);
-      alert(`Assessment reset for ${p.clientName} (${p.itemName}). Returned to Action Pending.`);
-    }
+    setResetPayableTarget(p);
+    setShowResetConfirmModal(true);
+  };
+
+  const confirmResetAssessment = () => {
+    if (!resetPayableTarget) return;
+    deletePayable(resetPayableTarget.id);
+    setShowResetConfirmModal(false);
+    triggerToast(`Assessment for ${resetPayableTarget.clientName} (${resetPayableTarget.itemName}) reset. Returned to Action Pending.`);
+    setResetPayableTarget(null);
   };
 
   // Handle create payable submission
@@ -948,6 +976,156 @@ export const PayablesManagementView: React.FC = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* CUSTOM CONFIRM REVOKE PAYMENT TAG MODAL */}
+      {showRevokeConfirmModal && revokePayableTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150">
+            
+            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl shrink-0">
+                  <RotateCcw className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">Revoke Payment Tag</h3>
+                  <p className="text-xs font-bold text-rose-600 mt-0.5">Are you sure you want to revert to unpaid?</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowRevokeConfirmModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Client / Company:</span>
+                <span className="font-extrabold text-slate-900">{revokePayableTarget.clientName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Requirement / Form:</span>
+                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  {revokePayableTarget.itemName}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Target Month:</span>
+                <span className="font-mono font-bold text-slate-800">{revokePayableTarget.month}</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                Revoking this payment tag will return the item back to <strong>Unpaid status</strong> in the Payables dashboard.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowRevokeConfirmModal(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRevokePayment}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" /> Yes, Revoke Payment
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM CONFIRM RESET ASSESSMENT MODAL */}
+      {showResetConfirmModal && resetPayableTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150">
+            
+            <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl shrink-0">
+                  <RotateCcw className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-base text-slate-900">Reset Assessment Record</h3>
+                  <p className="text-xs font-bold text-rose-600 mt-0.5">Are you sure you want to revert to pending?</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowResetConfirmModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Client / Company:</span>
+                <span className="font-extrabold text-slate-900">{resetPayableTarget.clientName}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Requirement / Form:</span>
+                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
+                  {resetPayableTarget.itemName}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">Amount Recorded:</span>
+                <span className="font-mono font-bold text-slate-900">₱{resetPayableTarget.payableAmount.toLocaleString()}</span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                Resetting will remove this recorded payable assessment and return the form back to <strong>Action Pending</strong> in the user's To-Do list.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowResetConfirmModal(false)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmResetAssessment}
+                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" /> Yes, Revert to Pending
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* TOAST BANNER */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white border border-slate-700 px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-3 text-xs animate-in fade-in slide-in-from-bottom-5 duration-200 max-w-md">
+          <div className="p-1.5 bg-emerald-500/20 text-emerald-400 rounded-xl">
+            <Check className="w-4 h-4" />
+          </div>
+          <p className="font-medium">{toastMessage}</p>
         </div>
       )}
 

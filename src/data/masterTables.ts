@@ -486,10 +486,11 @@ export function generateDefaultScheduleForFrequency(
     return MONTHS_LIST.map((m, idx) => {
       const isApp = apps.includes(m);
       const mStr = String(idx + 1).padStart(2, '0');
+      const prevM = idx === 0 ? 'Dec-25' : `${MONTHS_LIST[idx - 1]}-26`;
       return {
         month: m,
         dueDate: isApp ? `2026-${mStr}-${dayStr}` : 'N/A',
-        periodLabel: isApp ? `${m}-26` : 'N/A'
+        periodLabel: isApp ? prevM : 'N/A'
       };
     });
   }
@@ -644,9 +645,13 @@ export function getRuleDeadlineForMonth(
         if (parts.length === 3 && !rule.deadlineDay) {
           dayStr = String(parseInt(parts[2], 10) || 10).padStart(2, '0');
         }
+        let calcLabel = match.periodLabel;
+        if (calcLabel === `${m}-${String(targetYear).slice(-2)}`) {
+          calcLabel = mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
+        }
         return {
           dueDateStr: `${targetYear}-${mStr}-${dayStr}`,
-          label: match.periodLabel || `${m}-${String(targetYear).slice(-2)}`,
+          label: calcLabel || (mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`),
           isNotRequired: false
         };
       }
@@ -654,9 +659,10 @@ export function getRuleDeadlineForMonth(
 
     // 4. Fallback to standard deadline Day for the applicable custom month
     const day = String(rule.deadlineDay || 10).padStart(2, '0');
+    const fallbackLabel = mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
     return {
       dueDateStr: `${targetYear}-${mStr}-${day}`,
-      label: rule.customDescription || `${m}-${String(targetYear).slice(-2)}`,
+      label: fallbackLabel,
       isNotRequired: false
     };
   }
@@ -688,7 +694,15 @@ export function getRuleDeadlineForMonth(
       const mStr = String(mIdx + 1).padStart(2, '0');
       const adjustedDueDate = `${targetYear}-${mStr}-${dayStr}`;
 
-      let adjustedLabel = match.periodLabel || `${m}-${String(targetYear).slice(-2)}`;
+      let adjustedLabel = match.periodLabel;
+      if (adjustedLabel === `${m}-${String(targetYear).slice(-2)}` && (rule.frequency === 'Monthly' || rule.frequency === 'Custom')) {
+        adjustedLabel = mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
+      }
+      if (!adjustedLabel) {
+        adjustedLabel = (rule.frequency === 'Monthly' || rule.frequency === 'Custom')
+          ? (mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`)
+          : `${m}-${String(targetYear).slice(-2)}`;
+      }
       return { dueDateStr: adjustedDueDate, label: adjustedLabel, isNotRequired: false };
     }
     return null;
