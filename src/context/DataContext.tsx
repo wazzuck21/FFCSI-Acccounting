@@ -108,6 +108,7 @@ interface DataContextType {
   addDocument: (doc: Omit<DocumentItem, 'id' | 'uploadDate'>) => void;
   
   addMasterBusinessNature: (nature: string) => void;
+  deleteMasterBusinessNature: (nature: string) => void;
   addMasterBirOption: (option: CustomDeadlineRule) => void;
   updateMasterBirOption: (id: string, option: CustomDeadlineRule) => void;
   deleteMasterBirOption: (id: string) => void;
@@ -116,6 +117,7 @@ interface DataContextType {
   deleteMasterBenefitsOption: (id: string) => void;
   applyMasterDeadlineRuleToAllClients: (rule: CustomDeadlineRule, userId?: string, userName?: string) => void;
   addMasterBank: (bankName: string) => void;
+  deleteMasterBank: (bankName: string) => void;
   
   // Linked Forms & Choices ⭐
   addFormLinkage: (primaryCode: string, linkedCodes: string[], description?: string) => void;
@@ -245,10 +247,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const storedMaster = await getLocalData<MasterChoices>('afms_master_choices');
       if (storedMaster) {
+        const mergedBirOptions = DEFAULT_BIR_TAX_OPTIONS.map(def => {
+          const custom = storedMaster.birTaxOptions?.find(o => o.id === def.id || o.code.toLowerCase() === def.code.toLowerCase());
+          return custom ? { ...def, ...custom } : def;
+        });
+        const extraBir = (storedMaster.birTaxOptions || []).filter(o => !DEFAULT_BIR_TAX_OPTIONS.some(def => def.id === o.id || def.code.toLowerCase() === o.code.toLowerCase()));
+
+        const mergedBenOptions = DEFAULT_BENEFITS_OPTIONS.map(def => {
+          const custom = storedMaster.benefitsOptions?.find(o => o.id === def.id || o.code.toLowerCase() === def.code.toLowerCase());
+          return custom ? { ...def, ...custom } : def;
+        });
+        const extraBen = (storedMaster.benefitsOptions || []).filter(o => !DEFAULT_BENEFITS_OPTIONS.some(def => def.id === o.id || def.code.toLowerCase() === def.code.toLowerCase()));
+
         setMasterChoices({
           businessNatures: storedMaster.businessNatures || DEFAULT_BUSINESS_NATURES,
-          birTaxOptions: storedMaster.birTaxOptions || DEFAULT_BIR_TAX_OPTIONS,
-          benefitsOptions: storedMaster.benefitsOptions || DEFAULT_BENEFITS_OPTIONS,
+          birTaxOptions: [...mergedBirOptions, ...extraBir],
+          benefitsOptions: [...mergedBenOptions, ...extraBen],
           banksList: storedMaster.banksList || DEFAULT_BANKS,
           formLinkages: (storedMaster.formLinkages && storedMaster.formLinkages.length > 0)
             ? storedMaster.formLinkages.map((l, idx) => ({
@@ -894,6 +908,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const deleteMasterBusinessNature = (nature: string) => {
+    const updated = {
+      ...masterChoices,
+      businessNatures: masterChoices.businessNatures.filter(n => n !== nature)
+    };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+  };
+
   const addMasterBirOption = (option: CustomDeadlineRule) => {
     const updated = {
       ...masterChoices,
@@ -912,10 +935,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_master_choices', updated);
   };
 
-  const deleteMasterBirOption = (id: string) => {
+  const deleteMasterBirOption = (idOrCode: string) => {
+    const target = idOrCode.toLowerCase();
     const updated = {
       ...masterChoices,
-      birTaxOptions: masterChoices.birTaxOptions.filter(o => o.id !== id)
+      birTaxOptions: masterChoices.birTaxOptions.filter(o => o.id.toLowerCase() !== target && o.code.toLowerCase() !== target)
     };
     setMasterChoices(updated);
     persistState('afms_master_choices', updated);
@@ -939,10 +963,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_master_choices', updated);
   };
 
-  const deleteMasterBenefitsOption = (id: string) => {
+  const deleteMasterBenefitsOption = (idOrCode: string) => {
+    const target = idOrCode.toLowerCase();
     const updated = {
       ...masterChoices,
-      benefitsOptions: masterChoices.benefitsOptions.filter(o => o.id !== id)
+      benefitsOptions: masterChoices.benefitsOptions.filter(o => o.id.toLowerCase() !== target && o.code.toLowerCase() !== target)
     };
     setMasterChoices(updated);
     persistState('afms_master_choices', updated);
@@ -989,8 +1014,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else if (rule.fixedMonthDay) {
       targetDueDate = `${currentYear}-${rule.fixedMonthDay}`;
     } else if (rule.monthlySchedule2026 && rule.monthlySchedule2026.length > 0) {
-      // Find upcoming or latest monthly schedule
-      const upcoming = rule.monthlySchedule2026.find(s => new Date(s.dueDate) >= now) || rule.monthlySchedule2026[0];
+      // Find upcoming or latest valid monthly schedule
+      const validSchedules = rule.monthlySchedule2026.filter(s => s.dueDate && s.dueDate !== 'N/A' && s.dueDate !== 'NONE');
+      const upcoming = validSchedules.find(s => new Date(s.dueDate) >= now) || validSchedules[0];
       if (upcoming) {
         targetDueDate = upcoming.dueDate;
       }
@@ -1058,6 +1084,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setMasterChoices(updated);
       persistState('afms_master_choices', updated);
     }
+  };
+
+  const deleteMasterBank = (bankName: string) => {
+    const updated = {
+      ...masterChoices,
+      banksList: masterChoices.banksList.filter(b => b !== bankName)
+    };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
   };
 
   const addFormLinkage = (primaryCodeOrObj: string | FormLinkage, linkedCodes?: string[], description?: string) => {
@@ -1477,6 +1512,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveCustomService,
         addDocument,
         addMasterBusinessNature,
+        deleteMasterBusinessNature,
         addMasterBirOption,
         updateMasterBirOption,
         deleteMasterBirOption,
@@ -1485,6 +1521,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteMasterBenefitsOption,
         applyMasterDeadlineRuleToAllClients,
         addMasterBank,
+        deleteMasterBank,
         addFormLinkage,
         updateFormLinkage,
         deleteFormLinkage,

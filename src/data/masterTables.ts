@@ -41,6 +41,7 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     deadlineDay: 10,
     customDescription: 'Every 10th day of the following month (eFPS: 11th - 15th)',
     monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-10', periodLabel: 'Dec-25' },
       { month: 'Feb', dueDate: '2026-02-10', periodLabel: 'Jan-26' },
       { month: 'Mar', dueDate: '2026-03-10', periodLabel: 'Feb-26' },
       { month: 'Apr', dueDate: '2026-04-10', periodLabel: 'Mar-26' },
@@ -86,7 +87,7 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
     deadlineDay: 30,
-    customDescription: 'Every last day of the month following the close of the quarter',
+    customDescription: 'Every 30th day of the month following the close of the quarter',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-30', periodLabel: '4Q - 2025' },
       { month: 'Apr', dueDate: '2026-04-30', periodLabel: '1Q - 2026' },
@@ -133,12 +134,12 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     category: 'BIR',
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
-    deadlineDay: 15,
-    customDescription: 'Every 60 days following the close of each of the first 3 quarters (May 15 1Q-2026)',
+    deadlineDay: 29,
+    customDescription: 'Every 29th day of the month following the close of each of the first 3 quarters (May 29 for 1Q-2026)',
     monthlySchedule2026: [
-      { month: 'May', dueDate: '2026-05-15', periodLabel: '1Q - 2026' },
-      { month: 'Aug', dueDate: '2026-08-15', periodLabel: '2Q - 2026' },
-      { month: 'Nov', dueDate: '2026-11-15', periodLabel: '3Q - 2026' }
+      { month: 'May', dueDate: '2026-05-29', periodLabel: '1Q - 2026' },
+      { month: 'Aug', dueDate: '2026-08-29', periodLabel: '2Q - 2026' },
+      { month: 'Nov', dueDate: '2026-11-29', periodLabel: '3Q - 2026' }
     ]
   },
   {
@@ -148,10 +149,10 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     category: 'BIR',
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
-    deadlineDay: 30,
-    customDescription: 'May 30 (1Q-2026), Aug 15 (2Q-2026), Nov 15 (3Q-2026)',
+    deadlineDay: 15,
+    customDescription: 'May 15 (1Q-2026), Aug 15 (2Q-2026), Nov 15 (3Q-2026)',
     monthlySchedule2026: [
-      { month: 'May', dueDate: '2026-05-30', periodLabel: '1Q - 2026' },
+      { month: 'May', dueDate: '2026-05-15', periodLabel: '1Q - 2026' },
       { month: 'Aug', dueDate: '2026-08-15', periodLabel: '2Q - 2026' },
       { month: 'Nov', dueDate: '2026-11-15', periodLabel: '3Q - 2026' }
     ]
@@ -164,7 +165,7 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Annually',
     deadlineDay: 15,
-    customDescription: 'Every 15th day of the 4th month following the close of the taxable year (April 15)',
+    customDescription: 'Every 15th day of April following the close of the taxable year',
     monthlySchedule2026: [
       { month: 'Apr', dueDate: '2026-04-15', periodLabel: 'TY - 2025' }
     ]
@@ -426,6 +427,76 @@ export const MONTH_INDEX: Record<string, number> = {
   Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
 };
 
+export function generateDefaultScheduleForFrequency(
+  frequency: 'Monthly' | 'Quarterly' | 'Annually' | 'Custom',
+  deadlineDay: number = 10,
+  code: string = '',
+  applicableMonths?: string[]
+): { month: 'Jan'|'Feb'|'Mar'|'Apr'|'May'|'Jun'|'Jul'|'Aug'|'Sep'|'Oct'|'Nov'|'Dec'; dueDate: string; periodLabel: string }[] {
+  const codeUpper = code.trim().toUpperCase();
+  const dayStr = String(deadlineDay || 10).padStart(2, '0');
+
+  if (frequency === 'Monthly') {
+    return MONTHS_LIST.map((m, idx) => {
+      const mStr = String(idx + 1).padStart(2, '0');
+      const periodLabel = idx === 0 ? 'Dec-25' : `${MONTHS_LIST[idx - 1]}-26`;
+      return {
+        month: m,
+        dueDate: `2026-${mStr}-${dayStr}`,
+        periodLabel
+      };
+    });
+  }
+
+  if (frequency === 'Quarterly') {
+    if (codeUpper === '1701Q') {
+      const day = String(deadlineDay || 15).padStart(2, '0');
+      return [
+        { month: 'May', dueDate: `2026-05-${day}`, periodLabel: '1Q - 2026' },
+        { month: 'Aug', dueDate: `2026-08-${day}`, periodLabel: '2Q - 2026' },
+        { month: 'Nov', dueDate: `2026-11-${day}`, periodLabel: '3Q - 2026' }
+      ];
+    }
+    if (codeUpper === '1702Q') {
+      const day = String(deadlineDay || 29).padStart(2, '0');
+      return [
+        { month: 'May', dueDate: `2026-05-${day}`, periodLabel: '1Q - 2026' },
+        { month: 'Aug', dueDate: `2026-08-${day}`, periodLabel: '2Q - 2026' },
+        { month: 'Nov', dueDate: `2026-11-${day}`, periodLabel: '3Q - 2026' }
+      ];
+    }
+    const day = String(deadlineDay || 25).padStart(2, '0');
+    return [
+      { month: 'Jan', dueDate: `2026-01-${day}`, periodLabel: '4Q - 2025' },
+      { month: 'Apr', dueDate: `2026-04-${day}`, periodLabel: '1Q - 2026' },
+      { month: 'Jul', dueDate: `2026-07-${day}`, periodLabel: '2Q - 2026' },
+      { month: 'Oct', dueDate: `2026-10-${day}`, periodLabel: '3Q - 2026' }
+    ];
+  }
+
+  if (frequency === 'Annually') {
+    const day = String(deadlineDay || 15).padStart(2, '0');
+    return [
+      { month: 'Apr', dueDate: `2026-04-${day}`, periodLabel: 'TY - 2025' }
+    ];
+  }
+
+  if (frequency === 'Custom') {
+    const apps = applicableMonths && applicableMonths.length > 0 ? applicableMonths : ['Jan', 'Feb', 'Jun', 'Jul'];
+    return MONTHS_LIST.map((m, idx) => {
+      const isApp = apps.includes(m);
+      const mStr = String(idx + 1).padStart(2, '0');
+      return {
+        month: m,
+        dueDate: isApp ? `2026-${mStr}-${dayStr}` : 'N/A',
+        periodLabel: isApp ? `${m}-26` : 'N/A'
+      };
+    });
+  }
+
+  return [];
+}
+
 export function getRuleDeadlineForMonth(
   rule: CustomDeadlineRule, 
   m: string, 
@@ -475,7 +546,7 @@ export function getRuleDeadlineForMonth(
       const q2Due = (fyEndIdx + 8) % 12; // 60 days after Q2 end
       const q3Due = (fyEndIdx + 11) % 12; // 60 days after Q3 end
 
-      const day = codeUpper === '1701Q' ? '30' : '15';
+      const day = codeUpper === '1701Q' ? '15' : '29';
 
       if (mIdx === q1Due) {
         const mStr = String(q1Due + 1).padStart(2, '0');
@@ -521,7 +592,86 @@ export function getRuleDeadlineForMonth(
     }
   }
 
-  // Fallback / Standard Calendar Schedule
+  // ⭐ CUSTOM FILING FREQUENCY CHECK (or custom applicableMonths)
+  if (rule.frequency === 'Custom' || (rule.applicableMonths && rule.applicableMonths.length > 0)) {
+    const months = rule.applicableMonths && rule.applicableMonths.length > 0
+      ? rule.applicableMonths
+      : ['Jan', 'Feb', 'Jun', 'Jul'];
+
+    const isApplicable = months.some(am => am.toLowerCase() === m.toLowerCase());
+    if (!isApplicable) {
+      return null;
+    }
+
+    const mStr = String(mIdx + 1).padStart(2, '0');
+
+    // 1. Specific Date
+    if (rule.specificDate) {
+      const parts = rule.specificDate.split('-');
+      if (parts.length === 3) {
+        const sMonthIdx = parseInt(parts[1], 10) - 1;
+        if (sMonthIdx === mIdx) {
+          return {
+            dueDateStr: `${targetYear}-${mStr}-${parts[2]}`,
+            label: rule.customDescription || `${m}-${String(targetYear).slice(-2)}`,
+            isNotRequired: false
+          };
+        }
+      }
+    }
+
+    // 2. Fixed Month Day
+    if (rule.fixedMonthDay) {
+      const parts = rule.fixedMonthDay.split('-');
+      if (parts.length === 2) {
+        const fMonthIdx = parseInt(parts[0], 10) - 1;
+        if (fMonthIdx === mIdx) {
+          return {
+            dueDateStr: `${targetYear}-${mStr}-${parts[1]}`,
+            label: rule.customDescription || `${m}-${String(targetYear).slice(-2)}`,
+            isNotRequired: false
+          };
+        }
+      }
+    }
+
+    // 3. Check monthlySchedule2026 for explicit due date override for month m
+    if (rule.monthlySchedule2026 && rule.monthlySchedule2026.length > 0) {
+      const match = rule.monthlySchedule2026.find(s => s.month === m);
+      if (match && match.dueDate && match.dueDate !== 'NONE' && match.dueDate !== 'N/A' && match.periodLabel !== 'N/A' && match.periodLabel !== 'Not Required') {
+        const parts = match.dueDate.split('-');
+        let dayStr = rule.deadlineDay ? String(rule.deadlineDay).padStart(2, '0') : '10';
+        if (parts.length === 3 && !rule.deadlineDay) {
+          dayStr = String(parseInt(parts[2], 10) || 10).padStart(2, '0');
+        }
+        return {
+          dueDateStr: `${targetYear}-${mStr}-${dayStr}`,
+          label: match.periodLabel || `${m}-${String(targetYear).slice(-2)}`,
+          isNotRequired: false
+        };
+      }
+    }
+
+    // 4. Fallback to standard deadline Day for the applicable custom month
+    const day = String(rule.deadlineDay || 10).padStart(2, '0');
+    return {
+      dueDateStr: `${targetYear}-${mStr}-${day}`,
+      label: rule.customDescription || `${m}-${String(targetYear).slice(-2)}`,
+      isNotRequired: false
+    };
+  }
+
+  // Monthly Standard Schedule Calculation
+  if (rule.frequency === 'Monthly') {
+    const mStr = String(mIdx + 1).padStart(2, '0');
+    const day = String(rule.deadlineDay || 10).padStart(2, '0');
+    const periodLabel = mIdx === 0 
+      ? `Dec-${String(targetYear - 1).slice(-2)}` 
+      : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
+    return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: periodLabel, isNotRequired: false };
+  }
+
+  // Fallback / Standard Calendar Schedule for Quarterly, Annually, etc.
   if (rule.monthlySchedule2026 && rule.monthlySchedule2026.length > 0) {
     const match = rule.monthlySchedule2026.find(s => s.month === m);
     if (match) {
@@ -530,8 +680,8 @@ export function getRuleDeadlineForMonth(
       }
 
       const parts = match.dueDate.split('-');
-      let dayStr = String(rule.deadlineDay || 15).padStart(2, '0');
-      if (parts.length === 3) {
+      let dayStr = rule.deadlineDay ? String(rule.deadlineDay).padStart(2, '0') : '15';
+      if (parts.length === 3 && !rule.deadlineDay) {
         dayStr = String(parseInt(parts[2], 10) || 15).padStart(2, '0');
       }
 
@@ -546,25 +696,28 @@ export function getRuleDeadlineForMonth(
 
   const mStr = String(mIdx + 1).padStart(2, '0');
 
-  if (rule.frequency === 'Monthly') {
-    const day = String(rule.deadlineDay || 10).padStart(2, '0');
-    return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `${m}-${String(targetYear).slice(-2)}`, isNotRequired: false };
-  }
-
   if (rule.frequency === 'Quarterly') {
-    if (['Jan', 'Apr', 'Jul', 'Oct'].includes(m) && ['1601EQ', '2550Q', '2551Q'].includes(rule.code)) {
-      const day = String(rule.deadlineDay || 25).padStart(2, '0');
-      const qLabel = m === 'Jan' ? `4Q-${targetYear - 1}` : m === 'Apr' ? `1Q-${targetYear}` : m === 'Jul' ? `2Q-${targetYear}` : `3Q-${targetYear}`;
+    const codeUpper = rule.code.trim().toUpperCase();
+    if (['Jan', 'Apr', 'Jul', 'Oct'].includes(m) && ['1601EQ', '2550Q', '2551Q'].includes(codeUpper)) {
+      const day = String(rule.deadlineDay || (codeUpper === '1601EQ' ? 30 : 25)).padStart(2, '0');
+      const qLabel = m === 'Jan' ? `4Q - ${targetYear - 1}` : m === 'Apr' ? `1Q - ${targetYear}` : m === 'Jul' ? `2Q - ${targetYear}` : `3Q - ${targetYear}`;
       return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: qLabel, isNotRequired: false };
     }
-    if (m === 'May' && rule.code === '1702Q') return { dueDateStr: `${targetYear}-05-15`, label: `1Q-${targetYear}`, isNotRequired: false };
-    if (m === 'May' && rule.code === '1701Q') return { dueDateStr: `${targetYear}-05-30`, label: `1Q-${targetYear}`, isNotRequired: false };
-    if (m === 'Aug' && ['1701Q', '1702Q'].includes(rule.code)) return { dueDateStr: `${targetYear}-08-15`, label: `2Q-${targetYear}`, isNotRequired: false };
-    if (m === 'Nov' && ['1701Q', '1702Q'].includes(rule.code)) return { dueDateStr: `${targetYear}-11-15`, label: `3Q-${targetYear}`, isNotRequired: false };
+    if (m === 'May' && codeUpper === '1702Q') return { dueDateStr: `${targetYear}-05-${String(rule.deadlineDay || 29).padStart(2, '0')}`, label: `1Q - ${targetYear}`, isNotRequired: false };
+    if (m === 'May' && codeUpper === '1701Q') return { dueDateStr: `${targetYear}-05-${String(rule.deadlineDay || 15).padStart(2, '0')}`, label: `1Q - ${targetYear}`, isNotRequired: false };
+    if (m === 'Aug' && (codeUpper === '1701Q' || codeUpper === '1702Q')) {
+      const d = String(rule.deadlineDay || (codeUpper === '1702Q' ? 29 : 15)).padStart(2, '0');
+      return { dueDateStr: `${targetYear}-08-${d}`, label: `2Q - ${targetYear}`, isNotRequired: false };
+    }
+    if (m === 'Nov' && (codeUpper === '1701Q' || codeUpper === '1702Q')) {
+      const d = String(rule.deadlineDay || (codeUpper === '1702Q' ? 29 : 15)).padStart(2, '0');
+      return { dueDateStr: `${targetYear}-11-${d}`, label: `3Q - ${targetYear}`, isNotRequired: false };
+    }
   }
 
-  if (rule.frequency === 'Annually' && m === 'Apr' && rule.code === 'ITR') {
-    return { dueDateStr: `${targetYear}-04-15`, label: `TY-${targetYear - 1}`, isNotRequired: false };
+  if (rule.frequency === 'Annually' && m === 'Apr') {
+    const d = String(rule.deadlineDay || 15).padStart(2, '0');
+    return { dueDateStr: `${targetYear}-04-${d}`, label: `TY - ${targetYear - 1}`, isNotRequired: false };
   }
 
   return null;

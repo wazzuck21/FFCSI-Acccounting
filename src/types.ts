@@ -351,6 +351,8 @@ export interface CoreCredential {
   password: string;
   pinCode?: string;
   securityQuestions?: string;
+  governmentIdNumber?: string; // SSS, PHIC, or Pag-IBIG number
+  tinNumber?: string; // 000-000-000-000
   notes?: string;
   updatedBy: string;
   updatedAt: string;

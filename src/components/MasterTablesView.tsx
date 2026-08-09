@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { CustomDeadlineRule, MonthlyDeadlineSchedule } from '../types';
-import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS, getRuleDeadlineForMonth } from '../data/masterTables';
+import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS, getRuleDeadlineForMonth, generateDefaultScheduleForFrequency } from '../data/masterTables';
 import { 
   Settings, 
   Plus, 
@@ -21,6 +21,7 @@ import {
   Search,
   CheckCircle2,
   AlertCircle,
+  AlertTriangle,
   Sparkles,
   ChevronLeft,
   ChevronRight,
@@ -58,7 +59,9 @@ export const MasterTablesView: React.FC = () => {
     deleteMasterBenefitsOption,
     applyMasterDeadlineRuleToAllClients,
     addMasterBusinessNature,
+    deleteMasterBusinessNature,
     addMasterBank,
+    deleteMasterBank,
     addFormLinkage,
     updateFormLinkage,
     deleteFormLinkage,
@@ -79,6 +82,16 @@ export const MasterTablesView: React.FC = () => {
   const [matrixYearType, setMatrixYearType] = useState<'Calendar' | 'Fiscal'>('Calendar');
   const [matrixFiscalMonth, setMatrixFiscalMonth] = useState<string>('June');
   const [showMorePreviousYears, setShowMorePreviousYears] = useState<boolean>(false);
+
+  // Custom Confirmation Modal State
+  const [confirmModalState, setConfirmModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText?: string;
+    confirmVariant?: 'danger' | 'warning' | 'primary';
+    onConfirm: () => void;
+  } | null>(null);
 
   const defaultYears = [2023, 2024, 2025, 2026, 2027];
   const matrixYearsList = showMorePreviousYears ? [2018, 2019, 2020, 2021, 2022, ...defaultYears] : defaultYears;
@@ -185,19 +198,27 @@ export const MasterTablesView: React.FC = () => {
 
   // Reset to PDF 2026 Schedule Defaults
   const handleLoadPdf2026Defaults = () => {
-    if (!confirm('Re-load 2026 BIR & SSS Calendar Schedule defaults analyzed from the uploaded PDF document?')) return;
+    setConfirmModalState({
+      isOpen: true,
+      title: 'Reload PDF Defaults?',
+      message: 'Re-load 2026 BIR & SSS Calendar Schedule defaults analyzed from the uploaded PDF document? This will overwrite master rules and sync client compliance schedules.',
+      confirmText: 'Reload Defaults',
+      confirmVariant: 'warning',
+      onConfirm: () => {
+        DEFAULT_BIR_TAX_OPTIONS.forEach(rule => {
+          updateMasterBirOption(rule.id, rule);
+          applyMasterDeadlineRuleToAllClients(rule, currentUser?.id, currentUser?.fullName);
+        });
 
-    DEFAULT_BIR_TAX_OPTIONS.forEach(rule => {
-      updateMasterBirOption(rule.id, rule);
-      applyMasterDeadlineRuleToAllClients(rule, currentUser?.id, currentUser?.fullName);
+        DEFAULT_BENEFITS_OPTIONS.forEach(rule => {
+          updateMasterBenefitsOption(rule.id, rule);
+          applyMasterDeadlineRuleToAllClients(rule, currentUser?.id, currentUser?.fullName);
+        });
+
+        showToast('Loaded analyzed PDF 2026 Calendar Schedule defaults for all BIR forms & statutory benefits!');
+        setConfirmModalState(null);
+      }
     });
-
-    DEFAULT_BENEFITS_OPTIONS.forEach(rule => {
-      updateMasterBenefitsOption(rule.id, rule);
-      applyMasterDeadlineRuleToAllClients(rule, currentUser?.id, currentUser?.fullName);
-    });
-
-    showToast('Loaded analyzed PDF 2026 Calendar Schedule defaults for all BIR forms & statutory benefits!');
   };
 
   // Modal Open Handlers for Standard Rule Add/Edit
@@ -252,6 +273,13 @@ export const MasterTablesView: React.FC = () => {
       return;
     }
 
+    const customSched: MonthlyDeadlineSchedule[] = generateDefaultScheduleForFrequency(
+      frequency,
+      deadlineType === 'day' ? Number(deadlineDay) : 15,
+      code.trim(),
+      customMonths
+    );
+
     const ruleData: CustomDeadlineRule = {
       id: editingRule ? editingRule.id : `${modalCategory.toLowerCase()}_${Date.now()}`,
       code: code.trim(),
@@ -265,7 +293,7 @@ export const MasterTablesView: React.FC = () => {
       fixedMonthDay: deadlineType === 'fixedDate' ? fixedMonthDay : undefined,
       specificDate: deadlineType === 'specificDate' ? specificDate : undefined,
       customDescription: customDescription.trim() || `Every ${deadlineDay}th of applicable period`,
-      monthlySchedule2026: editingRule ? editingRule.monthlySchedule2026 : undefined
+      monthlySchedule2026: customSched
     };
 
     if (modalCategory === 'BIR') {
@@ -298,13 +326,22 @@ export const MasterTablesView: React.FC = () => {
   };
 
   const handleDeleteRule = (rule: CustomDeadlineRule) => {
-    if (!confirm(`Are you sure you want to delete ${rule.code} from Master Tables?`)) return;
-    if (rule.category === 'BIR') {
-      deleteMasterBirOption(rule.id);
-    } else {
-      deleteMasterBenefitsOption(rule.id);
-    }
-    showToast(`Deleted ${rule.code} from Master Tables.`);
+    setConfirmModalState({
+      isOpen: true,
+      title: `Delete ${rule.code}?`,
+      message: `Are you sure you want to delete "${rule.code} - ${rule.name}" from Master Tables? This action will remove the rule definition.`,
+      confirmText: 'Delete Rule',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        if (rule.category === 'BIR') {
+          deleteMasterBirOption(rule.id);
+        } else {
+          deleteMasterBenefitsOption(rule.id);
+        }
+        showToast(`Deleted ${rule.code} from Master Tables.`);
+        setConfirmModalState(null);
+      }
+    });
   };
 
   const handleAddNature = (e: React.FormEvent) => {
@@ -321,6 +358,36 @@ export const MasterTablesView: React.FC = () => {
     addMasterBank(newBankInput.trim());
     setNewBankInput('');
     showToast('New Bank added to Master Table.');
+  };
+
+  const handleDeleteNature = (nature: string) => {
+    setConfirmModalState({
+      isOpen: true,
+      title: 'Delete Business Nature?',
+      message: `Are you sure you want to delete "${nature}" from Master Business Natures?`,
+      confirmText: 'Delete Business Nature',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        deleteMasterBusinessNature(nature);
+        showToast(`Deleted "${nature}" from Master Business Natures.`);
+        setConfirmModalState(null);
+      }
+    });
+  };
+
+  const handleDeleteBank = (bankName: string) => {
+    setConfirmModalState({
+      isOpen: true,
+      title: 'Delete Partner Bank?',
+      message: `Are you sure you want to delete "${bankName}" from Master Partner Banks?`,
+      confirmText: 'Delete Partner Bank',
+      confirmVariant: 'danger',
+      onConfirm: () => {
+        deleteMasterBank(bankName);
+        showToast(`Deleted "${bankName}" from Master Partner Banks.`);
+        setConfirmModalState(null);
+      }
+    });
   };
 
   const handleExportBackup = () => {
@@ -448,7 +515,7 @@ export const MasterTablesView: React.FC = () => {
               activeTab === 'Matrix' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <CalendarIcon className="w-4 h-4" /> 2026 Master Deadline Schedule Matrix
+            <CalendarIcon className="w-4 h-4" /> Master Deadline Schedule Matrix
           </button>
 
           <button
@@ -645,7 +712,6 @@ export const MasterTablesView: React.FC = () => {
                         {m} {matrixYear}
                       </th>
                     ))}
-                    <th className="p-3 text-center w-24">ACTIONS</th>
                   </tr>
                 </thead>
 
@@ -726,18 +792,7 @@ export const MasterTablesView: React.FC = () => {
                           );
                         })}
 
-                        {/* Direct Sync Action Column */}
-                        <td className="p-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleDirectApplyToAll(rule)}
-                            className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-lg text-[10px] font-bold flex items-center justify-center gap-1 transition-colors mx-auto"
-                            title="Apply this rule's schedule to all matching client workspaces"
-                          >
-                            <Zap className="w-3.5 h-3.5 text-amber-600" />
-                            <span>Sync</span>
-                          </button>
-                        </td>
+
 
                       </tr>
                     );
@@ -879,14 +934,7 @@ export const MasterTablesView: React.FC = () => {
                                 </td>
                                 <td className="py-2.5 px-3 text-right">
                                   <div className="flex items-center justify-end gap-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDirectApplyToAll(child)}
-                                      className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded text-[10px] flex items-center gap-1 transition-colors"
-                                      title="Sync this child option to all client workspaces"
-                                    >
-                                      <Zap className="w-3 h-3 text-amber-600" /> Sync
-                                    </button>
+
                                     {isSuperAdmin && (
                                       <>
                                         <button
@@ -1014,13 +1062,7 @@ export const MasterTablesView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
-                    <button
-                      onClick={() => handleDirectApplyToAll(rule)}
-                      className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors flex-1 justify-center"
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-600" /> Sync All
-                    </button>
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-1.5">
 
                     {isSuperAdmin && (
                       <div className="flex items-center gap-1">
@@ -1086,7 +1128,6 @@ export const MasterTablesView: React.FC = () => {
                     </div>
 
                     <h4 className="font-bold text-slate-900 text-xs leading-snug">{rule.name}</h4>
-
                     <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
                       <div className="flex items-center gap-1.5 text-slate-800 font-bold">
                         <CalendarIcon className="w-4 h-4 text-emerald-600" />
@@ -1105,13 +1146,7 @@ export const MasterTablesView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1.5">
-                    <button
-                      onClick={() => handleDirectApplyToAll(rule)}
-                      className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors flex-1 justify-center"
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-600" /> Sync All
-                    </button>
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-end gap-1.5">
 
                     {isSuperAdmin && (
                       <div className="flex items-center gap-1">
@@ -1231,10 +1266,18 @@ export const MasterTablesView: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => {
-                                  if (confirm(`Delete form linkage rule for ${link.primaryCode}?`)) {
-                                    deleteFormLinkage(link.id || link.primaryCode);
-                                    showToast(`Form linkage for ${link.primaryCode} deleted.`);
-                                  }
+                                  setConfirmModalState({
+                                    isOpen: true,
+                                    title: 'Delete Form Linkage Rule?',
+                                    message: `Are you sure you want to delete the form linkage rule for "${link.primaryCode}"?`,
+                                    confirmText: 'Delete Linkage',
+                                    confirmVariant: 'danger',
+                                    onConfirm: () => {
+                                      deleteFormLinkage(link.id || link.primaryCode);
+                                      showToast(`Form linkage for ${link.primaryCode} deleted.`);
+                                      setConfirmModalState(null);
+                                    }
+                                  });
                                 }}
                                 className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                                 title="Delete Linkage"
@@ -1281,9 +1324,21 @@ export const MasterTablesView: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-2">
               {masterChoices.businessNatures.map((nat, i) => (
-                <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 flex items-center justify-between">
-                  <span>{nat}</span>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 flex items-center justify-between group">
+                  <span className="truncate pr-2">{nat}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteNature(nat)}
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                        title={`Delete ${nat}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1318,9 +1373,21 @@ export const MasterTablesView: React.FC = () => {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-2">
               {masterChoices.banksList.map((bank, i) => (
-                <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 flex items-center justify-between">
-                  <span>{bank}</span>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                <div key={i} className="p-3 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 flex items-center justify-between group">
+                  <span className="truncate pr-2">{bank}</span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteBank(bank)}
+                        className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
+                        title={`Delete ${bank}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -1766,6 +1833,58 @@ export const MasterTablesView: React.FC = () => {
                 className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/30 cursor-pointer"
               >
                 Save Linkage Rule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GLOBAL CUSTOM CONFIRMATION MODAL */}
+      {confirmModalState?.isOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="flex items-start gap-3.5">
+              <div className={`p-3 rounded-xl shrink-0 ${
+                confirmModalState.confirmVariant === 'warning' 
+                  ? 'bg-amber-100 text-amber-600' 
+                  : confirmModalState.confirmVariant === 'primary'
+                  ? 'bg-indigo-100 text-indigo-600'
+                  : 'bg-rose-100 text-rose-600'
+              }`}>
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">
+                  {confirmModalState.title}
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  {confirmModalState.message}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setConfirmModalState(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  confirmModalState.onConfirm();
+                }}
+                className={`px-4 py-2 font-bold text-white rounded-xl text-xs shadow-md transition-colors cursor-pointer ${
+                  confirmModalState.confirmVariant === 'warning'
+                    ? 'bg-amber-600 hover:bg-amber-500 shadow-amber-600/20'
+                    : confirmModalState.confirmVariant === 'primary'
+                    ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/20'
+                    : 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/20'
+                }`}
+              >
+                {confirmModalState.confirmText || 'Confirm Delete'}
               </button>
             </div>
           </div>

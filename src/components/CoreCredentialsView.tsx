@@ -50,7 +50,17 @@ export const CoreCredentialsView: React.FC = () => {
   const [password, setPassword] = useState('');
   const [pinCode, setPinCode] = useState('');
   const [securityQuestions, setSecurityQuestions] = useState('');
+  const [governmentIdNumber, setGovernmentIdNumber] = useState('');
+  const [tinNumber, setTinNumber] = useState('');
   const [notes, setNotes] = useState('');
+
+  const handleClientSelect = (clientId: string) => {
+    setSelectedClientId(clientId);
+    const client = clients.find(c => c.id === clientId);
+    if (client) {
+      setTinNumber(client.tinNumber || '');
+    }
+  };
 
   // Masking state per credential ID
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
@@ -94,13 +104,16 @@ export const CoreCredentialsView: React.FC = () => {
   // Open Form Modal
   const handleOpenAdd = () => {
     setEditingCred(null);
-    setSelectedClientId(clients[0]?.id || '');
+    const firstClient = clients[0];
+    setSelectedClientId(firstClient?.id || '');
     setPortalType('eFPS');
     setPortalName('');
     setUsername('');
     setPassword('');
     setPinCode('');
     setSecurityQuestions('');
+    setGovernmentIdNumber('');
+    setTinNumber(firstClient?.tinNumber || '');
     setNotes('');
     setShowAddModal(true);
   };
@@ -114,6 +127,9 @@ export const CoreCredentialsView: React.FC = () => {
     setPassword(cred.password);
     setPinCode(cred.pinCode || '');
     setSecurityQuestions(cred.securityQuestions || '');
+    setGovernmentIdNumber(cred.governmentIdNumber || '');
+    const client = clients.find(c => c.id === cred.clientId);
+    setTinNumber(cred.tinNumber || client?.tinNumber || '');
     setNotes(cred.notes || '');
     setShowAddModal(true);
   };
@@ -136,6 +152,8 @@ export const CoreCredentialsView: React.FC = () => {
       if (editingCred.password !== password) changesList.push(`Password changed`);
       if ((editingCred.pinCode || '') !== pinCode) changesList.push(`PIN Code updated`);
       if ((editingCred.portalName || '') !== portalName) changesList.push(`Portal Name: "${editingCred.portalName || ''}" ➔ "${portalName}"`);
+      if ((editingCred.governmentIdNumber || '') !== governmentIdNumber) changesList.push(`Gov ID updated`);
+      if ((editingCred.tinNumber || '') !== tinNumber) changesList.push(`TIN updated`);
       if ((editingCred.notes || '') !== notes) changesList.push(`Notes updated`);
 
       const amendment: CredentialAmendment = {
@@ -156,6 +174,8 @@ export const CoreCredentialsView: React.FC = () => {
         password,
         pinCode,
         securityQuestions,
+        governmentIdNumber,
+        tinNumber,
         notes,
         updatedBy: currentUser?.fullName || 'Admin',
         updatedAt: nowStr,
@@ -177,6 +197,8 @@ export const CoreCredentialsView: React.FC = () => {
         password,
         pinCode,
         securityQuestions,
+        governmentIdNumber,
+        tinNumber,
         notes,
         updatedBy: currentUser?.fullName || 'Admin',
         updatedAt: nowStr,
@@ -389,6 +411,12 @@ export const CoreCredentialsView: React.FC = () => {
                           <Building2 className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                           <span>{cred.clientName}</span>
                         </div>
+                        {(cred.tinNumber || cred.governmentIdNumber) && (
+                          <div className="flex flex-wrap items-center gap-2 mt-1 text-[10px] text-slate-500 font-mono">
+                            {cred.tinNumber && <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">TIN: {cred.tinNumber}</span>}
+                            {cred.governmentIdNumber && <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">Gov ID: {cred.governmentIdNumber}</span>}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4 font-semibold text-slate-800">
@@ -526,10 +554,34 @@ export const CoreCredentialsView: React.FC = () => {
                 <SearchableClientSelect
                   clients={clients}
                   selectedClientId={selectedClientId}
-                  onSelectClient={setSelectedClientId}
+                  onSelectClient={handleClientSelect}
                   label="Select Client Company"
                   required
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">Number (SSS, PHIC, Pag-IBIG)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. SSS / PHIC / Pag-IBIG #"
+                    value={governmentIdNumber}
+                    onChange={e => setGovernmentIdNumber(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-600 mb-1 font-semibold">TIN Number (000-000-000-000)</label>
+                  <input
+                    type="text"
+                    placeholder="000-000-000-000"
+                    value={tinNumber}
+                    onChange={e => setTinNumber(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
