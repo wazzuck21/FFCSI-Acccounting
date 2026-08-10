@@ -1,7 +1,12 @@
 import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { PayableRecord, PayableCategory } from '../types';
+import { PayableRecord, PayableCategory, CustomDeadlineRule, ClientProfile } from '../types';
+import { 
+  getRuleDeadlineForMonth, 
+  MONTHS_LIST, 
+  MONTH_FULL_NAMES 
+} from '../data/masterTables';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { 
@@ -42,6 +47,73 @@ export const PayablesManagementView: React.FC = () => {
   // Current real month and year formatted string defaults
   const currentRealMonthStr = `-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   const currentRealYearStr = String(new Date().getFullYear());
+
+  // Helper: Calculate Applicable Month / Target Period based on Deadline Matrix
+  const getApplicablePeriodFromMatrix = (itemCode: string, monthStr: string, client?: ClientProfile) => {
+    if (!monthStr) return 'N/A';
+
+    let yearNum = new Date().getFullYear();
+    let monthCode: 'Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec' = MONTHS_LIST[new Date().getMonth()];
+
+    if (monthStr.includes('-')) {
+      const parts = monthStr.split('-').filter(Boolean);
+      if (parts.length === 2) {
+        yearNum = parseInt(parts[0], 10) || yearNum;
+        const mIdx = parseInt(parts[1], 10) - 1;
+        if (mIdx >= 0 && mIdx < 12) {
+          monthCode = MONTHS_LIST[mIdx];
+        }
+      } else if (parts.length === 1) {
+        const mIdx = parseInt(parts[0], 10) - 1;
+        if (mIdx >= 0 && mIdx < 12) {
+          monthCode = MONTHS_LIST[mIdx];
+        }
+      }
+    } else {
+      const monthKey = Object.keys(MONTH_FULL_NAMES).find(
+        k => k.toLowerCase() === monthStr.toLowerCase() || MONTH_FULL_NAMES[k].toLowerCase() === monthStr.toLowerCase()
+      );
+      if (monthKey && MONTHS_LIST.includes(monthKey as any)) {
+        monthCode = monthKey as any;
+      }
+    }
+
+    const allRules: CustomDeadlineRule[] = [
+      ...(masterChoices.birTaxOptions || []),
+      ...(masterChoices.benefitsOptions || [])
+    ];
+
+    let rule = allRules.find(r => r.code.toLowerCase() === itemCode.toLowerCase());
+
+    if (!rule) {
+      const codeUpper = itemCode.toUpperCase();
+      let frequency: 'Monthly' | 'Quarterly' | 'Annually' = 'Monthly';
+      if (codeUpper.includes('Q') || codeUpper.includes('QUARTER')) frequency = 'Quarterly';
+      if (codeUpper === 'ITR' || codeUpper.includes('ANNUAL') || codeUpper.includes('1702') || codeUpper.includes('1701')) frequency = 'Annually';
+
+      rule = {
+        id: itemCode,
+        code: itemCode,
+        name: itemCode,
+        category: 'BIR',
+        frequency,
+        deadlineDay: 10
+      };
+    }
+
+    const res = getRuleDeadlineForMonth(rule, monthCode, yearNum, client);
+    if (res && res.label && res.label !== 'N/A' && res.label !== 'Not Required') {
+      return res.label;
+    }
+
+    const mIdx = MONTHS_LIST.indexOf(monthCode);
+    if (mIdx >= 0) {
+      const prevM = mIdx === 0 ? `Dec-${String(yearNum - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(yearNum).slice(-2)}`;
+      return prevM;
+    }
+
+    return monthStr;
+  };
 
   // Create Payable Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -429,7 +501,12 @@ export const PayablesManagementView: React.FC = () => {
 
                   <td className="py-3.5 px-4 font-semibold text-slate-800">{p.itemName}</td>
 
-                  <td className="py-3.5 px-4 text-slate-600 font-mono">{p.month}</td>
+                  <td className="py-3.5 px-4 text-slate-800">
+                    <div className="font-mono font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2.5 py-1 rounded-lg text-xs inline-block">
+                      {getApplicablePeriodFromMatrix(p.itemName, p.month, clients.find(c => c.id === p.clientId))}
+                    </div>
+                    <p className="text-[10px] text-slate-400 font-mono mt-0.5">Filing Month: {p.month}</p>
+                  </td>
 
                   <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900 text-sm">
                     ₱{p.payableAmount.toLocaleString()}
@@ -623,7 +700,7 @@ export const PayablesManagementView: React.FC = () => {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-slate-600 mb-1 font-semibold">Applicable Month (YYYY-MM)</label>
+                <label className="block text-slate-600 mb-1 font-semibold">Filing Month (YYYY-MM)</label>
                 <input
                   type="month"
                   value={month}
@@ -641,6 +718,17 @@ export const PayablesManagementView: React.FC = () => {
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-mono focus:bg-white focus:ring-2 focus:ring-blue-100"
                 />
               </div>
+            </div>
+
+            {/* Target Period calculated from Deadline Matrix */}
+            <div className="p-3 bg-indigo-50/80 border border-indigo-200/80 rounded-xl flex items-center justify-between text-xs">
+              <span className="text-slate-700 font-semibold flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-indigo-600" />
+                Deadline Matrix Applicable Period:
+              </span>
+              <span className="font-mono font-bold text-indigo-900 bg-white px-2.5 py-1 rounded-lg border border-indigo-200 text-xs shadow-2xs">
+                {getApplicablePeriodFromMatrix(itemName, month, clients.find(c => c.id === selectedClientId))}
+              </span>
             </div>
 
             {/* No Payment Choice Checkbox */}

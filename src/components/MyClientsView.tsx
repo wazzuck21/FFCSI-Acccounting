@@ -266,6 +266,11 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
   // Open Set Action Modal
   const handleOpenSetAction = (item: ToDoItem) => {
+    if ((item.status === 'FILED' || item.existingPayable?.status === 'Paid') && !isSuperAdmin) {
+      showToast('Only Admin users are allowed to modify items tagged as Filed & Completed.');
+      return;
+    }
+
     setActionClient(item.client);
     setActionFormCode(item.formCode);
     setActionFormTitle(item.formTitle);
@@ -294,6 +299,17 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const handleSaveAction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!actionClient) return;
+
+    // Check if modifying a Filed & Completed item
+    const existingPayable = payables.find(p => 
+      p.clientId === actionClient.id && 
+      p.itemName.toLowerCase() === actionFormCode.toLowerCase()
+    );
+    if (existingPayable?.status === 'Paid' && !isSuperAdmin) {
+      showToast('Only Admin users are allowed to modify items tagged as Filed & Completed.');
+      setActionModalOpen(false);
+      return;
+    }
 
     const monthStr = `${selectedYear}-${monthNumStr}`;
 
@@ -928,13 +944,24 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                           </span>
                         )}
 
-                        <button
-                          onClick={() => handleOpenSetAction(item)}
-                          className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
-                          title="Modify Action or Reset back to To-Do List"
-                        >
-                          <Zap className="w-3.5 h-3.5 text-amber-500" /> Modify Action
-                        </button>
+                        {item.status === 'FILED' && !isSuperAdmin ? (
+                          <button
+                            type="button"
+                            onClick={() => showToast('Only Admin users are allowed to modify items tagged as Filed & Completed.')}
+                            className="px-3.5 py-2 bg-slate-100 text-slate-400 border border-slate-200 font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-not-allowed opacity-80"
+                            title="Only Admin is allowed to modify Filed & Completed items"
+                          >
+                            <Lock className="w-3.5 h-3.5 text-slate-400" /> Locked (Admin Only)
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleOpenSetAction(item)}
+                            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                            title="Modify Action or Reset back to To-Do List"
+                          >
+                            <Zap className="w-3.5 h-3.5 text-amber-500" /> Modify Action
+                          </button>
+                        )}
 
                         <button
                           onClick={() => onSelectClientWorkspace(item.client.id)}

@@ -22,7 +22,6 @@ import {
   User,
   Filter,
   Layers,
-  Sparkles,
   Zap,
   Kanban,
   Columns,
@@ -664,28 +663,10 @@ export const ComplianceMonitoringView: React.FC = () => {
                       </div>
 
                       {/* 2. Form & Applicable Period Code */}
-                      <div className="bg-slate-50/90 p-2 rounded-lg border border-slate-200/80 text-xs space-y-1.5">
+                      <div className="bg-slate-50/90 p-2 rounded-lg border border-slate-200/80 text-xs">
                         <span className="font-mono bg-indigo-100 text-indigo-900 px-2 py-1 rounded-md text-[11px] font-bold block text-center shadow-2xs">
-                          {item.ruleCode.toUpperCase()} ( {MONTH_FULL_NAMES[selectedMonth]} {selectedYear} )
+                          {item.ruleCode.toUpperCase()} ( {item.periodLabel} )
                         </span>
-
-                        {(() => {
-                          const upperRule = item.ruleCode.toUpperCase();
-                          const linkedRule = (masterChoices.formLinkages || []).find(
-                            l => l.primaryCode.toUpperCase() === upperRule || (l.linkedCodes || []).map(c => c.toUpperCase()).includes(upperRule)
-                          );
-                          if (!linkedRule) return null;
-                          return (
-                            <div className="flex items-center justify-between text-[10px] bg-indigo-50/80 border border-indigo-200/80 px-2 py-0.5 rounded font-medium text-indigo-900">
-                              <span className="font-bold flex items-center gap-1">
-                                <Sparkles className="w-3 h-3 text-indigo-600 shrink-0" /> Attachments:
-                              </span>
-                              <span className="font-mono font-bold text-indigo-800">
-                                {(linkedRule.linkedCodes || []).join(', ')}
-                              </span>
-                            </div>
-                          );
-                        })()}
                       </div>
 
                       {/* 3. Amount if available */}
