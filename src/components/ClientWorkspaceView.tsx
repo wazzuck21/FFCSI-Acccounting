@@ -4,6 +4,10 @@ import { useAuth } from '../context/AuthContext';
 import { ClientProfile, InvoiceItem } from '../types';
 import { downloadInvoicePDF } from './BillingManagementView';
 import { extractBaseTin } from '../utils/tinBranchUtils';
+import { ClientServicesManager } from './ClientServicesManager';
+import { buildClientSoaLedger } from '../utils/soaCalculator';
+import { exportSOAExcel } from '../utils/excelExportUtils';
+import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
 import { 
   Building2, 
   FileText, 
@@ -27,12 +31,15 @@ import {
   CheckCircle2,
   AlertCircle,
   Download,
+  FileDown,
+  Table,
   Plus,
   Sparkles,
   GitFork,
   Eye,
   Printer,
-  X
+  X,
+  Archive
 } from 'lucide-react';
 
 interface Props {
@@ -48,7 +55,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
   clientId: legacyClientId,
   onBack
 }) => {
-  const { clients, dynamicSections, payables, complianceItems, documents, invoices, tasks, masterChoices, updateClient } = useData();
+  const { clients, clientServices, dynamicSections, payables, complianceItems, documents, invoices, payments, tasks, masterChoices, updateClient } = useData();
   const { isSuperAdmin } = useAuth();
 
   // Selected client state
@@ -68,7 +75,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
-  const [activeTab, setActiveTab] = useState<'overview' | 'info' | 'payables' | 'compliance' | 'documents' | 'billing' | 'tasks' | 'branches'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'info' | 'services' | 'payables' | 'compliance' | 'documents' | 'billing' | 'tasks' | 'branches'>('overview');
 
   // SOA Modal Preview State
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceItem | null>(null);
@@ -317,7 +324,8 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                     )}
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                       client.status === 'Active' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
-                      client.status === 'For Compliance' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                      client.status === 'For Compliance' || client.status === 'Compliance' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                      client.status === 'Archived' ? 'bg-purple-100 text-purple-900 border border-purple-300' :
                       'bg-slate-100 text-slate-600'
                     }`}>
                       {client.status}
@@ -374,11 +382,29 @@ export const ClientWorkspaceView: React.FC<Props> = ({
               </div>
             </div>
 
+            {/* Archived Status Notification Banner */}
+            {client.status === 'Archived' && (
+              <div className="p-3.5 bg-purple-50 border border-purple-200 rounded-xl flex items-center justify-between gap-3 text-purple-950">
+                <div className="flex items-center gap-2.5">
+                  <Archive className="w-5 h-5 text-purple-700 shrink-0" />
+                  <div>
+                    <p className="font-extrabold text-xs text-purple-900">ARCHIVED CLIENT PROFILE RECORD</p>
+                    <p className="text-[11px] text-purple-800">
+                      This client profile is in Archived status. All historical payables, tax filings, invoices, payments, compliance logs, tasks, and documents remain permanently accessible for audit purposes.
+                      {client.archivedAt && ` Archived on ${new Date(client.archivedAt).toLocaleString()}${client.archivedBy ? ` by ${client.archivedBy}` : ''}.`}
+                      {client.archiveReason && ` Reason: "${client.archiveReason}".`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Workspace Navigation Tabs */}
             <div className="flex overflow-x-auto gap-2 pt-2 border-t border-slate-200 text-xs font-medium">
               {[
                 { id: 'overview', label: 'Overview', icon: Building2 },
                 { id: 'info', label: 'Company Profile', icon: FileText },
+                { id: 'services', label: `Services & Engagements (${clientServices.filter(s => s.clientId === activeClientId).length})`, icon: Briefcase },
                 { id: 'payables', label: `BIR Payables (${clientPayables.length})`, icon: Receipt },
                 { id: 'compliance', label: `Compliance (${clientCompliance.length})`, icon: ShieldCheck },
                 { id: 'documents', label: `Documents (${clientDocs.length})`, icon: FolderGit2 },
@@ -556,6 +582,11 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                 </div>
               </div>
             </div>
+          )}
+
+          {/* TAB: SERVICES & ENGAGEMENTS */}
+          {activeTab === 'services' && client && (
+            <ClientServicesManager clientId={client.id} isSuperAdmin={isSuperAdmin} />
           )}
 
           {/* TAB 3: BIR & BENEFITS PAYABLES */}
@@ -751,109 +782,193 @@ export const ClientWorkspaceView: React.FC<Props> = ({
             </div>
           )}
 
-          {/* TAB 7: BILLING HISTORY */}
-          {activeTab === 'billing' && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs shadow-sm space-y-4">
-              <div className="flex justify-between items-center pb-2 border-b border-slate-100">
-                <h3 className="font-bold text-slate-900 text-sm">Statement of Account Invoices for {client.companyName}</h3>
-              </div>
+          {/* TAB 7: BILLING HISTORY & STATEMENT OF ACCOUNT LEDGER */}
+          {activeTab === 'billing' && (() => {
+            const clientSoa = buildClientSoaLedger(client.id, invoices, payments);
 
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px] bg-slate-50">
-                    <th className="py-2.5 px-3">Collection #</th>
-                    <th className="py-2.5 px-3">Issue Date</th>
-                    <th className="py-2.5 px-3 text-right">Total Amount</th>
-                    <th className="py-2.5 px-3 text-right">Paid Amount</th>
-                    <th className="py-2.5 px-3 text-center">Status</th>
-                    <th className="py-2.5 px-3 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {clientInvoices.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="py-6 text-center text-slate-400">
-                        No billing invoices created for this client.
-                      </td>
-                    </tr>
-                  ) : (
-                    clientInvoices.map(inv => (
-                      <tr key={inv.id}>
-                        <td className="py-3 px-3 font-mono font-bold text-slate-900">
-                          <button
-                            onClick={() => {
-                              setSelectedInvoice(inv);
-                              setShowSoaModal(true);
-                            }}
-                            className="text-emerald-700 hover:text-emerald-900 font-bold hover:underline text-xs flex items-center gap-1.5 cursor-pointer text-left"
-                            title="Click to view Statement of Account (SOA)"
-                          >
-                            <Receipt className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            Collection #: {inv.collectionNumber || '1001'}
-                          </button>
-                        </td>
-                        <td className="py-3 px-3 text-slate-600">{inv.issueDate}</td>
-                        <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">₱{inv.totalAmount.toLocaleString()}</td>
-                        <td className="py-3 px-3 text-right font-mono text-emerald-600 font-bold">₱{(inv.paidAmount || 0).toLocaleString()}</td>
-                        <td className="py-3 px-3 text-center">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            inv.status === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-                          }`}>
-                            {inv.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-3 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <button
-                              onClick={() => {
-                                setSelectedInvoice(inv);
-                                setShowSoaModal(true);
-                              }}
-                              title="View Statement of Account (SOA)"
-                              className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors inline-flex items-center gap-1 font-semibold text-[11px]"
-                            >
-                              <Eye className="w-3.5 h-3.5" /> View SOA
-                            </button>
-                            <button
-                              onClick={() => downloadInvoicePDF(inv)}
-                              title="Download SOA PDF"
-                              className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors inline-flex items-center gap-1 font-semibold text-[11px]"
-                            >
-                              <Download className="w-3.5 h-3.5" /> PDF
-                            </button>
-                            {(inv.collectionReceiptNumber || inv.officialReceiptNumber) && (
-                              <span className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-200 font-mono font-bold text-[10px] rounded">
-                                {inv.collectionReceiptNumber || inv.officialReceiptNumber}
-                              </span>
-                            )}
-                          </div>
-                        </td>
+            return (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs shadow-sm space-y-5">
+                
+                {/* SOA Header & Metrics Cards */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Receipt className="w-5 h-5 text-emerald-600" />
+                      <h3 className="font-bold text-slate-900 text-sm">Statement of Account Ledger — {client.companyName}</h3>
+                      {client.status === 'Archived' && (
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-bold text-[10px] rounded-md border border-slate-200">
+                          Archived History
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Formula: Opening Balance → Invoices (+) → Payments (-) → Adjustments → Closing Balance
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => generateClientStatementOfAccountPDF(client, clientSoa)}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer text-xs"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Statement PDF
+                    </button>
+                    <button
+                      onClick={() => exportSOAExcel(client, clientSoa)}
+                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer text-xs"
+                    >
+                      <FileDown className="w-3.5 h-3.5" /> Excel Ledger
+                    </button>
+                  </div>
+                </div>
+
+                {/* SOA KPI Summary Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase">Opening Balance</span>
+                    <div className="text-base font-mono font-bold text-slate-800 mt-0.5">₱{clientSoa.openingBalance.toLocaleString()}</div>
+                  </div>
+                  <div className="p-3 bg-blue-50/60 border border-blue-200 rounded-xl">
+                    <span className="text-[10px] font-bold text-blue-700 uppercase">Total Billed (+)</span>
+                    <div className="text-base font-mono font-bold text-blue-900 mt-0.5">₱{clientSoa.totalBilled.toLocaleString()}</div>
+                  </div>
+                  <div className="p-3 bg-emerald-50/60 border border-emerald-200 rounded-xl">
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase">Total Payments (-)</span>
+                    <div className="text-base font-mono font-bold text-emerald-900 mt-0.5">₱{clientSoa.totalPaid.toLocaleString()}</div>
+                  </div>
+                  <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl">
+                    <span className="text-[10px] font-bold text-amber-800 uppercase">Closing Balance Due</span>
+                    <div className="text-base font-mono font-bold text-amber-900 mt-0.5">₱{clientSoa.closingBalance.toLocaleString()}</div>
+                  </div>
+                </div>
+
+                {/* SOA Running Balance Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] bg-slate-50">
+                        <th className="py-2.5 px-3">Date</th>
+                        <th className="py-2.5 px-3">Tx Type</th>
+                        <th className="py-2.5 px-3">Coll #</th>
+                        <th className="py-2.5 px-3">Invoice / Ref #</th>
+                        <th className="py-2.5 px-3">Period</th>
+                        <th className="py-2.5 px-3">Services / Particulars</th>
+                        <th className="py-2.5 px-3 text-right">Billed (+)</th>
+                        <th className="py-2.5 px-3 text-right">Paid (-)</th>
+                        <th className="py-2.5 px-3 text-center">C.R. #</th>
+                        <th className="py-2.5 px-3 text-right">Running Balance</th>
+                        <th className="py-2.5 px-3 text-center">Actions</th>
                       </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {clientSoa.entries.length === 0 ? (
+                        <tr>
+                          <td colSpan={11} className="py-8 text-center text-slate-400">
+                            No Statement of Account ledger transactions recorded for this client.
+                          </td>
+                        </tr>
+                      ) : (
+                        clientSoa.entries.map(entry => (
+                          <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="py-3 px-3 font-mono text-slate-600 text-[11px] whitespace-nowrap">{entry.date}</td>
+                            <td className="py-3 px-3 font-bold">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                entry.type === 'Invoice' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                entry.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                'bg-amber-50 text-amber-800 border border-amber-200'
+                              }`}>
+                                {entry.type}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 font-mono font-bold text-slate-900 text-[11px]">#{entry.collectionNo}</td>
+                            <td className="py-3 px-3 font-mono text-slate-700 text-[11px]">{entry.refNo}</td>
+                            <td className="py-3 px-3 text-slate-600 text-[11px] whitespace-nowrap">{entry.billingPeriod}</td>
+                            <td className="py-3 px-3 text-slate-800 font-medium max-w-xs truncate" title={entry.servicesDescription}>
+                              {entry.servicesDescription}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                              {entry.billedAmount > 0 ? `₱${entry.billedAmount.toLocaleString()}` : '-'}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">
+                              {entry.paidAmount > 0 ? `₱${entry.paidAmount.toLocaleString()}` : '-'}
+                            </td>
+                            <td className="py-3 px-3 text-center font-mono font-bold text-slate-700 text-[11px]">
+                              {entry.crNumber || '-'}
+                            </td>
+                            <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 text-xs">
+                              ₱{entry.runningBalance.toLocaleString()}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              {entry.originalInvoiceId && (
+                                <button
+                                  onClick={() => {
+                                    const inv = invoices.find(i => i.id === entry.originalInvoiceId);
+                                    if (inv) {
+                                      setSelectedInvoice(inv);
+                                      setShowSoaModal(true);
+                                    }
+                                  }}
+                                  className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                  title="View Invoice Statement"
+                                >
+                                  <Eye className="w-3.5 h-3.5" /> View
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+              </div>
+            );
+          })()}
 
           {/* TAB 8: WORK ASSIGNMENTS */}
           {activeTab === 'tasks' && (
             <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs shadow-sm space-y-4">
-              <h3 className="font-bold text-slate-900 text-sm">Assigned Tasks & Engagements</h3>
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-slate-900 text-sm">Assigned Client Tasks & Compliance Engagements</h3>
+                <span className="text-[11px] text-slate-500">Total: <strong>{clientTasks.length}</strong> tasks</span>
+              </div>
               <div className="divide-y divide-slate-100">
                 {clientTasks.length === 0 ? (
                   <p className="text-slate-400 py-4 text-center">No tasks assigned to this client.</p>
                 ) : (
                   clientTasks.map(t => (
-                    <div key={t.id} className="py-3 flex items-center justify-between">
+                    <div key={t.id} className="py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <div>
-                        <p className="font-bold text-slate-900">{t.title}</p>
-                        <p className="text-[11px] text-slate-500 mt-0.5">Assigned to: {t.assignedToName}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-bold text-slate-900">{t.title}</p>
+                          {t.formCode && (
+                            <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[9px] font-bold font-mono">
+                              {t.formCode}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Assigned to: <strong className="text-slate-800">{t.assignedToName}</strong>
+                          {t.taxablePeriod && <span> • Period: {t.taxablePeriod}</span>}
+                        </p>
+                        {t.reviewNotes && (
+                          <p className="text-[10px] text-amber-900 bg-amber-50 p-1.5 rounded mt-1 border border-amber-200">
+                            <strong>Note:</strong> {t.reviewNotes}
+                          </p>
+                        )}
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono text-slate-600">{t.dueDate}</span>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right font-mono">
+                          <span className="text-slate-700 font-bold text-xs">{t.dueDate}</span>
+                          {t.isOverriddenDeadline && (
+                            <span className="text-[9px] text-purple-700 block font-sans">Deadline Extended</span>
+                          )}
+                        </div>
                         <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                          t.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                          t.status === 'Completed' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                          t.status === 'For Review' ? 'bg-purple-100 text-purple-800 border border-purple-200' :
+                          'bg-blue-50 text-blue-700 border border-blue-200'
                         }`}>
                           {t.status}
                         </span>

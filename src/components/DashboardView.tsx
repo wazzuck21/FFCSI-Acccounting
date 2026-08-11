@@ -22,10 +22,12 @@ export const DashboardView: React.FC<{ onNavigate: (tab: any) => void }> = ({ on
   const { isSuperAdmin } = useAuth();
 
   // Metrics
-  const totalClients = clients.length;
+  const activeDirectoryClients = clients.filter(c => c.status !== 'Archived');
+  const totalClients = activeDirectoryClients.length;
   const activeClients = clients.filter(c => c.status === 'Active').length;
   const inactiveClients = clients.filter(c => c.status === 'Inactive').length;
-  const forComplianceClients = clients.filter(c => c.status === 'For Compliance').length;
+  const forComplianceClients = clients.filter(c => c.status === 'For Compliance' || c.status === 'Compliance').length;
+  const archivedClients = clients.filter(c => c.status === 'Archived').length;
 
   const unpaidPayables = payables.filter(p => p.status === 'Unpaid');
   const outstandingBillings = invoices

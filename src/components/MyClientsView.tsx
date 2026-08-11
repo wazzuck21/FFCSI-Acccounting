@@ -96,7 +96,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   };
 
   // Calculate Target Applicable Month Period based on BIR & Statutory Schedule Matrix (e.g., Aug 2026 deadlines -> July 2026 target period)
-  const getTargetPeriodForMonth = (mName: MonthName, yr: number) => {
+  const getTargetPeriodForMonth = (mName: typeof MONTHS_LIST[number], yr: number) => {
     const mIdx = MONTH_INDEX[mName];
     let prevMIdx = mIdx - 1;
     let targetYr = yr;
@@ -118,8 +118,10 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const targetPeriodInfo = getTargetPeriodForMonth(selectedMonth, selectedYear);
   const currentPeriodCode = targetPeriodInfo.code; // e.g. "07-2026" for August 2026 deadline
 
-  // Filter clients assigned to selected staff member
-  const myAssignedClients = clients.filter(client => {
+  // Filter clients assigned to selected staff member (excluding Archived clients from active operational checklist)
+  const myAssignedClients = clients
+    .filter(client => client.status !== 'Archived')
+    .filter(client => {
     if (selectedStaffName === 'ALL_STAFF') return true;
     const match = client.assignedStaffName === selectedStaffName || 
                   client.assignedStaffId === currentUser?.id ||

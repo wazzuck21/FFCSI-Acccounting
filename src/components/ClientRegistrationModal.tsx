@@ -164,6 +164,12 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
   // Benefits Selected
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
 
+  // User confirmation modal state when unchecking/unenrolling forms ⭐
+  const [showUnenrollConfirmationModal, setShowUnenrollConfirmationModal] = useState(false);
+  const [removedBirList, setRemovedBirList] = useState<string[]>([]);
+  const [removedBenList, setRemovedBenList] = useState<string[]>([]);
+  const [pendingClientDataToSave, setPendingClientDataToSave] = useState<any>(null);
+
   // Custom Benefits statutory addition modal
   const [showAddBenefitsModal, setShowAddBenefitsModal] = useState(false);
   const [newBenCode, setNewBenCode] = useState('');
@@ -636,19 +642,18 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
     };
 
     if (editingClient) {
-      updateClient(editingClient.id, clientData);
-      if (createdExclusiveCodes.length > 0) {
-        masterChoices.benefitsOptions.forEach(opt => {
-          if (createdExclusiveCodes.includes(opt.code) && opt.isExclusiveToClient) {
-            updateMasterBenefitsOption(opt.id, {
-              ...opt,
-              exclusiveClientId: editingClient.id,
-              exclusiveClientName: companyName.trim()
-            });
-          }
-        });
+      const removedBir = (editingClient.birTaxServices || []).filter(s => !selectedBirServices.includes(s));
+      const removedBen = (editingClient.benefitsServices || []).filter(s => !selectedBenefits.includes(s));
+
+      if ((removedBir.length > 0 || removedBen.length > 0) && !showUnenrollConfirmationModal) {
+        setRemovedBirList(removedBir);
+        setRemovedBenList(removedBen);
+        setPendingClientDataToSave(clientData);
+        setShowUnenrollConfirmationModal(true);
+        return;
       }
-      addAuditLog('Client Profile Updated', `Updated client ${companyName}`, currentUser?.id || '', currentUser?.fullName || '');
+
+      executeClientUpdate(clientData);
     } else {
       const newClient = addClient(clientData);
       if (createdExclusiveCodes.length > 0 && newClient?.id) {
@@ -663,8 +668,26 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
         });
       }
       addAuditLog('Client Registered', `Registered new client ${companyName}`, currentUser?.id || '', currentUser?.fullName || '');
+      onClose();
     }
+  };
 
+  const executeClientUpdate = (clientDataToSave: any) => {
+    if (!editingClient) return;
+    updateClient(editingClient.id, clientDataToSave);
+    if (createdExclusiveCodes.length > 0) {
+      masterChoices.benefitsOptions.forEach(opt => {
+        if (createdExclusiveCodes.includes(opt.code) && opt.isExclusiveToClient) {
+          updateMasterBenefitsOption(opt.id, {
+            ...opt,
+            exclusiveClientId: editingClient.id,
+            exclusiveClientName: companyName.trim()
+          });
+        }
+      });
+    }
+    addAuditLog('Client Profile Updated', `Updated client ${companyName}`, currentUser?.id || '', currentUser?.fullName || '');
+    setShowUnenrollConfirmationModal(false);
     onClose();
   };
 
@@ -1890,6 +1913,98 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
                   <Check className="w-4 h-4" /> I Will Complete Required Fields
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Modal when unchecking/unenrolling forms ⭐ */}
+        {showUnenrollConfirmationModal && pendingClientDataToSave && (
+          <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+            <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs">
+              
+              <div className="flex justify-between items-start border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl shrink-0">
+                    <ShieldAlert className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base text-slate-900">Confirm Profile Update & Archival</h3>
+                    <p className="text-xs font-bold text-amber-700 mt-0.5">Tax Forms or Benefit Services Unenrolled</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowUnenrollConfirmationModal(false)}
+                  className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <p className="text-slate-600 leading-relaxed font-medium">
+                You are unchecking/unenrolling the following services from <strong>{companyName}</strong>'s profile:
+              </p>
+
+              <div className="space-y-2 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                {removedBirList.length > 0 && (
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase text-amber-800 tracking-wider block mb-1">
+                      Unenrolled BIR Tax Forms ({removedBirList.length})
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {removedBirList.map(code => (
+                        <span key={code} className="font-mono font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded text-[11px]">
+                          {code}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {removedBenList.length > 0 && (
+                  <div className={removedBirList.length > 0 ? "pt-2 border-t border-slate-200" : ""}>
+                    <span className="text-[10px] font-extrabold uppercase text-blue-800 tracking-wider block mb-1">
+                      Unenrolled Benefit Services ({removedBenList.length})
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {removedBenList.map(code => (
+                        <span key={code} className="font-mono font-bold text-blue-900 bg-blue-100 border border-blue-300 px-2 py-0.5 rounded text-[11px]">
+                          {code}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 bg-amber-50/90 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 space-y-1">
+                <div className="flex items-center gap-1.5 font-bold text-amber-950">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Immutable Historical Audit Trail Rule:</span>
+                </div>
+                <p className="leading-relaxed pl-5 text-[10.5px]">
+                  Existing historical compliance records and assessed filings for these forms will <strong>NEVER be deleted</strong> and will remain preserved in the compliance log with an <span className="font-bold text-slate-800">[Unenrolled Form]</span> grey badge. Future automatic deadline generation for upcoming months will be paused.
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowUnenrollConfirmationModal(false)}
+                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
+                >
+                  Cancel & Review
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeClientUpdate(pendingClientDataToSave)}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-md shadow-amber-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Check className="w-4 h-4" /> Confirm & Preserve History
+                </button>
+              </div>
+
             </div>
           </div>
         )}

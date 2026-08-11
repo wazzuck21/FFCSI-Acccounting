@@ -427,6 +427,76 @@ export const MONTH_INDEX: Record<string, number> = {
   Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
 };
 
+export const PHILIPPINE_HOLIDAYS_2026: string[] = [
+  '2026-01-01', // New Year's Day
+  '2026-01-02', // Special Non-Working Day
+  '2026-02-25', // EDSA Revolution Anniversary
+  '2026-04-02', // Maundy Thursday
+  '2026-04-03', // Good Friday
+  '2026-04-04', // Black Saturday
+  '2026-04-09', // Araw ng Kagitingan
+  '2026-05-01', // Labor Day
+  '2026-06-12', // Independence Day
+  '2026-08-21', // Ninoy Aquino Day
+  '2026-08-31', // National Heroes Day
+  '2026-11-01', // All Saints' Day
+  '2026-11-02', // All Souls' Day
+  '2026-11-30', // Bonifacio Day
+  '2026-12-08', // Feast of the Immaculate Conception
+  '2026-12-24', // Christmas Eve
+  '2026-12-25', // Christmas Day
+  '2026-12-30', // Rizal Day
+  '2026-12-31'  // Last Day of Year
+];
+
+export function adjustDeadlineForWeekendsAndHolidays(
+  dateStr: string,
+  holidays: string[] = PHILIPPINE_HOLIDAYS_2026
+): { adjustedDateStr: string; wasShifted: boolean; shiftReason?: string } {
+  if (!dateStr || dateStr === 'N/A' || dateStr === 'NONE') {
+    return { adjustedDateStr: dateStr, wasShifted: false };
+  }
+
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return { adjustedDateStr: dateStr, wasShifted: false };
+
+  let dt = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  if (isNaN(dt.getTime())) return { adjustedDateStr: dateStr, wasShifted: false };
+
+  let wasShifted = false;
+  const reasons: string[] = [];
+
+  let safetyCount = 0;
+  while (safetyCount < 10) {
+    const dayOfWeek = dt.getDay(); // 0 = Sun, 6 = Sat
+    const currStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+
+    if (dayOfWeek === 6) { // Saturday -> shift to Monday
+      dt.setDate(dt.getDate() + 2);
+      wasShifted = true;
+      reasons.push('Saturday adjusted to Monday');
+    } else if (dayOfWeek === 0) { // Sunday -> shift to Monday
+      dt.setDate(dt.getDate() + 1);
+      wasShifted = true;
+      reasons.push('Sunday adjusted to Monday');
+    } else if (holidays.includes(currStr)) {
+      dt.setDate(dt.getDate() + 1);
+      wasShifted = true;
+      reasons.push(`Holiday (${currStr}) adjusted to next working day`);
+    } else {
+      break;
+    }
+    safetyCount++;
+  }
+
+  const finalStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  return {
+    adjustedDateStr: finalStr,
+    wasShifted,
+    shiftReason: reasons.length > 0 ? reasons.join('; ') : undefined
+  };
+}
+
 export function generateDefaultScheduleForFrequency(
   frequency: 'Monthly' | 'Quarterly' | 'Annually' | 'Custom',
   deadlineDay: number = 10,
@@ -503,9 +573,19 @@ export function getRuleDeadlineForMonth(
   m: string, 
   targetYear: number = 2026,
   client?: Partial<ClientProfile>
-): { dueDateStr: string; label: string; isNotRequired?: boolean } | null {
+): { dueDateStr: string; label: string; isNotRequired?: boolean; wasWeekendShifted?: boolean } | null {
   const mIdx = MONTH_INDEX[m];
   if (mIdx === undefined) return null;
+
+  const sanitizeResult = (res: { dueDateStr: string; label: string; isNotRequired?: boolean } | null) => {
+    if (!res || !res.dueDateStr || res.dueDateStr === 'N/A' || res.dueDateStr === 'NONE') return res;
+    const adj = adjustDeadlineForWeekendsAndHolidays(res.dueDateStr);
+    return {
+      ...res,
+      dueDateStr: adj.adjustedDateStr,
+      wasWeekendShifted: adj.wasShifted
+    };
+  };
 
   // Fiscal Year Client Deadline Shift Calculation ⭐
   if (client && client.accountingPeriod === 'Fiscal') {
@@ -532,11 +612,11 @@ export function getRuleDeadlineForMonth(
       if (mIdx === dueMonthIdx) {
         const day = String(rule.deadlineDay || 15).padStart(2, '0');
         const mStr = String(dueMonthIdx + 1).padStart(2, '0');
-        return {
+        return sanitizeResult({
           dueDateStr: `${targetYear}-${mStr}-${day}`,
           label: `FY-Ended ${fyMonthFullName}`,
           isNotRequired: false
-        };
+        });
       }
       return null;
     }
@@ -551,15 +631,15 @@ export function getRuleDeadlineForMonth(
 
       if (mIdx === q1Due) {
         const mStr = String(q1Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `1Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `1Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       if (mIdx === q2Due) {
         const mStr = String(q2Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `2Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `2Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       if (mIdx === q3Due) {
         const mStr = String(q3Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `3Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `3Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       return null;
     }
@@ -575,19 +655,19 @@ export function getRuleDeadlineForMonth(
 
       if (mIdx === q1Due) {
         const mStr = String(q1Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `1Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `1Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       if (mIdx === q2Due) {
         const mStr = String(q2Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `2Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `2Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       if (mIdx === q3Due) {
         const mStr = String(q3Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `3Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `3Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       if (mIdx === q4Due) {
         const mStr = String(q4Due + 1).padStart(2, '0');
-        return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: `4Q FY-Ended ${fyMonthFullName}`, isNotRequired: false };
+        return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: `4Q FY-Ended ${fyMonthFullName}`, isNotRequired: false });
       }
       return null;
     }
@@ -612,11 +692,11 @@ export function getRuleDeadlineForMonth(
       if (parts.length === 3) {
         const sMonthIdx = parseInt(parts[1], 10) - 1;
         if (sMonthIdx === mIdx) {
-          return {
+          return sanitizeResult({
             dueDateStr: `${targetYear}-${mStr}-${parts[2]}`,
             label: rule.customDescription || `${m}-${String(targetYear).slice(-2)}`,
             isNotRequired: false
-          };
+          });
         }
       }
     }
@@ -627,11 +707,11 @@ export function getRuleDeadlineForMonth(
       if (parts.length === 2) {
         const fMonthIdx = parseInt(parts[0], 10) - 1;
         if (fMonthIdx === mIdx) {
-          return {
+          return sanitizeResult({
             dueDateStr: `${targetYear}-${mStr}-${parts[1]}`,
             label: rule.customDescription || `${m}-${String(targetYear).slice(-2)}`,
             isNotRequired: false
-          };
+          });
         }
       }
     }
@@ -649,22 +729,22 @@ export function getRuleDeadlineForMonth(
         if (calcLabel === `${m}-${String(targetYear).slice(-2)}`) {
           calcLabel = mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
         }
-        return {
+        return sanitizeResult({
           dueDateStr: `${targetYear}-${mStr}-${dayStr}`,
           label: calcLabel || (mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`),
           isNotRequired: false
-        };
+        });
       }
     }
 
     // 4. Fallback to standard deadline Day for the applicable custom month
     const day = String(rule.deadlineDay || 10).padStart(2, '0');
     const fallbackLabel = mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
-    return {
+    return sanitizeResult({
       dueDateStr: `${targetYear}-${mStr}-${day}`,
       label: fallbackLabel,
       isNotRequired: false
-    };
+    });
   }
 
   // Monthly Standard Schedule Calculation
@@ -674,7 +754,7 @@ export function getRuleDeadlineForMonth(
     const periodLabel = mIdx === 0 
       ? `Dec-${String(targetYear - 1).slice(-2)}` 
       : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
-    return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: periodLabel, isNotRequired: false };
+    return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: periodLabel, isNotRequired: false });
   }
 
   // Fallback / Standard Calendar Schedule for Quarterly, Annually, etc.
@@ -695,15 +775,15 @@ export function getRuleDeadlineForMonth(
       const adjustedDueDate = `${targetYear}-${mStr}-${dayStr}`;
 
       let adjustedLabel = match.periodLabel;
-      if (adjustedLabel === `${m}-${String(targetYear).slice(-2)}` && (rule.frequency === 'Monthly' || rule.frequency === 'Custom')) {
+      if (adjustedLabel === `${m}-${String(targetYear).slice(-2)}` && ((rule.frequency as string) === 'Monthly' || (rule.frequency as string) === 'Custom')) {
         adjustedLabel = mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`;
       }
       if (!adjustedLabel) {
-        adjustedLabel = (rule.frequency === 'Monthly' || rule.frequency === 'Custom')
+        adjustedLabel = ((rule.frequency as string) === 'Monthly' || (rule.frequency as string) === 'Custom')
           ? (mIdx === 0 ? `Dec-${String(targetYear - 1).slice(-2)}` : `${MONTHS_LIST[mIdx - 1]}-${String(targetYear).slice(-2)}`)
           : `${m}-${String(targetYear).slice(-2)}`;
       }
-      return { dueDateStr: adjustedDueDate, label: adjustedLabel, isNotRequired: false };
+      return sanitizeResult({ dueDateStr: adjustedDueDate, label: adjustedLabel, isNotRequired: false });
     }
     return null;
   }
@@ -715,23 +795,23 @@ export function getRuleDeadlineForMonth(
     if (['Jan', 'Apr', 'Jul', 'Oct'].includes(m) && ['1601EQ', '2550Q', '2551Q'].includes(codeUpper)) {
       const day = String(rule.deadlineDay || (codeUpper === '1601EQ' ? 30 : 25)).padStart(2, '0');
       const qLabel = m === 'Jan' ? `4Q - ${targetYear - 1}` : m === 'Apr' ? `1Q - ${targetYear}` : m === 'Jul' ? `2Q - ${targetYear}` : `3Q - ${targetYear}`;
-      return { dueDateStr: `${targetYear}-${mStr}-${day}`, label: qLabel, isNotRequired: false };
+      return sanitizeResult({ dueDateStr: `${targetYear}-${mStr}-${day}`, label: qLabel, isNotRequired: false });
     }
-    if (m === 'May' && codeUpper === '1702Q') return { dueDateStr: `${targetYear}-05-${String(rule.deadlineDay || 29).padStart(2, '0')}`, label: `1Q - ${targetYear}`, isNotRequired: false };
-    if (m === 'May' && codeUpper === '1701Q') return { dueDateStr: `${targetYear}-05-${String(rule.deadlineDay || 15).padStart(2, '0')}`, label: `1Q - ${targetYear}`, isNotRequired: false };
+    if (m === 'May' && codeUpper === '1702Q') return sanitizeResult({ dueDateStr: `${targetYear}-05-${String(rule.deadlineDay || 29).padStart(2, '0')}`, label: `1Q - ${targetYear}`, isNotRequired: false });
+    if (m === 'May' && codeUpper === '1701Q') return sanitizeResult({ dueDateStr: `${targetYear}-05-${String(rule.deadlineDay || 15).padStart(2, '0')}`, label: `1Q - ${targetYear}`, isNotRequired: false });
     if (m === 'Aug' && (codeUpper === '1701Q' || codeUpper === '1702Q')) {
       const d = String(rule.deadlineDay || (codeUpper === '1702Q' ? 29 : 15)).padStart(2, '0');
-      return { dueDateStr: `${targetYear}-08-${d}`, label: `2Q - ${targetYear}`, isNotRequired: false };
+      return sanitizeResult({ dueDateStr: `${targetYear}-08-${d}`, label: `2Q - ${targetYear}`, isNotRequired: false });
     }
     if (m === 'Nov' && (codeUpper === '1701Q' || codeUpper === '1702Q')) {
       const d = String(rule.deadlineDay || (codeUpper === '1702Q' ? 29 : 15)).padStart(2, '0');
-      return { dueDateStr: `${targetYear}-11-${d}`, label: `3Q - ${targetYear}`, isNotRequired: false };
+      return sanitizeResult({ dueDateStr: `${targetYear}-11-${d}`, label: `3Q - ${targetYear}`, isNotRequired: false });
     }
   }
 
   if (rule.frequency === 'Annually' && m === 'Apr') {
     const d = String(rule.deadlineDay || 15).padStart(2, '0');
-    return { dueDateStr: `${targetYear}-04-${d}`, label: `TY - ${targetYear - 1}`, isNotRequired: false };
+    return sanitizeResult({ dueDateStr: `${targetYear}-04-${d}`, label: `TY - ${targetYear - 1}`, isNotRequired: false });
   }
 
   return null;

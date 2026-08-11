@@ -12,7 +12,8 @@ import {
   LeaveRecord,
   ValeRecord,
   PayrollRun,
-  CompanyExpense
+  CompanyExpense,
+  ClientService
 } from '../types';
 
 export const INITIAL_USERS: User[] = [
@@ -1047,4 +1048,177 @@ export const INITIAL_COMPANY_EXPENSES: CompanyExpense[] = [
     createdAt: '2026-08-01'
   }
 ];
+
+export const INITIAL_CLIENT_SERVICES: ClientService[] = [
+  // client_001 Apex Global Logistics Corp.
+  {
+    id: 'cs_001_bookkeeping',
+    clientId: 'client_001',
+    serviceCode: 'BOOKKEEPING',
+    serviceName: 'Full-Charge Monthly Bookkeeping & Financial Reporting',
+    category: 'Accounting',
+    status: 'Active',
+    startDate: '2025-01-10',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 25000,
+    generatesCompliance: false,
+    notes: 'Monthly accounting and trial balance reconciliation.',
+    createdAt: '2025-01-10',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'cs_001_bir',
+    clientId: 'client_001',
+    serviceCode: 'BIR_TAX_PACKAGE',
+    serviceName: 'BIR Tax Compliance & Filing Package (0619E, 1601EQ, 2550Q, 1702Q, ITR)',
+    category: 'BIR',
+    status: 'Active',
+    startDate: '2025-01-10',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 15000,
+    generatesCompliance: true,
+    notes: 'eFPS tax return preparation and filing.',
+    createdAt: '2025-01-10',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'cs_001_benefits',
+    clientId: 'client_001',
+    serviceCode: 'BENEFITS_REMITTANCE',
+    serviceName: 'Statutory Benefits Remittance (SSS, HDMF, PhilHealth)',
+    category: 'Benefits',
+    status: 'Active',
+    startDate: '2025-01-10',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 5000,
+    generatesCompliance: true,
+    notes: 'Employee loans and monthly contribution reporting.',
+    createdAt: '2025-01-10',
+    updatedAt: '2026-08-01'
+  },
+
+  // client_004 Apex Cebu Branch
+  {
+    id: 'cs_004_bir',
+    clientId: 'client_004',
+    serviceCode: 'BIR_BRANCH_TAX',
+    serviceName: 'Cebu Branch BIR Tax Services (0619E, 1601EQ, 2550Q)',
+    category: 'BIR',
+    status: 'Active',
+    startDate: '2025-05-15',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 12000,
+    generatesCompliance: true,
+    notes: 'Branch withholding and quarterly VAT filing.',
+    createdAt: '2025-05-15',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'cs_004_benefits',
+    clientId: 'client_004',
+    serviceCode: 'BENEFITS_BRANCH',
+    serviceName: 'Cebu Branch Benefits Remittance',
+    category: 'Benefits',
+    status: 'Active',
+    startDate: '2025-05-15',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 8000,
+    generatesCompliance: true,
+    notes: 'Branch employee SSS, PhilHealth, Pag-IBIG filing.',
+    createdAt: '2025-05-15',
+    updatedAt: '2026-08-01'
+  },
+
+  // client_002 Manila Bistro
+  {
+    id: 'cs_002_bookkeeping',
+    clientId: 'client_002',
+    serviceCode: 'BOOKKEEPING',
+    serviceName: 'Restaurant Accounting & Inventory Bookkeeping',
+    category: 'Accounting',
+    status: 'Active',
+    startDate: '2025-03-15',
+    assignedStaffId: 'user_staff_2',
+    assignedStaffName: 'Clarissa Reyes',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 20000,
+    generatesCompliance: false,
+    notes: 'POS sales reconciliation & monthly financial statements.',
+    createdAt: '2025-03-15',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'cs_002_bir',
+    clientId: 'client_002',
+    serviceCode: 'BIR_TAX_PACKAGE',
+    serviceName: 'BIR Corporate Tax Services',
+    category: 'BIR',
+    status: 'Active',
+    startDate: '2025-03-15',
+    assignedStaffId: 'user_staff_2',
+    assignedStaffName: 'Clarissa Reyes',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 12000,
+    generatesCompliance: true,
+    notes: 'Manual filing tax returns.',
+    createdAt: '2025-03-15',
+    updatedAt: '2026-08-01'
+  },
+
+  // client_003 Reyes Architecture
+  {
+    id: 'cs_003_bir',
+    clientId: 'client_003',
+    serviceCode: 'BIR_TAX_PACKAGE',
+    serviceName: 'Sole Proprietorship Tax Services (0619E, 1601EQ, 2550Q, 1701Q, ITR)',
+    category: 'BIR',
+    status: 'Active',
+    startDate: '2025-06-01',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 12000,
+    generatesCompliance: true,
+    notes: 'Individual quarterly and annual tax compliance.',
+    createdAt: '2025-06-01',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'cs_003_benefits',
+    clientId: 'client_003',
+    serviceCode: 'BENEFITS_REMITTANCE',
+    serviceName: 'Staff Statutory Benefits Compliance',
+    category: 'Benefits',
+    status: 'Active',
+    startDate: '2025-06-01',
+    assignedStaffId: 'user_staff_1',
+    assignedStaffName: 'Juan dela Cruz',
+    billable: true,
+    billingFrequency: 'Monthly',
+    fee: 6000,
+    generatesCompliance: true,
+    notes: 'Design studio staff SSS, PhilHealth, HDMF filing.',
+    createdAt: '2025-06-01',
+    updatedAt: '2026-08-01'
+  }
+];
+
 

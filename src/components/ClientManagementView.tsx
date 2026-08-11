@@ -18,7 +18,10 @@ import {
   Tag, 
   ExternalLink,
   AlertTriangle,
-  X
+  X,
+  Archive,
+  RotateCcw,
+  ShieldCheck
 } from 'lucide-react';
 
 interface Props {
@@ -26,7 +29,7 @@ interface Props {
 }
 
 export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
-  const { clients, deleteClient, addAuditLog } = useData();
+  const { clients, archiveClient, restoreClient, addAuditLog } = useData();
   const { isSuperAdmin, currentUser, allUsers } = useAuth();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,11 +40,15 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<ClientProfile | null>(null);
 
-  // Delete Confirmation Modal State
-  const [clientToDelete, setClientToDelete] = useState<ClientProfile | null>(null);
+  // Archive Confirmation Modal State
+  const [clientToArchive, setClientToArchive] = useState<ClientProfile | null>(null);
+  const [archiveReason, setArchiveReason] = useState('');
   const [adminPasswordInput, setAdminPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
-  const [deleteSuccessMsg, setDeleteSuccessMsg] = useState<string | null>(null);
+  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
+
+  // Restore Confirmation Modal State
+  const [clientToRestore, setClientToRestore] = useState<ClientProfile | null>(null);
 
   // Filter clients
   const filteredClients = clients.filter(c => {
@@ -53,7 +60,14 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
       c.contactPerson.toLowerCase().includes(searchQuery.toLowerCase());
 
     // Status filter
-    const matchStatus = statusFilter === 'ALL' || c.status === statusFilter;
+    let matchStatus = true;
+    if (statusFilter === 'ALL') {
+      matchStatus = c.status !== 'Archived';
+    } else if (statusFilter === 'ALL_INCLUDING_ARCHIVED') {
+      matchStatus = true;
+    } else {
+      matchStatus = c.status === statusFilter;
+    }
 
     // Tax filter
     const matchTax = taxFilter === 'ALL' || c.birTaxServices.includes(taxFilter);
@@ -64,39 +78,57 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
     return matchSearch && matchStatus && matchTax && matchStaff;
   });
 
-  const confirmDeleteClient = () => {
-    if (!clientToDelete) return;
+  const confirmArchiveClient = () => {
+    if (!clientToArchive) return;
 
     if (!isSuperAdmin) {
-      setPasswordError('🔒 Access Denied: Only Super Admin accounts can delete client profiles.');
+      setPasswordError('🔒 Access Denied: Only Super Admin accounts can archive client profiles.');
       return;
     }
 
     if (!adminPasswordInput.trim()) {
-      setPasswordError('Please enter your Super Admin password to authorize deletion.');
+      setPasswordError('Please enter your Super Admin password to authorize archiving.');
       return;
     }
 
     const requiredPassword = currentUser?.password || 'admin123';
     if (adminPasswordInput.trim() !== requiredPassword) {
-      setPasswordError('❌ Invalid Super Admin Password! Deletion cancelled.');
+      setPasswordError('❌ Invalid Super Admin Password! Archiving cancelled.');
       return;
     }
 
-    const companyName = clientToDelete.companyName;
-    const clientId = clientToDelete.id;
+    const companyName = clientToArchive.companyName;
+    const clientId = clientToArchive.id;
 
-    deleteClient(clientId);
-    addAuditLog('Client Deleted', `Permanently deleted client profile for ${companyName}`, currentUser?.id || '', currentUser?.fullName || '');
+    archiveClient(clientId, archiveReason.trim() || 'Client profile archived', currentUser?.fullName || 'Super Admin');
+    addAuditLog('CLIENT_ARCHIVED', `Archived client profile for ${companyName}. Reason: ${archiveReason.trim() || 'N/A'}. All historical records preserved.`, currentUser?.id || '', currentUser?.fullName || '');
     
-    setDeleteSuccessMsg(`Client "${companyName}" has been permanently deleted.`);
-    setClientToDelete(null);
+    setActionSuccessMsg(`Client "${companyName}" has been moved to Archived status. All historical tax, billing, and compliance records have been retained.`);
+    setClientToArchive(null);
+    setArchiveReason('');
     setAdminPasswordInput('');
     setPasswordError('');
 
     setTimeout(() => {
-      setDeleteSuccessMsg(null);
-    }, 4000);
+      setActionSuccessMsg(null);
+    }, 5000);
+  };
+
+  const confirmRestoreClient = () => {
+    if (!clientToRestore) return;
+
+    const companyName = clientToRestore.companyName;
+    const clientId = clientToRestore.id;
+
+    restoreClient(clientId);
+    addAuditLog('CLIENT_RESTORED', `Restored client profile for ${companyName} back to Active status.`, currentUser?.id || '', currentUser?.fullName || '');
+
+    setActionSuccessMsg(`Client "${companyName}" has been restored to Active status.`);
+    setClientToRestore(null);
+
+    setTimeout(() => {
+      setActionSuccessMsg(null);
+    }, 5000);
   };
 
   return (
@@ -120,7 +152,7 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
               setEditingClient(null);
               setIsModalOpen(true);
             }}
-            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-sm text-xs flex items-center gap-2 transition-all shrink-0"
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl shadow-sm text-xs flex items-center gap-2 transition-all shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4" /> Register New Client
           </button>
@@ -147,12 +179,14 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
-            className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-100"
+            className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-100 font-semibold"
           >
-            <option value="ALL">All Statuses</option>
+            <option value="ALL">Active / Compliance / Inactive (Default)</option>
             <option value="Active">Active Clients</option>
             <option value="For Compliance">For Compliance</option>
             <option value="Inactive">Inactive</option>
+            <option value="Archived">Archived Clients Only</option>
+            <option value="ALL_INCLUDING_ARCHIVED">All Clients (Including Archived)</option>
           </select>
         </div>
 
@@ -208,176 +242,230 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredClients.map((client) => (
-                <tr key={client.id} className="hover:bg-slate-50/80 transition-colors">
-                  
-                  {/* Company Name & Entity */}
-                  <td className="py-3.5 px-4">
-                    <div className="flex items-start gap-2.5">
-                      <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center font-bold text-blue-700 shrink-0 mt-0.5">
-                        {client.companyName.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <button
-                            onClick={() => onSelectClientWorkspace(client.id)}
-                            className="font-bold text-slate-900 hover:text-blue-600 text-sm text-left block transition-colors"
-                          >
-                            {client.companyName}
-                          </button>
-                          {client.isBranch ? (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 border border-purple-200" title={`Branch of ${client.parentClientName || 'Head Office'}`}>
-                              Branch ({client.branchCode || '001'})
-                            </span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                              Main Office
-                            </span>
-                          )}
+              {filteredClients.map((client) => {
+                const isArchived = client.status === 'Archived';
+
+                return (
+                  <tr key={client.id} className={`hover:bg-slate-50/80 transition-colors ${isArchived ? 'bg-slate-50/50 opacity-80' : ''}`}>
+                    
+                    {/* Company Name & Entity */}
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-start gap-2.5">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold border shrink-0 mt-0.5 ${
+                          isArchived 
+                            ? 'bg-purple-50 text-purple-700 border-purple-200' 
+                            : 'bg-blue-50 text-blue-700 border-blue-200'
+                        }`}>
+                          {client.companyName.charAt(0)}
                         </div>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">
-                          <span className="font-semibold text-slate-700">{client.entityType}</span>
-                          <span>•</span>
-                          <span>{client.registrationMethod}</span>
-                          {client.parentClientName && (
-                            <>
-                              <span>•</span>
-                              <span className="text-purple-700 font-medium">HQ: {client.parentClientName}</span>
-                            </>
-                          )}
+                        <div>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <button
+                              onClick={() => onSelectClientWorkspace(client.id)}
+                              className="font-bold text-slate-900 hover:text-blue-600 text-sm text-left block transition-colors"
+                            >
+                              {client.companyName}
+                            </button>
+                            {client.isBranch ? (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-800 border border-purple-200" title={`Branch of ${client.parentClientName || 'Head Office'}`}>
+                                Branch ({client.branchCode || '001'})
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                Main Office
+                              </span>
+                            )}
+                            {isArchived && (
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-100 text-purple-900 border border-purple-300 flex items-center gap-1">
+                                <Archive className="w-2.5 h-2.5" /> Archived
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5">
+                            <span className="font-semibold text-slate-700">{client.entityType}</span>
+                            <span>•</span>
+                            <span>{client.registrationMethod}</span>
+                            {client.parentClientName && (
+                              <>
+                                <span>•</span>
+                                <span className="text-purple-700 font-medium">HQ: {client.parentClientName}</span>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
-
-                  {/* TIN & RDO */}
-                  <td className="py-3.5 px-4">
-                    <p className="font-mono text-slate-800 font-bold">{client.tinNumber}</p>
-                    <p className="text-[10px] text-amber-700 font-bold">RDO #{client.rdoNumber}</p>
-                  </td>
-
-                  {/* Tax & Benefits badges */}
-                  <td className="py-3.5 px-4">
-                    <div className="flex flex-wrap gap-1 max-w-xs">
-                      {(client.birTaxServices || []).slice(0, 3).map(tax => (
-                        <span key={tax} className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                          {tax}
-                        </span>
-                      ))}
-                      {(client.birTaxServices || []).length > 3 && (
-                        <span className="text-[9px] text-slate-400">+{(client.birTaxServices || []).length - 3}</span>
-                      )}
-                    </div>
-                  </td>
-
-                  {/* Status */}
-                  <td className="py-3.5 px-4">
-                    <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                      client.status === 'Active'
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : client.status === 'For Compliance'
-                        ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                        : 'bg-slate-100 text-slate-600 border border-slate-200'
-                    }`}>
-                      {client.status}
-                    </span>
-                  </td>
-
-                  {/* Retainer Fee (Super Admin Only) */}
-                  {isSuperAdmin && (
-                    <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-800">
-                      ₱{client.retainersFee.toLocaleString()}
                     </td>
-                  )}
 
-                  {/* Assigned Staff */}
-                  <td className="py-3.5 px-4 text-slate-700 font-medium">
-                    {client.assignedStaffName}
-                  </td>
+                    {/* TIN & RDO */}
+                    <td className="py-3.5 px-4">
+                      <p className="font-mono text-slate-800 font-bold">{client.tinNumber}</p>
+                      <p className="text-[10px] text-amber-700 font-bold">RDO #{client.rdoNumber}</p>
+                    </td>
 
-                  {/* Actions */}
-                  <td className="py-3.5 px-4 text-center">
-                    <div className="flex items-center justify-center gap-1">
-                      <button
-                        onClick={() => onSelectClientWorkspace(client.id)}
-                        title="Open Workspace"
-                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </button>
+                    {/* Tax & Benefits badges */}
+                    <td className="py-3.5 px-4">
+                      <div className="flex flex-wrap gap-1 max-w-xs">
+                        {(client.birTaxServices || []).slice(0, 3).map(tax => (
+                          <span key={tax} className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            {tax}
+                          </span>
+                        ))}
+                        {(client.birTaxServices || []).length > 3 && (
+                          <span className="text-[9px] text-slate-400">+{(client.birTaxServices || []).length - 3}</span>
+                        )}
+                      </div>
+                    </td>
 
-                      {isSuperAdmin && (
+                    {/* Status */}
+                    <td className="py-3.5 px-4">
+                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                        client.status === 'Active'
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                          : client.status === 'For Compliance' || client.status === 'Compliance'
+                          ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                          : client.status === 'Archived'
+                          ? 'bg-purple-100 text-purple-900 border border-purple-300'
+                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`} title={client.archivedAt ? `Archived on ${client.archivedAt.substring(0, 10)} by ${client.archivedBy || 'Admin'}` : ''}>
+                        {client.status}
+                      </span>
+                    </td>
+
+                    {/* Retainer Fee (Super Admin Only) */}
+                    {isSuperAdmin && (
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-800">
+                        ₱{client.retainersFee.toLocaleString()}
+                      </td>
+                    )}
+
+                    {/* Assigned Staff */}
+                    <td className="py-3.5 px-4 text-slate-700 font-medium">
+                      {client.assignedStaffName}
+                    </td>
+
+                    {/* Actions */}
+                    <td className="py-3.5 px-4 text-center">
+                      <div className="flex items-center justify-center gap-1">
                         <button
-                          onClick={() => {
-                            setEditingClient(client);
-                            setIsModalOpen(true);
-                          }}
-                          title="Edit Profile"
-                          className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                          onClick={() => onSelectClientWorkspace(client.id)}
+                          title="Open Workspace (View Historical Records)"
+                          className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                         >
-                          <Edit3 className="w-4 h-4" />
+                          <ExternalLink className="w-4 h-4" />
                         </button>
-                      )}
 
-                      {isSuperAdmin && (
-                        <button
-                          onClick={() => {
-                            setAdminPasswordInput('');
-                            setPasswordError('');
-                            setClientToDelete(client);
-                          }}
-                          title="Delete Client"
-                          className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
+                        {isSuperAdmin && (
+                          <button
+                            onClick={() => {
+                              setEditingClient(client);
+                              setIsModalOpen(true);
+                            }}
+                            title="Edit Profile"
+                            className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Edit3 className="w-4 h-4" />
+                          </button>
+                        )}
 
-                </tr>
-              ))}
+                        {isSuperAdmin && (
+                          isArchived ? (
+                            <button
+                              onClick={() => setClientToRestore(client)}
+                              title="Restore Client Profile to Active"
+                              className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setAdminPasswordInput('');
+                                setArchiveReason('');
+                                setPasswordError('');
+                                setClientToArchive(client);
+                              }}
+                              title="Archive Client Profile (Preserve All Records)"
+                              className="p-1.5 text-purple-700 hover:bg-purple-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Archive className="w-4 h-4" />
+                            </button>
+                          )
+                        )}
+                      </div>
+                    </td>
+
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Success Banner Notification */}
-      {deleteSuccessMsg && (
-        <div className="fixed bottom-6 right-6 z-50 bg-emerald-900 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 border border-emerald-700 animate-in fade-in slide-in-from-bottom-3 duration-200">
+      {/* Action Success Banner Notification */}
+      {actionSuccessMsg && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 border border-slate-700 animate-in fade-in slide-in-from-bottom-3 duration-200">
           <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-          <span className="text-xs font-bold">{deleteSuccessMsg}</span>
+          <span className="text-xs font-bold">{actionSuccessMsg}</span>
           <button 
-            onClick={() => setDeleteSuccessMsg(null)}
-            className="p-1 text-emerald-300 hover:text-white rounded-lg ml-2"
+            onClick={() => setActionSuccessMsg(null)}
+            className="p-1 text-slate-400 hover:text-white rounded-lg ml-2 cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {clientToDelete && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-start gap-4">
-              <div className="w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
+      {/* Archive Confirmation Modal */}
+      {clientToArchive && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="flex items-start gap-3.5 pb-3 border-b border-slate-100">
+              <div className="w-10 h-10 rounded-2xl bg-purple-100 border border-purple-200 text-purple-800 flex items-center justify-center shrink-0">
+                <Archive className="w-5 h-5" />
               </div>
               <div className="flex-1">
-                <h3 className="text-base font-bold text-slate-900">🔒 Delete Client Profile</h3>
-                <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                  Are you sure you want to permanently delete <strong className="text-slate-900">{clientToDelete.companyName}</strong> (TIN: {clientToDelete.tinNumber})?
-                </p>
-                <p className="text-[11px] text-rose-600 font-semibold mt-2 bg-rose-50 p-2 rounded-lg border border-rose-100">
-                  ⚠️ This action cannot be undone and will remove the client profile record from the directory.
+                <h3 className="text-base font-extrabold text-slate-900">Archive Client Profile</h3>
+                <p className="text-xs text-purple-900 font-bold mt-0.5">
+                  Archiving: <strong className="text-slate-900">{clientToArchive.companyName}</strong> (TIN: {clientToArchive.tinNumber})
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setClientToArchive(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3.5 bg-emerald-50/90 border border-emerald-200 rounded-xl space-y-1.5 text-emerald-950">
+              <div className="flex items-center gap-2 font-bold text-emerald-900 text-xs">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Historical Audit & Compliance Protection Guarantee</span>
+              </div>
+              <p className="text-[11px] leading-relaxed pl-6 text-emerald-900 font-medium">
+                Archiving will hide this client from active operational lists while <strong>permanently retaining all linked historical records</strong> in the system database (Invoices, Payments, Tax Filings, Compliance History, Payables, Documents, Tasks, and Credentials).
+              </p>
+            </div>
+
+            {/* Optional Archive Reason */}
+            <div className="space-y-1">
+              <label className="block font-bold text-slate-800">
+                Archival Reason (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g., Company transferred accountants, temporarily suspended operations..."
+                value={archiveReason}
+                onChange={(e) => setArchiveReason(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-medium text-xs focus:ring-2 focus:ring-purple-400 focus:bg-white focus:outline-none"
+              />
             </div>
 
             {/* Super Admin Password Verification Input */}
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-bold text-slate-800">
+            <div className="space-y-1 pt-1">
+              <label className="block font-bold text-slate-800">
                 Super Admin Authorization Password *
               </label>
               <input
@@ -389,9 +477,9 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
                   setPasswordError('');
                 }}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') confirmDeleteClient();
+                  if (e.key === 'Enter') confirmArchiveClient();
                 }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-bold text-xs focus:ring-2 focus:ring-rose-500 focus:bg-white focus:outline-none"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 font-bold text-xs focus:ring-2 focus:ring-purple-500 focus:bg-white focus:outline-none"
                 autoFocus
               />
               {passwordError && (
@@ -399,24 +487,72 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => {
-                  setClientToDelete(null);
+                  setClientToArchive(null);
+                  setArchiveReason('');
                   setAdminPasswordInput('');
                   setPasswordError('');
                 }}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={confirmDeleteClient}
-                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs rounded-xl transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                onClick={confirmArchiveClient}
+                className="px-5 py-2.5 bg-purple-700 hover:bg-purple-800 text-white font-bold rounded-xl transition-all shadow-md shadow-purple-700/20 flex items-center gap-1.5 cursor-pointer"
               >
-                <Trash2 className="w-3.5 h-3.5" /> Authorize & Delete
+                <Archive className="w-4 h-4" /> Authorize & Archive Client
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Confirmation Modal */}
+      {clientToRestore && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="flex items-start gap-3.5 pb-3 border-b border-slate-100">
+              <div className="w-10 h-10 rounded-2xl bg-emerald-100 border border-emerald-200 text-emerald-800 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-base font-extrabold text-slate-900">Restore Client Profile</h3>
+                <p className="text-xs text-slate-600 font-medium mt-0.5">
+                  Restore <strong className="text-slate-900">{clientToRestore.companyName}</strong> back to active client operations?
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClientToRestore(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-slate-600 leading-relaxed font-medium">
+              This client profile will be restored to <strong>Active</strong> status and will reappear in default active client directory lists and staff assignment views. All historical records remain safely attached.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setClientToRestore(null)}
+                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRestoreClient}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4" /> Restore Client Profile
               </button>
             </div>
           </div>

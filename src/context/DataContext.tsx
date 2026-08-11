@@ -16,7 +16,13 @@ import {
   LeaveRecord,
   ValeRecord,
   PayrollRun,
-  CompanyExpense
+  CompanyExpense,
+  ClientService,
+  Payment,
+  CollectionLog,
+  CollectionStatus,
+  ServiceBillingFrequency,
+  InvoiceServiceLine
 } from '../types';
 import { 
   INITIAL_CLIENTS, 
@@ -32,13 +38,17 @@ import {
   INITIAL_LEAVE_RECORDS,
   INITIAL_VALE_RECORDS,
   INITIAL_PAYROLL_RUNS,
-  INITIAL_COMPANY_EXPENSES
+  INITIAL_COMPANY_EXPENSES,
+  INITIAL_CLIENT_SERVICES
 } from '../data/seedData';
 import { 
   DEFAULT_BANKS, 
   DEFAULT_BUSINESS_NATURES, 
   DEFAULT_BIR_TAX_OPTIONS, 
-  DEFAULT_BENEFITS_OPTIONS 
+  DEFAULT_BENEFITS_OPTIONS,
+  MONTHS_LIST,
+  MONTH_FULL_NAMES,
+  getRuleDeadlineForMonth
 } from '../data/masterTables';
 import { saveLocalData, getLocalData } from '../lib/idbStorage';
 
@@ -64,10 +74,21 @@ interface DataContextType {
   // Company Operating Expenses ⭐
   companyExpenses: CompanyExpense[];
 
+  // Client Services & Engagement Entity ⭐
+  clientServices: ClientService[];
+  addClientService: (service: Omit<ClientService, 'id' | 'createdAt' | 'updatedAt'>, userId?: string, userName?: string) => { success: boolean; message: string; service?: ClientService };
+  updateClientService: (id: string, updates: Partial<ClientService>, userId?: string, userName?: string) => { success: boolean; message: string };
+  suspendClientService: (id: string, reason?: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  endClientService: (id: string, endDate?: string, reason?: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  restoreClientService: (id: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  getClientServices: (clientId: string) => ClientService[];
+
   // Actions
   addClient: (client: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>) => ClientProfile;
   updateClient: (id: string, updates: Partial<ClientProfile>) => void;
-  deleteClient: (id: string) => void;
+  deleteClient: (id: string, reason?: string, archivedBy?: string) => void;
+  archiveClient: (id: string, reason?: string, archivedBy?: string) => void;
+  restoreClient: (id: string) => void;
   
   addDynamicSection: (section: Omit<DynamicSection, 'id' | 'createdAt'>) => DynamicSection;
   updateDynamicSection: (id: string, section: DynamicSection) => void;
@@ -85,10 +106,25 @@ interface DataContextType {
   
   addTask: (task: Omit<TaskItem, 'id'>) => void;
   updateTaskStatus: (id: string, status: TaskItem['status']) => void;
+  updateTask: (taskId: string, updates: Partial<TaskItem>, userId?: string, userName?: string) => void;
+  submitTaskForReview: (taskId: string, preparerNotes?: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  approveTask: (taskId: string, reviewNotes?: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  returnTaskForCorrection: (taskId: string, reviewNotes: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  overrideTaskDeadline: (taskId: string, newDueDate: string, reason: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  reassignTask: (taskId: string, newStaffId: string, newStaffName: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  deleteTask: (taskId: string, userId?: string, userName?: string) => void;
+  generateRecurringComplianceTasks: (periodMonth: string, periodYear: number, userId?: string, userName?: string) => { success: boolean; createdCount: number; skippedCount: number; message: string };
   
   addInvoice: (invoice: Omit<InvoiceItem, 'id' | 'invoiceNumber'>) => void;
   updateInvoice: (invoiceId: string, updates: Partial<InvoiceItem>, modificationDetails?: string, modifiedBy?: string) => void;
-  recordInvoicePayment: (invoiceId: string, paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services'] }, userId?: string, userName?: string) => { success: boolean; message: string };
+  recordInvoicePayment: (invoiceId: string, paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; referenceNumber?: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services'] }, userId?: string, userName?: string) => { success: boolean; message: string };
+  cancelInvoicePayment: (paymentId: string, reason: string, userId?: string, userName?: string) => { success: boolean; message: string };
+  getInvoicePayments: (invoiceId: string) => Payment[];
+  getInvoiceBalance: (invoiceId: string) => number;
+  payments: Payment[];
+  collectionLogs: CollectionLog[];
+  addCollectionLog: (invoiceId: string, logData: { contactPerson?: string; contactMethod?: CollectionLog['contactMethod']; status: CollectionStatus; notes: string; nextFollowUpDate?: string }, userId?: string, userName?: string) => { success: boolean; message: string };
+  generateRecurringInvoices: (period: string, frequency: ServiceBillingFrequency | 'All', issueDate: string, dueDate: string, userId?: string, userName?: string) => { success: boolean; createdCount: number; skippedCount: number; createdInvoices: InvoiceItem[]; skippedDetails: string[]; message: string };
   getNextCrNumber: () => string;
   isCrNumberUsed: (crNum: string) => boolean;
   getNextCollectionNumber: () => string;
@@ -168,6 +204,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [credentials, setCredentials] = useState<CoreCredential[]>(INITIAL_CREDENTIALS);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(INITIAL_AUDIT_LOGS);
   const [usedCrNumbers, setUsedCrNumbers] = useState<string[]>(['1001', '1002']);
+
+  // Client Services & Engagement Entity ⭐
+  const [clientServices, setClientServices] = useState<ClientService[]>(INITIAL_CLIENT_SERVICES);
+
+  // Payment Transaction Ledger ⭐
+  const [payments, setPayments] = useState<Payment[]>([]);
+
+  // AR Collection Interaction Logs ⭐
+  const [collectionLogs, setCollectionLogs] = useState<CollectionLog[]>([]);
 
   // Internal Company Payroll, HR, Leave & Vale ⭐
   const [employees, setEmployees] = useState<CompanyEmployee[]>(INITIAL_EMPLOYEES);
@@ -305,6 +350,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const storedExpenses = await getLocalData<CompanyExpense[]>('afms_company_expenses');
       if (storedExpenses) setCompanyExpenses(storedExpenses);
+
+      const storedServices = await getLocalData<ClientService[]>('afms_client_services');
+      if (storedServices) setClientServices(storedServices);
+
+      const storedPayments = await getLocalData<Payment[]>('afms_payments');
+      if (storedPayments) setPayments(storedPayments);
+
+      const storedCollectionLogs = await getLocalData<CollectionLog[]>('afms_collection_logs');
+      if (storedCollectionLogs) setCollectionLogs(storedCollectionLogs);
     }
     loadStoredState();
   }, []);
@@ -404,6 +458,310 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_audit_logs', updated);
   };
 
+  // ==========================================
+  // CLIENT SERVICES & ENGAGEMENT MANAGEMENT ⭐
+  // ==========================================
+
+  const getClientServices = (clientId: string): ClientService[] => {
+    return clientServices.filter(s => s.clientId === clientId);
+  };
+
+  const addClientService = (
+    data: Omit<ClientService, 'id' | 'createdAt' | 'updatedAt'>,
+    userId: string = 'system',
+    userName: string = 'System'
+  ): { success: boolean; message: string; service?: ClientService } => {
+    // Duplicate check for active/suspended service
+    const existing = clientServices.find(s => 
+      s.clientId === data.clientId && 
+      s.serviceCode.trim().toLowerCase() === data.serviceCode.trim().toLowerCase() && 
+      s.status !== 'Ended'
+    );
+
+    if (existing) {
+      return { 
+        success: false, 
+        message: `Service "${data.serviceName}" (${data.serviceCode}) is already active or suspended for this client.` 
+      };
+    }
+
+    const now = new Date().toISOString().substring(0, 10);
+    const newService: ClientService = {
+      ...data,
+      id: `cs_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const updated = [newService, ...clientServices];
+    setClientServices(updated);
+    persistState('afms_client_services', updated);
+
+    addAuditLog(
+      'ADD_CLIENT_SERVICE',
+      `Added client engagement service "${newService.serviceName}" (${newService.serviceCode}) for client ID ${newService.clientId} with fee ₱${newService.fee || 0}.`,
+      userId,
+      userName
+    );
+
+    return { 
+      success: true, 
+      message: `Service "${newService.serviceName}" added successfully.`,
+      service: newService
+    };
+  };
+
+  const updateClientService = (
+    id: string,
+    updates: Partial<ClientService>,
+    userId: string = 'system',
+    userName: string = 'System'
+  ): { success: boolean; message: string } => {
+    const service = clientServices.find(s => s.id === id);
+    if (!service) return { success: false, message: 'Client service not found.' };
+
+    const now = new Date().toISOString().substring(0, 10);
+    const updatedServices = clientServices.map(s => {
+      if (s.id === id) {
+        return {
+          ...s,
+          ...updates,
+          updatedAt: now
+        };
+      }
+      return s;
+    });
+
+    setClientServices(updatedServices);
+    persistState('afms_client_services', updatedServices);
+
+    addAuditLog(
+      'UPDATE_CLIENT_SERVICE',
+      `Updated service "${service.serviceName}" (${service.serviceCode}) for client ID ${service.clientId}.`,
+      userId,
+      userName
+    );
+
+    return { success: true, message: 'Service updated successfully.' };
+  };
+
+  const suspendClientService = (
+    id: string,
+    reason?: string,
+    userId: string = 'system',
+    userName: string = 'System'
+  ): { success: boolean; message: string } => {
+    const service = clientServices.find(s => s.id === id);
+    if (!service) return { success: false, message: 'Client service not found.' };
+
+    const now = new Date().toISOString().substring(0, 10);
+    const updatedServices = clientServices.map(s => {
+      if (s.id === id) {
+        return {
+          ...s,
+          status: 'Suspended' as const,
+          notes: reason ? `${s.notes ? s.notes + ' | ' : ''}Suspended on ${now}: ${reason}` : s.notes,
+          updatedAt: now
+        };
+      }
+      return s;
+    });
+
+    setClientServices(updatedServices);
+    persistState('afms_client_services', updatedServices);
+
+    addAuditLog(
+      'SUSPEND_CLIENT_SERVICE',
+      `Suspended service "${service.serviceName}" (${service.serviceCode}) for client ID ${service.clientId}.${reason ? ` Reason: "${reason}"` : ''}`,
+      userId,
+      userName
+    );
+
+    return { success: true, message: 'Service suspended successfully.' };
+  };
+
+  const endClientService = (
+    id: string,
+    endDate?: string,
+    reason?: string,
+    userId: string = 'system',
+    userName: string = 'System'
+  ): { success: boolean; message: string } => {
+    const service = clientServices.find(s => s.id === id);
+    if (!service) return { success: false, message: 'Client service not found.' };
+
+    const now = new Date().toISOString().substring(0, 10);
+    const effectiveEndDate = endDate || now;
+
+    const updatedServices = clientServices.map(s => {
+      if (s.id === id) {
+        return {
+          ...s,
+          status: 'Ended' as const,
+          endDate: effectiveEndDate,
+          notes: reason ? `${s.notes ? s.notes + ' | ' : ''}Ended on ${effectiveEndDate}: ${reason}` : s.notes,
+          updatedAt: now
+        };
+      }
+      return s;
+    });
+
+    setClientServices(updatedServices);
+    persistState('afms_client_services', updatedServices);
+
+    addAuditLog(
+      'END_CLIENT_SERVICE',
+      `Ended service "${service.serviceName}" (${service.serviceCode}) for client ID ${service.clientId} effective ${effectiveEndDate}.${reason ? ` Reason: "${reason}"` : ''}`,
+      userId,
+      userName
+    );
+
+    return { success: true, message: 'Service status marked as Ended.' };
+  };
+
+  const restoreClientService = (
+    id: string,
+    userId: string = 'system',
+    userName: string = 'System'
+  ): { success: boolean; message: string } => {
+    const service = clientServices.find(s => s.id === id);
+    if (!service) return { success: false, message: 'Client service not found.' };
+
+    const now = new Date().toISOString().substring(0, 10);
+    const updatedServices = clientServices.map(s => {
+      if (s.id === id) {
+        return {
+          ...s,
+          status: 'Active' as const,
+          endDate: undefined,
+          updatedAt: now
+        };
+      }
+      return s;
+    });
+
+    setClientServices(updatedServices);
+    persistState('afms_client_services', updatedServices);
+
+    addAuditLog(
+      'RESTORE_CLIENT_SERVICE',
+      `Reactivated/restored service "${service.serviceName}" (${service.serviceCode}) for client ID ${service.clientId}.`,
+      userId,
+      userName
+    );
+
+    return { success: true, message: 'Service reactivated to Active status.' };
+  };
+
+  // Automatic Non-Destructive Synchronizer: Create ClientService records for clients with birTaxServices, benefitsServices, or retainersFee
+  useEffect(() => {
+    if (!clients || clients.length === 0) return;
+
+    let newServicesAdded = false;
+    const currentServices = [...clientServices];
+
+    clients.forEach(client => {
+      const clientExistingServices = currentServices.filter(s => s.clientId === client.id);
+
+      // 1. Sync BIR Tax Services
+      if (client.birTaxServices && client.birTaxServices.length > 0) {
+        client.birTaxServices.forEach(code => {
+          const hasService = clientExistingServices.some(
+            s => s.serviceCode.toLowerCase() === code.toLowerCase() || s.serviceName.toLowerCase().includes(code.toLowerCase())
+          );
+          if (!hasService) {
+            const rule = masterChoices.birTaxOptions?.find(r => r.code.toLowerCase() === code.toLowerCase());
+            const newSvc: ClientService = {
+              id: `cs_auto_bir_${client.id}_${code.replace(/\s+/g, '_')}`,
+              clientId: client.id,
+              serviceCode: code,
+              serviceName: rule ? rule.name : `BIR ${code} Tax Compliance`,
+              category: 'BIR',
+              status: 'Active',
+              startDate: client.createdAt || '2025-01-01',
+              assignedStaffId: client.assignedStaffId,
+              assignedStaffName: client.assignedStaffName,
+              billable: true,
+              billingFrequency: rule?.frequency === 'Quarterly' ? 'Quarterly' : 'Monthly',
+              fee: 0,
+              generatesCompliance: true,
+              notes: 'Automatically migrated from Client Profile BIR tax services list.',
+              createdAt: new Date().toISOString().substring(0, 10),
+              updatedAt: new Date().toISOString().substring(0, 10)
+            };
+            currentServices.push(newSvc);
+            newServicesAdded = true;
+          }
+        });
+      }
+
+      // 2. Sync Benefits Services
+      if (client.benefitsServices && client.benefitsServices.length > 0) {
+        client.benefitsServices.forEach(code => {
+          const hasService = clientExistingServices.some(
+            s => s.serviceCode.toLowerCase() === code.toLowerCase() || s.serviceName.toLowerCase().includes(code.toLowerCase())
+          );
+          if (!hasService) {
+            const newSvc: ClientService = {
+              id: `cs_auto_ben_${client.id}_${code.replace(/\s+/g, '_')}`,
+              clientId: client.id,
+              serviceCode: code,
+              serviceName: `Statutory ${code}`,
+              category: 'Benefits',
+              status: 'Active',
+              startDate: client.createdAt || '2025-01-01',
+              assignedStaffId: client.assignedStaffId,
+              assignedStaffName: client.assignedStaffName,
+              billable: true,
+              billingFrequency: 'Monthly',
+              fee: 0,
+              generatesCompliance: true,
+              notes: 'Automatically migrated from Client Profile statutory benefits list.',
+              createdAt: new Date().toISOString().substring(0, 10),
+              updatedAt: new Date().toISOString().substring(0, 10)
+            };
+            currentServices.push(newSvc);
+            newServicesAdded = true;
+          }
+        });
+      }
+
+      // 3. Sync Retainers Fee / Monthly Accounting if present
+      if (client.retainersFee && client.retainersFee > 0) {
+        const hasBookkeeping = clientExistingServices.some(
+          s => s.category === 'Accounting' || s.serviceCode === 'BOOKKEEPING' || s.serviceCode === 'RETAINERS_FEE'
+        );
+        if (!hasBookkeeping) {
+          const newSvc: ClientService = {
+            id: `cs_auto_retainer_${client.id}`,
+            clientId: client.id,
+            serviceCode: 'BOOKKEEPING',
+            serviceName: 'Monthly Retainer & Accounting Bookkeeping Services',
+            category: 'Accounting',
+            status: 'Active',
+            startDate: client.createdAt || '2025-01-01',
+            assignedStaffId: client.assignedStaffId,
+            assignedStaffName: client.assignedStaffName,
+            billable: true,
+            billingFrequency: 'Monthly',
+            fee: client.retainersFee,
+            generatesCompliance: false,
+            notes: `Monthly accounting retainer fee (₱${client.retainersFee.toLocaleString()}).`,
+            createdAt: new Date().toISOString().substring(0, 10),
+            updatedAt: new Date().toISOString().substring(0, 10)
+          };
+          currentServices.push(newSvc);
+          newServicesAdded = true;
+        }
+      }
+    });
+
+    if (newServicesAdded) {
+      setClientServices(currentServices);
+      persistState('afms_client_services', currentServices);
+    }
+  }, [clients]);
+
   // Client Management
   const addClient = (data: Omit<ClientProfile, 'id' | 'createdAt' | 'updatedAt'>): ClientProfile => {
     const now = new Date().toISOString().substring(0, 10);
@@ -426,8 +784,42 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_clients', updated);
   };
 
-  const deleteClient = (id: string) => {
-    const updated = clients.filter(c => c.id !== id);
+  const archiveClient = (id: string, reason?: string, archivedBy?: string) => {
+    const nowISO = new Date().toISOString();
+    const updated = clients.map(c => {
+      if (c.id === id) {
+        return {
+          ...c,
+          status: 'Archived' as const,
+          archivedAt: nowISO,
+          archivedBy: archivedBy || 'Admin',
+          archiveReason: reason || 'Client profile archived',
+          updatedAt: nowISO.substring(0, 10),
+        };
+      }
+      return c;
+    });
+    setClients(updated);
+    persistState('afms_clients', updated);
+  };
+
+  const deleteClient = (id: string, reason?: string, archivedBy?: string) => {
+    // Soft delete / archive to ensure historical financial, tax, and compliance records remain preserved
+    archiveClient(id, reason, archivedBy);
+  };
+
+  const restoreClient = (id: string) => {
+    const now = new Date().toISOString().substring(0, 10);
+    const updated = clients.map(c => {
+      if (c.id === id) {
+        return {
+          ...c,
+          status: 'Active' as const,
+          updatedAt: now,
+        };
+      }
+      return c;
+    });
     setClients(updated);
     persistState('afms_clients', updated);
   };
@@ -777,11 +1169,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_compliance', updated);
   };
 
-  // Tasks
+  // Tasks & Phase 6 Workflow Engine ⭐
   const addTask = (taskData: Omit<TaskItem, 'id'>) => {
     const newTask: TaskItem = {
       ...taskData,
-      id: `task_${Date.now()}`,
+      id: `task_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+      createdAt: taskData.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      workflowStage: taskData.workflowStage || 'Preparer',
+      status: taskData.status || 'Pending'
     };
     const updated = [newTask, ...tasks];
     setTasks(updated);
@@ -794,6 +1190,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return {
           ...t,
           status,
+          updatedAt: new Date().toISOString(),
           completedAt: status === 'Completed' ? new Date().toISOString() : t.completedAt
         };
       }
@@ -801,6 +1198,286 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     setTasks(updated);
     persistState('afms_tasks', updated);
+  };
+
+  const updateTask = (taskId: string, updates: Partial<TaskItem>, userId: string = 'system', userName: string = 'System Admin') => {
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          ...updates,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return t;
+    });
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+    addAuditLog('Task Updated', `Updated task "${taskId}" details.`, userId, userName);
+  };
+
+  const submitTaskForReview = (taskId: string, preparerNotes?: string, userId: string = 'system', userName: string = 'Staff') => {
+    const target = tasks.find(t => t.id === taskId);
+    if (!target) return { success: false, message: 'Task not found.' };
+
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          status: 'For Review' as const,
+          workflowStage: 'Reviewer' as const,
+          preparerId: userId,
+          preparerName: userName,
+          notes: preparerNotes ? `${t.notes ? t.notes + '\n\n' : ''}[Preparer Note - ${userName}]: ${preparerNotes}` : t.notes,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return t;
+    });
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+
+    addAuditLog(
+      'Task Submitted for Review',
+      `Task "${target.title}" for ${target.clientName || 'Client'} submitted by ${userName} for Senior Reviewer approval.`,
+      userId,
+      userName
+    );
+    return { success: true, message: `Task "${target.title}" submitted for Review!` };
+  };
+
+  const approveTask = (taskId: string, reviewNotes?: string, userId: string = 'system', userName: string = 'Senior Reviewer') => {
+    const target = tasks.find(t => t.id === taskId);
+    if (!target) return { success: false, message: 'Task not found.' };
+
+    const now = new Date().toISOString();
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          status: 'Completed' as const,
+          workflowStage: 'Approved' as const,
+          completedAt: now,
+          completedById: userId,
+          completedByName: userName,
+          reviewerId: userId,
+          reviewerName: userName,
+          reviewNotes: reviewNotes || 'Approved without issues.',
+          updatedAt: now
+        };
+      }
+      return t;
+    });
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+
+    addAuditLog(
+      'Task Approved & Completed',
+      `Task "${target.title}" for ${target.clientName || 'Client'} was reviewed and APPROVED by ${userName}. Status marked Completed.`,
+      userId,
+      userName
+    );
+    return { success: true, message: `Task "${target.title}" approved and completed!` };
+  };
+
+  const returnTaskForCorrection = (taskId: string, reviewNotes: string, userId: string = 'system', userName: string = 'Senior Reviewer') => {
+    const target = tasks.find(t => t.id === taskId);
+    if (!target) return { success: false, message: 'Task not found.' };
+
+    const now = new Date().toISOString();
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          status: 'In Progress' as const,
+          workflowStage: 'Returned' as const,
+          reviewerId: userId,
+          reviewerName: userName,
+          reviewNotes,
+          updatedAt: now
+        };
+      }
+      return t;
+    });
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+
+    addAuditLog(
+      'Task Returned for Correction',
+      `Task "${target.title}" for ${target.clientName || 'Client'} returned to ${target.assignedToName} by ${userName} for correction. Notes: "${reviewNotes}".`,
+      userId,
+      userName
+    );
+    return { success: true, message: `Task "${target.title}" returned to preparer for correction.` };
+  };
+
+  const overrideTaskDeadline = (taskId: string, newDueDate: string, reason: string, userId: string = 'system', userName: string = 'Admin') => {
+    const target = tasks.find(t => t.id === taskId);
+    if (!target) return { success: false, message: 'Task not found.' };
+
+    const original = target.originalDueDate || target.dueDate;
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          dueDate: newDueDate,
+          originalDueDate: original,
+          isOverriddenDeadline: true,
+          overrideReason: reason,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return t;
+    });
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+
+    addAuditLog(
+      'Task Deadline Overridden',
+      `Task "${target.title}" deadline changed from ${original} to ${newDueDate} by ${userName}. Reason: "${reason}".`,
+      userId,
+      userName
+    );
+    return { success: true, message: `Deadline for "${target.title}" extended to ${newDueDate}.` };
+  };
+
+  const reassignTask = (taskId: string, newStaffId: string, newStaffName: string, userId: string = 'system', userName: string = 'Admin') => {
+    const target = tasks.find(t => t.id === taskId);
+    if (!target) return { success: false, message: 'Task not found.' };
+
+    const prevStaff = target.assignedToName;
+    const updated = tasks.map(t => {
+      if (t.id === taskId) {
+        return {
+          ...t,
+          assignedToId: newStaffId,
+          assignedToName: newStaffName,
+          updatedAt: new Date().toISOString()
+        };
+      }
+      return t;
+    });
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+
+    addAuditLog(
+      'Task Reassigned',
+      `Reassigned task "${target.title}" from ${prevStaff} to ${newStaffName} by ${userName}.`,
+      userId,
+      userName
+    );
+    return { success: true, message: `Task reassigned to ${newStaffName}.` };
+  };
+
+  const deleteTask = (taskId: string, userId: string = 'system', userName: string = 'Admin') => {
+    const target = tasks.find(t => t.id === taskId);
+    const updated = tasks.filter(t => t.id !== taskId);
+    setTasks(updated);
+    persistState('afms_tasks', updated);
+    if (target) {
+      addAuditLog('Task Deleted', `Deleted task "${target.title}" (${target.clientName}).`, userId, userName);
+    }
+  };
+
+  // Automatic Recurring Task Generation Engine ⭐
+  const generateRecurringComplianceTasks = (
+    periodMonth: string,
+    periodYear: number = 2026,
+    userId: string = 'system',
+    userName: string = 'System Workflow Engine'
+  ) => {
+    const monthCode = (MONTHS_LIST.find(m => m.toLowerCase() === periodMonth.toLowerCase().slice(0, 3)) || 'Aug') as typeof MONTHS_LIST[number];
+    const monthFullName = MONTH_FULL_NAMES[monthCode] || periodMonth;
+
+    const activeClients = clients.filter(c => c.status === 'Active' || c.status === 'For Compliance' || c.status === 'Compliance');
+
+    let createdCount = 0;
+    let skippedCount = 0;
+    const newTasks: TaskItem[] = [];
+
+    activeClients.forEach(client => {
+      const activeServices = clientServices.filter(s => s.clientId === client.id && s.status === 'Active');
+
+      const allMasterRules = [
+        ...(masterChoices.birOptions || []),
+        ...(masterChoices.benefitsOptions || [])
+      ];
+
+      allMasterRules.forEach(rule => {
+        const matchesClientTax = (client.birTaxServices || []).some(t => t.toUpperCase().includes(rule.code.toUpperCase()) || rule.code.toUpperCase().includes(t.toUpperCase()));
+        const matchesClientBenefits = (client.governmentBenefits || []).some(b => b.toUpperCase().includes(rule.code.toUpperCase()) || rule.code.toUpperCase().includes(b.toUpperCase()));
+        const matchesClientService = activeServices.some(s => s.serviceName.toUpperCase().includes(rule.code.toUpperCase()) || rule.code.toUpperCase().includes(s.serviceName.toUpperCase()));
+
+        if (matchesClientTax || matchesClientBenefits || matchesClientService) {
+          const deadlineObj = getRuleDeadlineForMonth(rule, monthCode, periodYear, client);
+          if (deadlineObj && !deadlineObj.isNotRequired && deadlineObj.dueDateStr !== 'N/A') {
+            
+            const formCode = rule.code;
+            const taxablePeriod = `${deadlineObj.label} (${monthFullName} ${periodYear})`;
+
+            const isDuplicate = tasks.some(t => 
+              t.clientId === client.id && 
+              (t.formCode === formCode || t.title.toLowerCase().includes(formCode.toLowerCase())) &&
+              (t.taxablePeriod === taxablePeriod || t.dueDate === deadlineObj.dueDateStr)
+            ) || newTasks.some(t => 
+              t.clientId === client.id && 
+              t.formCode === formCode && 
+              t.dueDate === deadlineObj.dueDateStr
+            );
+
+            if (isDuplicate) {
+              skippedCount++;
+            } else {
+              const matchedService = activeServices.find(s => s.serviceName.toUpperCase().includes(rule.code.toUpperCase()));
+              const newTask: TaskItem = {
+                id: `rec_task_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+                clientId: client.id,
+                clientName: client.companyName,
+                clientServiceId: matchedService?.id,
+                ruleId: rule.id,
+                formCode: rule.code,
+                title: `${rule.code} - ${rule.description || rule.category} Filing`,
+                description: `Filing & Preparation for ${rule.code} for period ${deadlineObj.label}. Due: ${deadlineObj.dueDateStr}. RDO #${client.rdoNumber}.`,
+                category: rule.category === 'Benefits' ? 'Benefits' : 'BIR',
+                recurrence: rule.frequency as any,
+                taxablePeriod,
+                dueDate: deadlineObj.dueDateStr,
+                rdoNumber: client.rdoNumber,
+                priority: 'Medium',
+                status: 'Pending',
+                workflowStage: 'Preparer',
+                assignedToId: client.assignedStaffId || 'staff_1',
+                assignedToName: client.assignedStaffName || 'Assigned Staff',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              };
+              newTasks.push(newTask);
+              createdCount++;
+            }
+          }
+        }
+      });
+    });
+
+    if (newTasks.length > 0) {
+      const updatedTasks = [...newTasks, ...tasks];
+      setTasks(updatedTasks);
+      persistState('afms_tasks', updatedTasks);
+
+      addAuditLog(
+        'Recurring Tasks Auto-Generated',
+        `Generated ${createdCount} recurring compliance tasks for ${monthFullName} ${periodYear}. ${skippedCount} duplicate tasks skipped.`,
+        userId,
+        userName
+      );
+    }
+
+    return {
+      success: true,
+      createdCount,
+      skippedCount,
+      message: `Task Generation Complete! Created ${createdCount} new tasks for ${monthFullName} ${periodYear} (${skippedCount} duplicates skipped).`
+    };
   };
 
   // Invoices & Documents
@@ -817,7 +1494,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const recordInvoicePayment = (
     invoiceId: string, 
-    paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services'] },
+    paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; referenceNumber?: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services'] },
     userId: string = 'system',
     userName: string = 'System Admin'
   ) => {
@@ -826,16 +1503,43 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Invoice not found.' };
     }
 
-    const newPaidAmount = (targetInv.paidAmount || 0) + paymentDetails.amount;
-    let newStatus: InvoiceItem['status'] = targetInv.status;
+    const now = new Date().toISOString();
+    const crToSave = paymentDetails.collectionReceiptNumber || paymentDetails.officialReceiptNumber;
 
+    // Create standalone Payment transaction record
+    const newPayment: Payment = {
+      id: `pmt_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+      invoiceId,
+      clientId: targetInv.clientId,
+      amount: Number(paymentDetails.amount) || 0,
+      paymentDate: paymentDetails.paymentDate,
+      paymentMethod: paymentDetails.paymentMethod,
+      referenceNumber: paymentDetails.referenceNumber,
+      officialReceiptNumber: paymentDetails.officialReceiptNumber,
+      collectionReceiptNumber: crToSave,
+      notes: paymentDetails.notes,
+      receivedById: userId,
+      receivedByName: userName,
+      status: 'Active',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    const updatedPayments = [newPayment, ...payments];
+    setPayments(updatedPayments);
+    persistState('afms_payments', updatedPayments);
+
+    // Calculate total active paid amount
+    const activePaymentsForInv = updatedPayments.filter(p => p.invoiceId === invoiceId && p.status === 'Active');
+    const newPaidAmount = activePaymentsForInv.reduce((sum, p) => sum + p.amount, 0);
+
+    let newStatus: InvoiceItem['status'] = targetInv.status;
     if (newPaidAmount >= targetInv.totalAmount) {
       newStatus = 'Paid';
     } else if (newPaidAmount > 0) {
       newStatus = 'Partially Paid';
     }
 
-    const crToSave = paymentDetails.collectionReceiptNumber || paymentDetails.officialReceiptNumber;
     if (crToSave) {
       const cleanDigits = crToSave.replace(/\D/g, '');
       const newCrList = Array.from(new Set([...usedCrNumbers, cleanDigits, crToSave].filter(Boolean)));
@@ -845,6 +1549,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const updated = invoices.map(inv => {
       if (inv.id === invoiceId) {
+        const existingInvoicePayments = inv.payments || [];
         return {
           ...inv,
           paidAmount: newPaidAmount,
@@ -852,8 +1557,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           paymentDate: paymentDetails.paymentDate,
           paymentMethod: paymentDetails.paymentMethod,
           officialReceiptNumber: paymentDetails.officialReceiptNumber || inv.officialReceiptNumber,
-          collectionReceiptNumber: paymentDetails.collectionReceiptNumber || inv.collectionReceiptNumber || paymentDetails.officialReceiptNumber,
-          services: paymentDetails.updatedServices || inv.services
+          collectionReceiptNumber: crToSave || inv.collectionReceiptNumber,
+          services: paymentDetails.updatedServices || inv.services,
+          payments: [newPayment, ...existingInvoicePayments]
         };
       }
       return inv;
@@ -871,6 +1577,277 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     return { success: true, message: `Payment of ₱${paymentDetails.amount.toLocaleString()} successfully recorded for Invoice ${targetInv.invoiceNumber}!` };
+  };
+
+  const cancelInvoicePayment = (
+    paymentId: string,
+    reason: string,
+    userId: string = 'system',
+    userName: string = 'System Admin'
+  ) => {
+    const targetPayment = payments.find(p => p.id === paymentId);
+    if (!targetPayment) {
+      return { success: false, message: 'Payment record not found.' };
+    }
+    if (targetPayment.status === 'Cancelled') {
+      return { success: false, message: 'Payment is already cancelled.' };
+    }
+
+    const now = new Date().toISOString();
+    const updatedPayments = payments.map(p => {
+      if (p.id === paymentId) {
+        return {
+          ...p,
+          status: 'Cancelled' as const,
+          cancelledAt: now,
+          cancelledById: userId,
+          cancelledByName: userName,
+          cancellationReason: reason,
+          updatedAt: now
+        };
+      }
+      return p;
+    });
+
+    setPayments(updatedPayments);
+    persistState('afms_payments', updatedPayments);
+
+    // Recalculate invoice totals and status
+    const targetInv = invoices.find(i => i.id === targetPayment.invoiceId);
+    if (targetInv) {
+      const activePayments = updatedPayments.filter(p => p.invoiceId === targetInv.id && p.status === 'Active');
+      const newPaidAmount = activePayments.reduce((sum, p) => sum + p.amount, 0);
+
+      let newStatus: InvoiceItem['status'] = 'Sent';
+      if (newPaidAmount >= targetInv.totalAmount) {
+        newStatus = 'Paid';
+      } else if (newPaidAmount > 0) {
+        newStatus = 'Partially Paid';
+      } else {
+        newStatus = 'Sent';
+      }
+
+      const updatedInvoices = invoices.map(inv => {
+        if (inv.id === targetInv.id) {
+          const invPayments = (inv.payments || []).map(p => p.id === paymentId ? { ...p, status: 'Cancelled' as const, cancelledAt: now, cancelledById: userId, cancelledByName: userName, cancellationReason: reason } : p);
+          return {
+            ...inv,
+            paidAmount: newPaidAmount,
+            status: newStatus,
+            payments: invPayments
+          };
+        }
+        return inv;
+      });
+
+      setInvoices(updatedInvoices);
+      persistState('afms_invoices', updatedInvoices);
+
+      addAuditLog(
+        'Invoice Payment Cancelled',
+        `Cancelled payment of ₱${targetPayment.amount.toLocaleString()} for Invoice ${targetInv.invoiceNumber} (${targetInv.clientName}). Reason: "${reason}". Outstanding balance recalculated.`,
+        userId,
+        userName
+      );
+    }
+
+    return { success: true, message: `Payment of ₱${targetPayment.amount.toLocaleString()} successfully cancelled.` };
+  };
+
+  const getInvoicePayments = (invoiceId: string): Payment[] => {
+    return payments.filter(p => p.invoiceId === invoiceId);
+  };
+
+  const getInvoiceBalance = (invoiceId: string): number => {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv) return 0;
+    const activePayments = payments.filter(p => p.invoiceId === invoiceId && p.status === 'Active');
+    const totalPaid = activePayments.reduce((sum, p) => sum + p.amount, 0);
+    // Fallback to stored paidAmount if no standalone payment records exist yet
+    const actualPaid = activePayments.length > 0 ? totalPaid : (inv.paidAmount || 0);
+    return Math.max(0, inv.totalAmount - actualPaid);
+  };
+
+  const addCollectionLog = (
+    invoiceId: string,
+    logData: {
+      contactPerson?: string;
+      contactMethod?: CollectionLog['contactMethod'];
+      status: CollectionStatus;
+      notes: string;
+      nextFollowUpDate?: string;
+    },
+    userId: string = 'system',
+    userName: string = 'System Admin'
+  ) => {
+    const inv = invoices.find(i => i.id === invoiceId);
+    if (!inv) return { success: false, message: 'Invoice not found.' };
+
+    const now = new Date().toISOString();
+    const logDateStr = `${now.substring(0, 10)} ${now.substring(11, 16)}`;
+
+    const newLog: CollectionLog = {
+      id: `clog_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+      invoiceId,
+      clientId: inv.clientId,
+      logDate: logDateStr,
+      contactPerson: logData.contactPerson,
+      contactMethod: logData.contactMethod,
+      status: logData.status,
+      notes: logData.notes,
+      nextFollowUpDate: logData.nextFollowUpDate,
+      loggedById: userId,
+      loggedByName: userName,
+      createdAt: now
+    };
+
+    const updatedLogs = [newLog, ...collectionLogs];
+    setCollectionLogs(updatedLogs);
+    persistState('afms_collection_logs', updatedLogs);
+
+    const updatedInvoices = invoices.map(i => {
+      if (i.id === invoiceId) {
+        const existingLogs = i.collectionLogs || [];
+        return {
+          ...i,
+          collectionStatus: logData.status,
+          collectionNotes: logData.notes,
+          lastCollectionFollowUpDate: now.substring(0, 10),
+          nextFollowUpDate: logData.nextFollowUpDate || i.nextFollowUpDate,
+          collectionLogs: [newLog, ...existingLogs]
+        };
+      }
+      return i;
+    });
+
+    setInvoices(updatedInvoices);
+    persistState('afms_invoices', updatedInvoices);
+
+    addAuditLog(
+      'AR Collection Follow-Up Logged',
+      `Collection log added for Invoice ${inv.invoiceNumber} (${inv.clientName}): Status set to "${logData.status}". Notes: "${logData.notes}".`,
+      userId,
+      userName
+    );
+
+    return { success: true, message: 'Collection follow-up log saved successfully.' };
+  };
+
+  const generateRecurringInvoices = (
+    period: string,
+    frequency: ServiceBillingFrequency | 'All',
+    issueDate: string,
+    dueDate: string,
+    userId: string = 'system',
+    userName: string = 'System Admin'
+  ) => {
+    const activeClients = clients.filter(c => c.status !== 'Archived');
+
+    let createdCount = 0;
+    let skippedCount = 0;
+    const createdInvoices: InvoiceItem[] = [];
+    const skippedDetails: string[] = [];
+
+    const newInvoicesList = [...invoices];
+
+    activeClients.forEach(client => {
+      const candidateServices = clientServices.filter(s => {
+        if (s.clientId !== client.id) return false;
+        if (s.status !== 'Active') return false;
+        if (!s.billable) return false;
+        if (frequency !== 'All' && s.billingFrequency !== frequency) return false;
+        return true;
+      });
+
+      if (candidateServices.length === 0) return;
+
+      const eligibleServices: ClientService[] = [];
+
+      candidateServices.forEach(s => {
+        const alreadyBilled = newInvoicesList.some(inv => {
+          if (inv.clientId !== client.id || inv.status === 'Cancelled') return false;
+          if (inv.billingPeriod === period) {
+            return inv.services.some(line => line.clientServiceId === s.id);
+          }
+          return inv.services.some(line => line.clientServiceId === s.id && line.monthYear === period);
+        });
+
+        if (alreadyBilled) {
+          skippedCount++;
+          skippedDetails.push(`${client.companyName} — ${s.serviceName} (${s.serviceCode}) already billed for ${period}`);
+        } else {
+          eligibleServices.push(s);
+        }
+      });
+
+      if (eligibleServices.length === 0) return;
+
+      const serviceLines: InvoiceServiceLine[] = eligibleServices.map(s => ({
+        clientServiceId: s.id,
+        serviceCode: s.serviceCode,
+        serviceCategory: s.category,
+        description: `${s.serviceName} (${s.serviceCode})`,
+        monthYear: period,
+        unitPrice: s.fee || 0,
+        quantity: 1,
+        discount: 0,
+        amount: s.fee || 0,
+        itemType: 'Service'
+      }));
+
+      const subtotal = serviceLines.reduce((sum, l) => sum + l.amount, 0);
+      const vatAmount = 0;
+      const totalAmount = subtotal + vatAmount;
+
+      const nextNumber = `${newInvoicesList.length + 1001}`;
+      const invNumber = `INV-${period.replace(/\s+/g, '')}-${client.tin?.slice(-4) || '000'}-${nextNumber}`;
+
+      const newInvoice: InvoiceItem = {
+        id: `inv_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}_${createdCount}`,
+        invoiceNumber: invNumber,
+        collectionNumber: nextNumber,
+        clientId: client.id,
+        clientName: client.companyName,
+        issueDate,
+        dueDate,
+        subtotal,
+        vatAmount,
+        totalAmount,
+        paidAmount: 0,
+        status: 'Draft',
+        services: serviceLines,
+        payments: [],
+        collectionStatus: 'Current',
+        billingPeriod: period,
+        autoGenerated: true,
+        collectionLogs: []
+      };
+
+      newInvoicesList.unshift(newInvoice);
+      createdInvoices.push(newInvoice);
+      createdCount++;
+    });
+
+    if (createdCount > 0) {
+      setInvoices(newInvoicesList);
+      persistState('afms_invoices', newInvoicesList);
+
+      addAuditLog(
+        'Recurring Auto-Billing Batch Run',
+        `Generated ${createdCount} draft invoice(s) for period ${period} (${frequency} cycle). ${skippedCount} duplicate service lines skipped.`,
+        userId,
+        userName
+      );
+    }
+
+    return {
+      success: true,
+      createdCount,
+      skippedCount,
+      createdInvoices,
+      skippedDetails,
+      message: `Auto-billing complete: Generated ${createdCount} draft invoice(s). ${skippedCount} service lines skipped as already billed for ${period}.`
+    };
   };
 
   const updateInvoiceStatus = (invoiceId: string, status: InvoiceItem['status']) => {
@@ -1465,6 +2442,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     <DataContext.Provider
       value={{
         clients,
+        clientServices,
+        addClientService,
+        updateClientService,
+        suspendClientService,
+        endClientService,
+        restoreClientService,
+        getClientServices,
         dynamicSections,
         payables,
         complianceItems,
@@ -1483,6 +2467,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addClient,
         updateClient,
         deleteClient,
+        archiveClient,
+        restoreClient,
         addDynamicSection,
         updateDynamicSection,
         deleteDynamicSection,
@@ -1496,6 +2482,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateComplianceStatus,
         addTask,
         updateTaskStatus,
+        updateTask,
+        submitTaskForReview,
+        approveTask,
+        returnTaskForCorrection,
+        overrideTaskDeadline,
+        reassignTask,
+        deleteTask,
+        generateRecurringComplianceTasks,
         addInvoice,
         updateInvoice,
         recordInvoicePayment,
@@ -1541,6 +2535,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateCompanyExpense,
         markExpensePaid,
         deleteCompanyExpense,
+        payments,
+        cancelInvoicePayment,
+        getInvoicePayments,
+        getInvoiceBalance,
+        collectionLogs,
+        addCollectionLog,
+        generateRecurringInvoices,
         addAuditLog,
         exportBackupData,
         importBackupData,

@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { InvoiceItem } from '../types';
+import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog } from '../types';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
 import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
+import { buildClientSoaLedger } from '../utils/soaCalculator';
+import { 
+  exportSOAExcel, 
+  exportARAgingExcel, 
+  exportRevenueReportExcel, 
+  exportPaymentReportExcel, 
+  exportCollectionReportExcel 
+} from '../utils/excelExportUtils';
+import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
@@ -32,7 +41,23 @@ import {
   Edit,
   History,
   BookmarkPlus,
-  Sliders
+  Briefcase,
+  Sliders,
+  Phone,
+  Mail,
+  Calendar,
+  TrendingUp,
+  PieChart,
+  Layers,
+  MessageSquare,
+  AlertTriangle,
+  RotateCw,
+  Play,
+  FileSpreadsheet,
+  BarChart3,
+  ShieldCheck,
+  BookOpen,
+  UserCheck
 } from 'lucide-react';
 
 export const downloadInvoicePDF = (inv: InvoiceItem) => {
@@ -139,12 +164,20 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const { 
     invoices, 
     clients, 
+    clientServices,
+    payments,
     payables, 
     complianceItems, 
     masterChoices, 
     addInvoice, 
     updateInvoice,
     recordInvoicePayment, 
+    cancelInvoicePayment,
+    getInvoicePayments,
+    getInvoiceBalance,
+    collectionLogs,
+    addCollectionLog,
+    generateRecurringInvoices,
     updateInvoiceStatus, 
     deleteInvoice, 
     addAuditLog,
@@ -167,16 +200,67 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showEditModal, setShowEditModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCustomizerModal, setShowCustomizerModal] = useState(false);
+  const [showCollectionModal, setShowCollectionModal] = useState(false);
 
-  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceItem | null>(null);
+  // Phase 4 & Phase 5 Sub-Tab Navigation ⭐
+  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'recurring' | 'ar' | 'soa' | 'reports' | 'analytics' | 'audit'>('invoices');
 
-  // New Invoice Form state: Month and Year selection
+  // Phase 5: Client SOA Sub-Tab State ⭐
+  const [soaSelectedClientId, setSoaSelectedClientId] = useState<string>('');
+  const [soaFromDate, setSoaFromDate] = useState<string>('');
+  const [soaToDate, setSoaToDate] = useState<string>('');
+
+  // Phase 5: Financial Reports Sub-Tab State ⭐
+  const [reportCategory, setReportCategory] = useState<'aging' | 'outstanding' | 'payments' | 'collections' | 'service_revenue' | 'client_revenue' | 'monthly_revenue'>('aging');
+  const [reportClientFilter, setReportClientFilter] = useState<string>('ALL');
+  const [reportFromDate, setReportFromDate] = useState<string>('');
+  const [reportToDate, setReportToDate] = useState<string>('');
+
+  // Phase 5: Financial Audit Control Sub-Tab State ⭐
+  const [auditFilterAction, setAuditFilterAction] = useState<string>('ALL');
+  const [auditFilterSearch, setAuditFilterSearch] = useState<string>('');
+
+  // Collection Follow-Up Log Form state ⭐
+  const [collectionContactPerson, setCollectionContactPerson] = useState('');
+  const [collectionContactMethod, setCollectionContactMethod] = useState<CollectionLog['contactMethod']>('Phone Call');
+  const [collectionStatus, setCollectionStatus] = useState<CollectionStatus>('Follow-Up Required');
+  const [collectionNotes, setCollectionNotes] = useState('');
+  const [collectionNextFollowUp, setCollectionNextFollowUp] = useState('');
+
+  // Recurring Auto-Billing Batch Generator state ⭐
   const monthsList = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
   const yearsList = ['2024', '2025', '2026', '2027', '2028', '2029', '2030'];
 
+  const [autoMonth, setAutoMonth] = useState(() => monthsList[new Date().getMonth()]);
+  const [autoYear, setAutoYear] = useState(() => new Date().getFullYear().toString());
+  const [autoFrequency, setAutoFrequency] = useState<ServiceBillingFrequency | 'All'>('Monthly');
+  const [autoIssueDate, setAutoIssueDate] = useState(new Date().toISOString().substring(0, 10));
+  const [autoDueDate, setAutoDueDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 15);
+    return d.toISOString().substring(0, 10);
+  });
+  const [batchResult, setBatchResult] = useState<{
+    createdCount: number;
+    skippedCount: number;
+    createdInvoices: InvoiceItem[];
+    skippedDetails: string[];
+    message: string;
+  } | null>(null);
+
+  // Accounts Receivable & Collection Filters ⭐
+  const [arSearchQuery, setArSearchQuery] = useState('');
+  const [arClientFilter, setArClientFilter] = useState('ALL');
+  const [arStatusFilter, setArStatusFilter] = useState<string>('ALL');
+  const [arAgingFilter, setArAgingFilter] = useState<string>('ALL');
+  const [arCategoryFilter, setArCategoryFilter] = useState<string>('ALL');
+
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceItem | null>(null);
+
+  // New Invoice Form state: Month and Year selection
   const [selectedMonth, setSelectedMonth] = useState(() => monthsList[new Date().getMonth()]);
   const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear().toString());
 
@@ -192,18 +276,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     return d.toISOString().substring(0, 10);
   });
   
-  const [services, setServices] = useState<{ description: string; amount: number }[]>([
-    { description: 'Monthly Tax Compliance & Accounting Retainer Fee', amount: 35000 }
+  const [services, setServices] = useState<InvoiceServiceLine[]>([
+    { description: 'Monthly Tax Compliance & Accounting Retainer Fee', amount: 35000, itemType: 'Service' }
   ]);
 
   // Edit SOA Form state
-  const [editServices, setEditServices] = useState<{ description: string; amount: number }[]>([]);
+  const [editServices, setEditServices] = useState<InvoiceServiceLine[]>([]);
   const [editReason, setEditReason] = useState('');
 
   // Payment Form state
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().substring(0, 10));
   const [paymentMethod, setPaymentMethod] = useState('Cash');
+  const [paymentRefNum, setPaymentRefNum] = useState('');
   const [servicePaymentMethods, setServicePaymentMethods] = useState<{ [serviceIdx: number]: string }>({});
   const [orNumber, setOrNumber] = useState('');
   const [crError, setCrError] = useState('');
@@ -220,56 +305,68 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   // Currently selected client helper
   const selectedClient = clients.find(c => c.id === selectedClientId);
 
-  // Handle Client Change in Create Modal to prefill retainer & active payables
+  // Handle Client Change in Create Modal to prefill active billable ClientServices, retainer & active payables
   const handleClientChange = (clientId: string) => {
     setSelectedClientId(clientId);
     const client = clients.find(c => c.id === clientId);
     if (!client) return;
 
-    const loadedLines: { description: string; monthYear: string; amount: number }[] = [];
+    const loadedLines: InvoiceServiceLine[] = [];
 
-    // 1. Monthly Retainer fee (ONLY if > 0)
-    if (client.retainersFee > 0) {
-      loadedLines.push({
-        description: `Retainers Fee`,
-        monthYear: `${selectedMonth} ${selectedYear}`,
-        amount: client.retainersFee
+    // 1. Phase 2 ClientServices Engagements (Active & Billable) ⭐
+    const activeEngagements = clientServices.filter(s => s.clientId === client.id && s.status === 'Active' && s.billable);
+    if (activeEngagements.length > 0) {
+      activeEngagements.forEach(s => {
+        loadedLines.push({
+          clientServiceId: s.id,
+          serviceCode: s.serviceCode,
+          serviceCategory: s.category,
+          description: `${s.serviceName} (${s.serviceCode})`,
+          monthYear: `${selectedMonth} ${selectedYear}`,
+          unitPrice: s.fee || 0,
+          quantity: 1,
+          discount: 0,
+          amount: s.fee || 0,
+          itemType: 'Service'
+        });
       });
     }
 
-    // 2. Unpaid Payables for this client with payableAmount > 0
+    // 2. Fallback to Client Retainer fee if no registered active ClientService engagements exist
+    if (loadedLines.length === 0 && client.retainersFee > 0) {
+      loadedLines.push({
+        description: `Retainers Fee`,
+        monthYear: `${selectedMonth} ${selectedYear}`,
+        unitPrice: client.retainersFee,
+        quantity: 1,
+        amount: client.retainersFee,
+        itemType: 'Service'
+      });
+    }
+
+    // 3. Unpaid Payables for this client with payableAmount > 0
     const activePayables = payables.filter(p => p.clientId === client.id && p.status === 'Unpaid' && p.payableAmount > 0);
     activePayables.forEach(p => {
       loadedLines.push({
         description: `${p.category} Payable - ${p.itemName}`,
         monthYear: p.month || `${selectedMonth} ${selectedYear}`,
-        amount: p.payableAmount
+        unitPrice: p.payableAmount,
+        quantity: 1,
+        amount: p.payableAmount,
+        itemType: 'One-Time'
       });
     });
 
-    // 3. Active Compliance Items with non-zero amountDue
-    const activeCompliance = complianceItems.filter(c => c.clientId === client.id && (c.status === 'Pending' || c.status === 'Due Today' || c.status === 'Overdue') && c.amountDue && c.amountDue > 0);
-    activeCompliance.forEach(c => {
-      loadedLines.push({
-        description: `Tax/Compliance Service - ${c.title}`,
-        monthYear: `${selectedMonth} ${selectedYear}`,
-        amount: c.amountDue!
-      });
-    });
-
-    // Filter out 0 amounts strictly
-    const validLines = loadedLines.filter(line => line.amount > 0);
-
-    if (validLines.length > 0) {
-      setServices(validLines);
+    if (loadedLines.length > 0) {
+      setServices(loadedLines);
     } else {
-      setServices([{ description: `Retainers Fee`, monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }]);
+      setServices([{ description: `Retainers Fee`, monthYear: `${selectedMonth} ${selectedYear}`, unitPrice: 0, quantity: 1, amount: 0, itemType: 'Service' }]);
     }
   };
 
-  // Add Custom Service Line
+  // Add Custom One-Time Service Line
   const handleAddServiceLine = () => {
-    setServices(prev => [...prev, { description: '', monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }]);
+    setServices(prev => [...prev, { description: '', monthYear: `${selectedMonth} ${selectedYear}`, unitPrice: 0, quantity: 1, amount: 0, itemType: 'One-Time' }]);
   };
 
   // Add BIR Return Form Service Line
@@ -288,51 +385,60 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setServices(prev => [...prev, { description: desc, monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }]);
   };
 
-  // Import All Registered Client Services (Retainer + Payables with non-zero amounts ONLY)
+  // Import All Registered Client Services (Active Engagements + Payables + Retainers)
   const handleImportAllClientServices = () => {
     if (!selectedClient) {
       alert('Please select a client company first.');
       return;
     }
 
-    const loadedLines: { description: string; monthYear: string; amount: number }[] = [];
+    const loadedLines: InvoiceServiceLine[] = [];
 
-    // Monthly Retainer line (ONLY if > 0)
-    if (selectedClient.retainersFee > 0) {
+    // 1. Active ClientServices
+    const activeEngagements = clientServices.filter(s => s.clientId === selectedClient.id && s.status === 'Active' && s.billable);
+    activeEngagements.forEach(s => {
+      loadedLines.push({
+        clientServiceId: s.id,
+        serviceCode: s.serviceCode,
+        serviceCategory: s.category,
+        description: `${s.serviceName} (${s.serviceCode})`,
+        monthYear: `${selectedMonth} ${selectedYear}`,
+        unitPrice: s.fee || 0,
+        quantity: 1,
+        amount: s.fee || 0,
+        itemType: 'Service'
+      });
+    });
+
+    // 2. Retainer line if no ClientServices
+    if (activeEngagements.length === 0 && selectedClient.retainersFee > 0) {
       loadedLines.push({
         description: `Retainers Fee`,
         monthYear: `${selectedMonth} ${selectedYear}`,
-        amount: selectedClient.retainersFee
+        unitPrice: selectedClient.retainersFee,
+        quantity: 1,
+        amount: selectedClient.retainersFee,
+        itemType: 'Service'
       });
     }
 
-    // Unpaid Payables for this client with payableAmount > 0
+    // 3. Unpaid Payables
     const activePayables = payables.filter(p => p.clientId === selectedClient.id && p.status === 'Unpaid' && p.payableAmount > 0);
     activePayables.forEach(p => {
       loadedLines.push({
         description: `${p.category} Payable - ${p.itemName}`,
         monthYear: p.month || `${selectedMonth} ${selectedYear}`,
-        amount: p.payableAmount
+        unitPrice: p.payableAmount,
+        quantity: 1,
+        amount: p.payableAmount,
+        itemType: 'One-Time'
       });
     });
 
-    // Active Compliance Items with non-zero amountDue
-    const activeCompliance = complianceItems.filter(c => c.clientId === selectedClient.id && (c.status === 'Pending' || c.status === 'Due Today' || c.status === 'Overdue') && c.amountDue && c.amountDue > 0);
-    activeCompliance.forEach(c => {
-      loadedLines.push({
-        description: `Tax/Compliance Service - ${c.title}`,
-        monthYear: `${selectedMonth} ${selectedYear}`,
-        amount: c.amountDue!
-      });
-    });
-
-    // Filter out zero-payable items strictly
-    const validLines = loadedLines.filter(item => item.amount > 0);
-
-    if (validLines.length > 0) {
-      setServices(validLines);
+    if (loadedLines.length > 0) {
+      setServices(loadedLines);
     } else {
-      alert(`No active payable items or retainer fees (> ₱0) found for ${selectedClient.companyName}. Only items with payable amounts are auto-loaded.`);
+      alert(`No active client services or payable items found for ${selectedClient.companyName}.`);
     }
   };
 
@@ -417,10 +523,11 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       return;
     }
     setSelectedInvoice(inv);
-    const balance = inv.totalAmount - (inv.paidAmount || 0);
+    const balance = getInvoiceBalance(inv.id);
     setPaymentAmount(balance > 0 ? balance : 0);
     setPaymentDate(new Date().toISOString().substring(0, 10));
     setPaymentMethod('Cash');
+    setPaymentRefNum('');
     
     // Initialize per-item payment methods
     const initialMethods: { [serviceIdx: number]: string } = {};
@@ -445,6 +552,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (paymentAmount <= 0) {
       alert('Please enter a valid payment amount.');
       return;
+    }
+
+    const currentBalance = getInvoiceBalance(selectedInvoice.id);
+    if (paymentAmount > currentBalance) {
+      if (!confirm(`Warning: Payment amount (₱${paymentAmount.toLocaleString()}) exceeds remaining invoice balance (₱${currentBalance.toLocaleString()}). Proceed with overpayment recording?`)) {
+        return;
+      }
     }
 
     // 4-Digit Unique C.R. # Enforcement
@@ -472,6 +586,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         amount: Number(paymentAmount),
         paymentDate,
         paymentMethod,
+        referenceNumber: paymentRefNum,
         officialReceiptNumber: finalCr,
         collectionReceiptNumber: finalCr,
         notes: paymentNotes,
@@ -543,6 +658,61 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setShowHistoryModal(true);
   };
 
+  // Open Collection Follow-Up Log Modal ⭐
+  const handleOpenCollectionModal = (inv: InvoiceItem) => {
+    setSelectedInvoice(inv);
+    setCollectionContactPerson(inv.clientName);
+    setCollectionContactMethod('Phone Call');
+    setCollectionStatus(inv.collectionStatus || 'Follow-Up Required');
+    setCollectionNotes('');
+    const defaultNext = new Date();
+    defaultNext.setDate(defaultNext.getDate() + 3);
+    setCollectionNextFollowUp(inv.nextFollowUpDate || defaultNext.toISOString().substring(0, 10));
+    setShowCollectionModal(true);
+  };
+
+  // Submit Collection Follow-Up Log ⭐
+  const handleSubmitCollectionLog = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedInvoice) return;
+
+    if (!collectionNotes.trim()) {
+      alert('Please enter collection follow-up details or outcome notes.');
+      return;
+    }
+
+    const res = addCollectionLog(
+      selectedInvoice.id,
+      {
+        contactPerson: collectionContactPerson.trim(),
+        contactMethod: collectionContactMethod,
+        status: collectionStatus,
+        notes: collectionNotes.trim(),
+        nextFollowUpDate: collectionNextFollowUp
+      },
+      currentUser?.id,
+      currentUser?.fullName
+    );
+
+    alert(res.message);
+    setShowCollectionModal(false);
+  };
+
+  // Run Recurring Auto-Billing Batch ⭐
+  const handleRunRecurringBatch = () => {
+    const periodStr = `${autoMonth} ${autoYear}`;
+    const result = generateRecurringInvoices(
+      periodStr,
+      autoFrequency,
+      autoIssueDate,
+      autoDueDate,
+      currentUser?.id,
+      currentUser?.fullName
+    );
+
+    setBatchResult(result);
+  };
+
   // Filtered Invoices
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -552,10 +722,96 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   });
 
   // Calculate Metrics
-  const totalBilled = invoices.reduce((acc, i) => acc + i.totalAmount, 0);
-  const totalCollected = invoices.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
+  const totalBilled = invoices.filter(i => i.status !== 'Cancelled').reduce((acc, i) => acc + i.totalAmount, 0);
+  const totalCollected = invoices.filter(i => i.status !== 'Cancelled').reduce((acc, i) => acc + (i.paidAmount || 0), 0);
   const totalOutstanding = totalBilled - totalCollected;
-  const overdueCount = invoices.filter(i => i.status === 'Overdue' || (i.status === 'Sent' && new Date(i.dueDate) < new Date())).length;
+  const overdueCount = invoices.filter(i => i.status !== 'Cancelled' && (i.status === 'Overdue' || (i.status === 'Sent' && new Date(i.dueDate) < new Date()))).length;
+
+  // Accounts Receivable Filtered List ⭐
+  const filteredARInvoices = invoices.filter(inv => {
+    if (inv.status === 'Cancelled') return false;
+
+    // Search query
+    const matchSearch = inv.invoiceNumber.toLowerCase().includes(arSearchQuery.toLowerCase()) ||
+                        inv.clientName.toLowerCase().includes(arSearchQuery.toLowerCase()) ||
+                        (inv.collectionNumber || '').includes(arSearchQuery);
+
+    // Client filter
+    const matchClient = arClientFilter === 'ALL' || inv.clientId === arClientFilter;
+
+    // Status filter
+    const balance = getInvoiceBalance(inv.id);
+    const isOverdue = new Date(inv.dueDate) < new Date() && balance > 0;
+    
+    let matchStatus = true;
+    if (arStatusFilter === 'Overdue') {
+      matchStatus = isOverdue;
+    } else if (arStatusFilter === 'Paid') {
+      matchStatus = inv.status === 'Paid' || balance <= 0;
+    } else if (arStatusFilter === 'Partially Paid') {
+      matchStatus = inv.status === 'Partially Paid';
+    } else if (arStatusFilter !== 'ALL') {
+      matchStatus = inv.collectionStatus === arStatusFilter || inv.status === arStatusFilter;
+    }
+
+    // Aging Bucket Filter
+    let matchAging = true;
+    if (arAgingFilter !== 'ALL') {
+      const today = new Date();
+      const dueObj = new Date(inv.dueDate);
+      const diffDays = Math.floor((today.getTime() - dueObj.getTime()) / (1000 * 3600 * 24));
+
+      if (arAgingFilter === 'Current') matchAging = diffDays <= 0 || balance <= 0;
+      else if (arAgingFilter === 'Overdue30') matchAging = diffDays >= 1 && diffDays <= 30 && balance > 0;
+      else if (arAgingFilter === 'Overdue60') matchAging = diffDays >= 31 && diffDays <= 60 && balance > 0;
+      else if (arAgingFilter === 'Overdue90') matchAging = diffDays >= 61 && diffDays <= 90 && balance > 0;
+      else if (arAgingFilter === 'Overdue90Plus') matchAging = diffDays > 90 && balance > 0;
+    }
+
+    // Service Category Filter
+    let matchCategory = true;
+    if (arCategoryFilter !== 'ALL') {
+      matchCategory = inv.services.some(s => s.serviceCategory === arCategoryFilter);
+    }
+
+    return matchSearch && matchClient && matchStatus && matchAging && matchCategory;
+  });
+
+  // Accounts Receivable Aging Summaries ⭐
+  const nowTime = new Date().getTime();
+  const arAgingSummary = invoices.reduce((acc, inv) => {
+    if (inv.status === 'Cancelled') return acc;
+    const balance = getInvoiceBalance(inv.id);
+    if (balance <= 0) return acc;
+
+    const dueObj = new Date(inv.dueDate).getTime();
+    const diffDays = Math.floor((nowTime - dueObj) / (1000 * 3600 * 24));
+
+    if (diffDays <= 0) {
+      acc.current.count++;
+      acc.current.amount += balance;
+    } else if (diffDays <= 30) {
+      acc.days30.count++;
+      acc.days30.amount += balance;
+    } else if (diffDays <= 60) {
+      acc.days60.count++;
+      acc.days60.amount += balance;
+    } else if (diffDays <= 90) {
+      acc.days90.count++;
+      acc.days90.amount += balance;
+    } else {
+      acc.days90Plus.count++;
+      acc.days90Plus.amount += balance;
+    }
+
+    return acc;
+  }, {
+    current: { count: 0, amount: 0 },
+    days30: { count: 0, amount: 0 },
+    days60: { count: 0, amount: 0 },
+    days90: { count: 0, amount: 0 },
+    days90Plus: { count: 0, amount: 0 }
+  });
 
   return (
     <div className="space-y-6">
@@ -565,10 +821,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-emerald-600" />
-            Client Billing & Retainer Invoicing System
+            Client Billing, Accounts Receivable & Collections
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Generate Statements of Account (SOA), track retainer collections, out-of-pocket expenses, and Official Receipts.
+            Automated recurring billing, Statements of Account (SOA), AR aging buckets, follow-up logs, and Official Receipts.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -577,25 +833,131 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             title="Customize Printable SOA & Invoice Layout (Drag & Drop)"
             className="px-3.5 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 font-bold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
           >
-            <Sliders className="w-4 h-4 text-indigo-600" /> Customize Printable Layout
+            <Sliders className="w-4 h-4 text-indigo-600" /> Customize Layout
           </button>
           <button
             onClick={() => downloadBillingSummaryReportPDF(filteredInvoices)}
             title="Download Billing Summary PDF Report"
             className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-2 transition-all"
           >
-            <FileDown className="w-4 h-4 text-slate-600" /> Export PDF Summary
+            <FileDown className="w-4 h-4 text-slate-600" /> PDF Report
           </button>
           <button
             onClick={() => setShowCreateModal(true)}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs text-xs flex items-center gap-2 transition-all shrink-0"
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs text-xs flex items-center gap-2 transition-all shrink-0 cursor-pointer"
           >
             <Plus className="w-4 h-4" /> Generate SOA Invoice
           </button>
         </div>
       </div>
 
-      {/* Analytics Metric Cards */}
+      {/* PHASE 4 & PHASE 5: Billing Sub-Navigation Tabs Bar ⭐ */}
+      <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 text-xs font-semibold overflow-x-auto">
+        <button
+          onClick={() => setActiveSubTab('invoices')}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'invoices'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <Receipt className="w-4 h-4 text-emerald-600" />
+          Invoices & Master Ledger
+          <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-mono text-[10px]">
+            {invoices.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => {
+            if (!soaSelectedClientId && clients.length > 0) {
+              setSoaSelectedClientId(clients[0].id);
+            }
+            setActiveSubTab('soa');
+          }}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'soa'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <BookOpen className="w-4 h-4 text-emerald-700" />
+          Statement of Account (SOA)
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('recurring')}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'recurring'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <RotateCw className="w-4 h-4 text-indigo-600" />
+          Recurring Auto-Billing
+          <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[10px]">
+            Auto
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('ar')}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'ar'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <Layers className="w-4 h-4 text-amber-600" />
+          Accounts Receivable & Aging
+          <span className={`px-2 py-0.5 rounded-full font-bold text-[10px] ${
+            totalOutstanding > 0 ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
+          }`}>
+            ₱{totalOutstanding.toLocaleString()}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('reports')}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'reports'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4 text-teal-600" />
+          AR & Revenue Reports
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('analytics')}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'analytics'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <TrendingUp className="w-4 h-4 text-blue-600" />
+          Revenue Analytics
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('audit')}
+          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
+            activeSubTab === 'audit'
+              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4 text-purple-600" />
+          Financial Audit Trail
+        </button>
+      </div>
+
+      {/* SUB-TAB 1: INVOICES & SOA MASTER */}
+      {activeSubTab === 'invoices' && (
+        <>
+          {/* Analytics Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
@@ -854,6 +1216,1148 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           </table>
         </div>
       </div>
+        </>
+      )}
+
+      {/* SUB-TAB 2: RECURRING AUTO-BILLING GENERATOR */}
+      {activeSubTab === 'recurring' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <RotateCw className="w-5 h-5 text-indigo-600" />
+                  Automated Recurring Billing Batch Generator
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Generates draft Statements of Account (SOA) for all active client service retainers across selected billing cycles.
+                </p>
+              </div>
+              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg">
+                Duplicate Prevention Guard Active
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Target Billing Month</label>
+                <select
+                  value={autoMonth}
+                  onChange={e => setAutoMonth(e.target.value)}
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                >
+                  {monthsList.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Target Billing Year</label>
+                <select
+                  value={autoYear}
+                  onChange={e => setAutoYear(e.target.value)}
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                >
+                  {yearsList.map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Cycle Frequency</label>
+                <select
+                  value={autoFrequency}
+                  onChange={e => setAutoFrequency(e.target.value as ServiceBillingFrequency | 'All')}
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                >
+                  <option value="All">All Active Cycles</option>
+                  <option value="Monthly">Monthly Retainers Only</option>
+                  <option value="Quarterly">Quarterly Retainers Only</option>
+                  <option value="Annual">Annual Retainers Only</option>
+                  <option value="One-Time">One-Time Engagements Only</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Default Issue Date</label>
+                <input
+                  type="date"
+                  value={autoIssueDate}
+                  onChange={e => setAutoIssueDate(e.target.value)}
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Default Due Date</label>
+                <input
+                  type="date"
+                  value={autoDueDate}
+                  onChange={e => setAutoDueDate(e.target.value)}
+                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <div className="text-xs text-slate-500">
+                Target Period: <strong className="text-slate-900 font-mono">{autoMonth} {autoYear}</strong> • Active Retainer Services: <strong className="text-slate-900">{clientServices.filter(s => s.status === 'Active').length}</strong>
+              </div>
+              <button
+                onClick={handleRunRecurringBatch}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-sm text-xs flex items-center gap-2 transition-all cursor-pointer"
+              >
+                <Play className="w-4 h-4 fill-white" /> Run Recurring Billing Batch
+              </button>
+            </div>
+          </div>
+
+          {/* Batch Result Banner */}
+          {batchResult && (
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 text-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-indigo-600" />
+                  <h4 className="font-bold text-slate-900 text-sm">Batch Billing Execution Report</h4>
+                </div>
+                <span className="text-slate-400 font-mono text-[11px]">Period: {autoMonth} {autoYear}</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-emerald-800 font-bold">Draft Invoices Created</p>
+                    <p className="text-2xl font-mono font-bold text-emerald-700 mt-1">{batchResult.createdCount}</p>
+                    <p className="text-[11px] text-emerald-600 mt-0.5">Ready for review & dispatch</p>
+                  </div>
+                  <CheckCircle2 className="w-8 h-8 text-emerald-600/60" />
+                </div>
+
+                <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-amber-900 font-bold">Duplicate Services Skipped</p>
+                    <p className="text-2xl font-mono font-bold text-amber-700 mt-1">{batchResult.skippedCount}</p>
+                    <p className="text-[11px] text-amber-700 mt-0.5">Protected by clientId + serviceId + period</p>
+                  </div>
+                  <AlertTriangle className="w-8 h-8 text-amber-600/60" />
+                </div>
+              </div>
+
+              {batchResult.skippedDetails.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                  <p className="font-bold text-slate-800 text-xs">Skipped Services Log ({batchResult.skippedDetails.length}):</p>
+                  <div className="max-h-36 overflow-y-auto space-y-1 pr-2 font-mono text-[11px] text-slate-600">
+                    {batchResult.skippedDetails.map((det, idx) => (
+                      <div key={idx} className="bg-white p-2 rounded border border-slate-100">
+                        {det}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {batchResult.createdInvoices.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <h5 className="font-bold text-slate-900 text-xs">Newly Generated Draft Invoices:</h5>
+                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                    <table className="w-full text-left">
+                      <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-400 uppercase text-[10px]">
+                        <tr>
+                          <th className="p-3">Collection #</th>
+                          <th className="p-3">Client</th>
+                          <th className="p-3">Period</th>
+                          <th className="p-3 text-right">Amount</th>
+                          <th className="p-3 text-center">Status</th>
+                          <th className="p-3 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {batchResult.createdInvoices.map(inv => (
+                          <tr key={inv.id} className="hover:bg-slate-50">
+                            <td className="p-3 font-mono font-bold text-slate-900">{inv.collectionNumber || inv.invoiceNumber}</td>
+                            <td className="p-3 font-semibold text-slate-800">{inv.clientName}</td>
+                            <td className="p-3 font-mono text-slate-600">{inv.billingPeriod}</td>
+                            <td className="p-3 text-right font-mono font-bold text-emerald-700">₱{inv.totalAmount.toLocaleString()}</td>
+                            <td className="p-3 text-center">
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-bold text-[10px] rounded border border-slate-200">
+                                {inv.status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-center">
+                              <button
+                                onClick={() => handleViewSoa(inv)}
+                                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-lg text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Eye className="w-3.5 h-3.5" /> View SOA
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SUB-TAB 3: ACCOUNTS RECEIVABLE & COLLECTIONS */}
+      {activeSubTab === 'ar' && (
+        <div className="space-y-6">
+          {/* AR Executive Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+              <span className="text-slate-500 font-semibold block">Total Receivables (AR)</span>
+              <p className="text-2xl font-mono font-bold text-slate-900 mt-2">₱{totalOutstanding.toLocaleString()}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{invoices.filter(i => getInvoiceBalance(i.id) > 0).length} open invoices</p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+              <span className="text-slate-500 font-semibold block">Current AR (Not Past Due)</span>
+              <p className="text-2xl font-mono font-bold text-emerald-600 mt-2">₱{arAgingSummary.current.amount.toLocaleString()}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{arAgingSummary.current.count} invoices within due terms</p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+              <span className="text-slate-500 font-semibold block">Overdue AR</span>
+              <p className="text-2xl font-mono font-bold text-rose-600 mt-2">
+                ₱{(totalOutstanding - arAgingSummary.current.amount).toLocaleString()}
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                {invoices.filter(i => new Date(i.dueDate) < new Date() && getInvoiceBalance(i.id) > 0).length} past due invoices
+              </p>
+            </div>
+
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+              <span className="text-slate-500 font-semibold block">Overall Collection Rate</span>
+              <p className="text-2xl font-mono font-bold text-blue-600 mt-2">
+                {totalBilled > 0 ? `${((totalCollected / totalBilled) * 100).toFixed(1)}%` : '0%'}
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">₱{totalCollected.toLocaleString()} collected of ₱{totalBilled.toLocaleString()}</p>
+            </div>
+          </div>
+
+          {/* Aging Buckets Grid */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+            <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <Clock className="w-4 h-4 text-amber-600" /> Accounts Receivable Aging Buckets (Days Past Due)
+            </h4>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+              <button
+                onClick={() => setArAgingFilter(arAgingFilter === 'Current' ? 'ALL' : 'Current')}
+                className={`p-3.5 rounded-xl border transition-all text-left cursor-pointer ${
+                  arAgingFilter === 'Current' ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-200' : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <p className="text-[11px] font-bold text-slate-600">Current (Not Due)</p>
+                <p className="text-lg font-mono font-bold text-emerald-700 mt-1">₱{arAgingSummary.current.amount.toLocaleString()}</p>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{arAgingSummary.current.count} Invoices</p>
+              </button>
+
+              <button
+                onClick={() => setArAgingFilter(arAgingFilter === 'Overdue30' ? 'ALL' : 'Overdue30')}
+                className={`p-3.5 rounded-xl border transition-all text-left cursor-pointer ${
+                  arAgingFilter === 'Overdue30' ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-200' : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <p className="text-[11px] font-bold text-amber-800">1–30 Days Overdue</p>
+                <p className="text-lg font-mono font-bold text-amber-700 mt-1">₱{arAgingSummary.days30.amount.toLocaleString()}</p>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{arAgingSummary.days30.count} Invoices</p>
+              </button>
+
+              <button
+                onClick={() => setArAgingFilter(arAgingFilter === 'Overdue60' ? 'ALL' : 'Overdue60')}
+                className={`p-3.5 rounded-xl border transition-all text-left cursor-pointer ${
+                  arAgingFilter === 'Overdue60' ? 'bg-orange-50 border-orange-300 ring-2 ring-orange-200' : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <p className="text-[11px] font-bold text-orange-800">31–60 Days Overdue</p>
+                <p className="text-lg font-mono font-bold text-orange-700 mt-1">₱{arAgingSummary.days60.amount.toLocaleString()}</p>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{arAgingSummary.days60.count} Invoices</p>
+              </button>
+
+              <button
+                onClick={() => setArAgingFilter(arAgingFilter === 'Overdue90' ? 'ALL' : 'Overdue90')}
+                className={`p-3.5 rounded-xl border transition-all text-left cursor-pointer ${
+                  arAgingFilter === 'Overdue90' ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-200' : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <p className="text-[11px] font-bold text-rose-800">61–90 Days Overdue</p>
+                <p className="text-lg font-mono font-bold text-rose-700 mt-1">₱{arAgingSummary.days90.amount.toLocaleString()}</p>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{arAgingSummary.days90.count} Invoices</p>
+              </button>
+
+              <button
+                onClick={() => setArAgingFilter(arAgingFilter === 'Overdue90Plus' ? 'ALL' : 'Overdue90Plus')}
+                className={`p-3.5 rounded-xl border transition-all text-left cursor-pointer ${
+                  arAgingFilter === 'Overdue90Plus' ? 'bg-purple-50 border-purple-300 ring-2 ring-purple-200' : 'bg-slate-50/70 border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                <p className="text-[11px] font-bold text-purple-900">&gt; 90 Days Overdue</p>
+                <p className="text-lg font-mono font-bold text-purple-800 mt-1">₱{arAgingSummary.days90Plus.amount.toLocaleString()}</p>
+                <p className="text-[10px] text-slate-400 font-mono mt-0.5">{arAgingSummary.days90Plus.count} Invoices</p>
+              </button>
+            </div>
+          </div>
+
+          {/* AR Search & Multi-Filter Bar */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col lg:flex-row items-center justify-between gap-3 text-xs">
+            <div className="relative w-full lg:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search collection #, client..."
+                value={arSearchQuery}
+                onChange={e => setArSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap w-full lg:w-auto">
+              <select
+                value={arClientFilter}
+                onChange={e => setArClientFilter(e.target.value)}
+                className="py-2 px-3 bg-slate-100 border border-slate-200 rounded-xl font-semibold text-slate-700"
+              >
+                <option value="ALL">All Clients ({clients.length})</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.id}>{c.companyName}</option>
+                ))}
+              </select>
+
+              <select
+                value={arStatusFilter}
+                onChange={e => setArStatusFilter(e.target.value)}
+                className="py-2 px-3 bg-slate-100 border border-slate-200 rounded-xl font-semibold text-slate-700"
+              >
+                <option value="ALL">All Collection Statuses</option>
+                <option value="Current">Current</option>
+                <option value="Due Soon">Due Soon</option>
+                <option value="Overdue">Overdue</option>
+                <option value="Follow-Up Required">Follow-Up Required</option>
+                <option value="Promise to Pay">Promise to Pay</option>
+                <option value="Paid">Paid</option>
+                <option value="Disputed">Disputed</option>
+              </select>
+
+              <select
+                value={arCategoryFilter}
+                onChange={e => setArCategoryFilter(e.target.value)}
+                className="py-2 px-3 bg-slate-100 border border-slate-200 rounded-xl font-semibold text-slate-700"
+              >
+                <option value="ALL">All Service Categories</option>
+                <option value="BIR">BIR Tax Compliance</option>
+                <option value="Accounting">Accounting Retainers</option>
+                <option value="Audit">External Audit</option>
+                <option value="Payroll">Payroll Management</option>
+                <option value="SEC">SEC / Corporate</option>
+                <option value="Other">Other Services</option>
+              </select>
+
+              {(arSearchQuery || arClientFilter !== 'ALL' || arStatusFilter !== 'ALL' || arAgingFilter !== 'ALL' || arCategoryFilter !== 'ALL') && (
+                <button
+                  onClick={() => {
+                    setArSearchQuery('');
+                    setArClientFilter('ALL');
+                    setArStatusFilter('ALL');
+                    setArAgingFilter('ALL');
+                    setArCategoryFilter('ALL');
+                  }}
+                  className="px-3 py-2 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold hover:bg-rose-100 flex items-center gap-1 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" /> Clear Filters
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* AR Table */}
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden text-xs">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
+                    <th className="py-3 px-4">Collection #</th>
+                    <th className="py-3 px-4">Client Name</th>
+                    <th className="py-3 px-4">Billing Period</th>
+                    <th className="py-3 px-4">Issue & Due Date</th>
+                    <th className="py-3 px-4 text-right">Billed</th>
+                    <th className="py-3 px-4 text-right">Paid</th>
+                    <th className="py-3 px-4 text-right">Balance</th>
+                    <th className="py-3 px-4 text-center">Collection Status</th>
+                    <th className="py-3 px-4 text-center">Next Follow-Up</th>
+                    <th className="py-3 px-4 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredARInvoices.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="py-8 text-center text-slate-400">
+                        No accounts receivable invoices match your filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredARInvoices.map(inv => {
+                      const balance = getInvoiceBalance(inv.id);
+                      const isPastDue = new Date(inv.dueDate) < new Date() && balance > 0;
+                      const statusBadge = inv.collectionStatus || (balance <= 0 ? 'Paid' : isPastDue ? 'Overdue' : 'Current');
+
+                      return (
+                        <tr key={inv.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                            <button
+                              onClick={() => handleViewSoa(inv)}
+                              className="text-emerald-700 hover:underline flex items-center gap-1 cursor-pointer font-bold"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              {inv.collectionNumber || '1001'}
+                            </button>
+                          </td>
+
+                          <td className="py-3.5 px-4 font-semibold text-slate-800">
+                            {inv.clientName}
+                          </td>
+
+                          <td className="py-3.5 px-4 font-mono text-slate-600">
+                            {inv.billingPeriod || 'N/A'}
+                          </td>
+
+                          <td className="py-3.5 px-4 font-mono text-slate-600">
+                            <div>{inv.issueDate}</div>
+                            <div className={`text-[10px] font-bold ${isPastDue ? 'text-rose-600' : 'text-slate-400'}`}>
+                              Due: {inv.dueDate} {isPastDue && '(Past Due)'}
+                            </div>
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
+                            ₱{inv.totalAmount.toLocaleString()}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-mono text-emerald-600 font-bold">
+                            ₱{(inv.paidAmount || 0).toLocaleString()}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-600">
+                            ₱{balance.toLocaleString()}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                              statusBadge === 'Paid' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
+                              statusBadge === 'Overdue' ? 'bg-rose-50 text-rose-800 border border-rose-200' :
+                              statusBadge === 'Promise to Pay' ? 'bg-purple-50 text-purple-800 border border-purple-200' :
+                              statusBadge === 'Follow-Up Required' ? 'bg-amber-50 text-amber-900 border border-amber-200' :
+                              'bg-blue-50 text-blue-800 border border-blue-200'
+                            }`}>
+                              {statusBadge}
+                            </span>
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center font-mono text-slate-600">
+                            {inv.nextFollowUpDate || '—'}
+                          </td>
+
+                          <td className="py-3.5 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                onClick={() => handleOpenCollectionModal(inv)}
+                                title="Log Collection Follow-Up Contact"
+                                className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Phone className="w-3 h-3 text-amber-700" /> Log Contact
+                              </button>
+
+                              {balance > 0 && isSuperAdmin && (
+                                <button
+                                  onClick={() => handleOpenPayment(inv)}
+                                  title="Record Payment"
+                                  className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
+                                >
+                                  <CreditCard className="w-3 h-3" /> Pay
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 4: REVENUE & COLLECTION ANALYTICS */}
+      {activeSubTab === 'analytics' && (
+        <div className="space-y-6">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-blue-600" />
+              Revenue & Collections Distribution Analytics
+            </h3>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Service Categories Breakdown */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
+                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider text-slate-500">
+                  Revenue Billed by Service Category
+                </h4>
+                <div className="space-y-2">
+                  {['BIR Tax Compliance', 'Accounting Retainers', 'External Audit', 'Payroll Management', 'SEC & Corporate', 'Other Services'].map(cat => {
+                    const catInvoices = invoices.filter(i => i.status !== 'Cancelled' && i.services.some(s => (s.serviceCategory || 'Other').toLowerCase().includes(cat.toLowerCase().split(' ')[0])));
+                    const catAmount = catInvoices.reduce((acc, i) => acc + i.totalAmount, 0);
+                    const percentage = totalBilled > 0 ? (catAmount / totalBilled) * 100 : 0;
+
+                    return (
+                      <div key={cat} className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="font-semibold text-slate-800">{cat}</span>
+                          <span className="font-mono font-bold text-slate-900">₱{catAmount.toLocaleString()} ({percentage.toFixed(1)}%)</span>
+                        </div>
+                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                          <div className="bg-blue-600 h-full rounded-full transition-all" style={{ width: `${percentage}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Client Collections Summary */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
+                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider text-slate-500">
+                  Top Clients Accounts Receivable Leaderboard
+                </h4>
+                <div className="space-y-2.5 max-h-64 overflow-y-auto">
+                  {clients.map(c => {
+                    const clientInvs = invoices.filter(i => i.clientId === c.id && i.status !== 'Cancelled');
+                    const cBilled = clientInvs.reduce((acc, i) => acc + i.totalAmount, 0);
+                    const cPaid = clientInvs.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
+                    const cBalance = cBilled - cPaid;
+
+                    if (cBilled === 0) return null;
+
+                    return (
+                      <div key={c.id} className="bg-white p-3 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
+                        <div>
+                          <p className="font-bold text-slate-900">{c.companyName}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">Billed: ₱{cBilled.toLocaleString()} • Paid: ₱{cPaid.toLocaleString()}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-mono font-bold text-amber-600">₱{cBalance.toLocaleString()}</p>
+                          <p className="text-[10px] font-bold text-emerald-700">
+                            {cBilled > 0 ? `${((cPaid / cBilled) * 100).toFixed(0)}% paid` : '0%'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SUB-TAB: STATEMENT OF ACCOUNT (SOA LEDGER) ⭐ */}
+      {activeSubTab === 'soa' && (() => {
+        const activeClientObj = clients.find(c => c.id === soaSelectedClientId) || clients[0];
+        const clientSoa = activeClientObj
+          ? buildClientSoaLedger(activeClientObj.id, invoices, payments, { fromDate: soaFromDate, toDate: soaToDate })
+          : null;
+
+        return (
+          <div className="space-y-5 text-xs">
+            {/* Header Controls & Client Selector */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-emerald-600" />
+                    Client Statement of Account (SOA) Running Balance Ledger
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Official Client Ledger Formula: Opening Balance → Invoices (+) → Payments (-) → Adjustments → Closing Balance
+                  </p>
+                </div>
+
+                {activeClientObj && clientSoa && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => generateClientStatementOfAccountPDF(activeClientObj, clientSoa, soaFromDate && soaToDate ? `${soaFromDate} to ${soaToDate}` : undefined)}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" /> Export SOA PDF
+                    </button>
+                    <button
+                      onClick={() => exportSOAExcel(activeClientObj, clientSoa)}
+                      className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <FileDown className="w-4 h-4" /> Export SOA Excel
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Filters Bar */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[11px] mb-1">Select Client (Active & Archived)</label>
+                  <select
+                    value={soaSelectedClientId}
+                    onChange={e => setSoaSelectedClientId(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200 text-xs"
+                  >
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.companyName} {c.status === 'Archived' ? '[Archived]' : ''} (TIN: {c.tinNumber || 'N/A'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 text-[11px] mb-1">From Date (Statement Start)</label>
+                  <input
+                    type="date"
+                    value={soaFromDate}
+                    onChange={e => setSoaFromDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200 text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 text-[11px] mb-1">To Date (Statement Cut-off)</label>
+                  <input
+                    type="date"
+                    value={soaToDate}
+                    onChange={e => setSoaToDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200 text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* SOA Metrics Summary */}
+            {clientSoa && (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                  <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-2xs">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Opening Balance</span>
+                    <p className="text-base font-mono font-bold text-slate-800 mt-1">₱{clientSoa.openingBalance.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-blue-50/70 border border-blue-200 p-4 rounded-xl shadow-2xs">
+                    <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Total Billed (+)</span>
+                    <p className="text-base font-mono font-bold text-blue-900 mt-1">₱{clientSoa.totalBilled.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-emerald-50/70 border border-emerald-200 p-4 rounded-xl shadow-2xs">
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Total Payments (-)</span>
+                    <p className="text-base font-mono font-bold text-emerald-900 mt-1">₱{clientSoa.totalPaid.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-amber-50/70 border border-amber-200 p-4 rounded-xl shadow-2xs">
+                    <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Closing Balance Due</span>
+                    <p className="text-base font-mono font-bold text-amber-900 mt-1">₱{clientSoa.closingBalance.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-rose-50/70 border border-rose-200 p-4 rounded-xl shadow-2xs col-span-2 sm:col-span-1">
+                    <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Total Overdue</span>
+                    <p className="text-base font-mono font-bold text-rose-900 mt-1">₱{clientSoa.totalOverdue.toLocaleString()}</p>
+                  </div>
+                </div>
+
+                {/* SOA Table */}
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider text-slate-500">
+                      Chronological Ledger Transactions
+                    </h4>
+                    <span className="text-[11px] font-mono text-slate-500">
+                      Showing {clientSoa.entries.length} transaction entries
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] bg-slate-50">
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">Tx Type</th>
+                          <th className="py-2.5 px-3">Collection #</th>
+                          <th className="py-2.5 px-3">Invoice / Ref #</th>
+                          <th className="py-2.5 px-3">Billing Period</th>
+                          <th className="py-2.5 px-3">Services / Particulars</th>
+                          <th className="py-2.5 px-3 text-right">Billed (+)</th>
+                          <th className="py-2.5 px-3 text-right">Paid (-)</th>
+                          <th className="py-2.5 px-3 text-center">C.R. #</th>
+                          <th className="py-2.5 px-3 text-right">Running Balance</th>
+                          <th className="py-2.5 px-3 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {clientSoa.entries.length === 0 ? (
+                          <tr>
+                            <td colSpan={11} className="py-8 text-center text-slate-400">
+                              No statement of account ledger entries found for this client and date filter.
+                            </td>
+                          </tr>
+                        ) : (
+                          clientSoa.entries.map(entry => (
+                            <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-3 px-3 font-mono text-slate-600 whitespace-nowrap">{entry.date}</td>
+                              <td className="py-3 px-3 font-bold">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                  entry.type === 'Invoice' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                                  entry.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                  'bg-amber-50 text-amber-800 border border-amber-200'
+                                }`}>
+                                  {entry.type}
+                                </span>
+                              </td>
+                              <td className="py-3 px-3 font-mono font-bold text-slate-900">#{entry.collectionNo}</td>
+                              <td className="py-3 px-3 font-mono text-slate-700">{entry.refNo}</td>
+                              <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{entry.billingPeriod}</td>
+                              <td className="py-3 px-3 text-slate-800 font-medium max-w-xs truncate" title={entry.servicesDescription}>
+                                {entry.servicesDescription}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
+                                {entry.billedAmount > 0 ? `₱${entry.billedAmount.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">
+                                {entry.paidAmount > 0 ? `₱${entry.paidAmount.toLocaleString()}` : '-'}
+                              </td>
+                              <td className="py-3 px-3 text-center font-mono font-bold text-slate-700">
+                                {entry.crNumber || '-'}
+                              </td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 text-xs">
+                                ₱{entry.runningBalance.toLocaleString()}
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                {entry.originalInvoiceId && (
+                                  <button
+                                    onClick={() => {
+                                      const inv = invoices.find(i => i.id === entry.originalInvoiceId);
+                                      if (inv) {
+                                        setSelectedInvoice(inv);
+                                        setShowSoaModal(true);
+                                      }
+                                    }}
+                                    className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                    title="View Statement Modal"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" /> View
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* SUB-TAB: FINANCIAL & AR REPORTS HUB ⭐ */}
+      {activeSubTab === 'reports' && (() => {
+        // Compute report data
+        const totalBilledVal = invoices.filter(i => i.status !== 'Cancelled').reduce((a, b) => a + b.totalAmount, 0);
+        const totalCollectedVal = payments.filter(p => p.status === 'Active').reduce((a, b) => a + b.amount, 0);
+        const outstandingVal = totalBilledVal - totalCollectedVal;
+
+        // Revenue by Service Category calculation
+        const categoryMap: { [cat: string]: { billed: number; collected: number } } = {
+          'BIR Tax Compliance': { billed: 0, collected: 0 },
+          'Accounting Retainers': { billed: 0, collected: 0 },
+          'External Audit': { billed: 0, collected: 0 },
+          'Payroll Management': { billed: 0, collected: 0 },
+          'SEC & Corporate': { billed: 0, collected: 0 },
+          'Other Services': { billed: 0, collected: 0 }
+        };
+
+        invoices.forEach(inv => {
+          if (inv.status === 'Cancelled') return;
+          const invPayments = payments.filter(p => p.invoiceId === inv.id && p.status === 'Active');
+          const pmtTotal = invPayments.reduce((s, p) => s + p.amount, 0);
+          const collectRatio = inv.totalAmount > 0 ? pmtTotal / inv.totalAmount : 0;
+
+          inv.services.forEach(s => {
+            const catKey = s.serviceCategory || 'Other Services';
+            if (!categoryMap[catKey]) {
+              categoryMap[catKey] = { billed: 0, collected: 0 };
+            }
+            categoryMap[catKey].billed += s.amount;
+            categoryMap[catKey].collected += s.amount * collectRatio;
+          });
+        });
+
+        const revCategoryList = Object.keys(categoryMap).map(cat => ({
+          category: cat,
+          billed: categoryMap[cat].billed,
+          collected: categoryMap[cat].collected
+        }));
+
+        // Revenue by Client calculation
+        const clientRevList = clients.map(c => {
+          const clientInvs = invoices.filter(i => i.clientId === c.id && i.status !== 'Cancelled');
+          const b = clientInvs.reduce((acc, i) => acc + i.totalAmount, 0);
+          const cPmts = payments.filter(p => p.clientId === c.id && p.status === 'Active');
+          const col = cPmts.reduce((acc, p) => acc + p.amount, 0);
+          return {
+            clientName: c.companyName,
+            billed: b,
+            collected: col,
+            balance: b - col
+          };
+        }).filter(item => item.billed > 0 || item.collected > 0);
+
+        return (
+          <div className="space-y-5 text-xs">
+            {/* Reports Control Panel */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5 text-teal-600" />
+                    Accounts Receivable & Revenue Financial Reporting
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Generate comprehensive aging, collection, and revenue reports with direct Excel download
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (reportCategory === 'aging' || reportCategory === 'outstanding') {
+                        exportARAgingExcel(invoices, payments);
+                      } else if (reportCategory === 'payments') {
+                        exportPaymentReportExcel(payments, invoices);
+                      } else if (reportCategory === 'collections') {
+                        exportCollectionReportExcel(collectionLogs, invoices);
+                      } else {
+                        exportRevenueReportExcel(invoices, payments, revCategoryList, clientRevList);
+                      }
+                    }}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center gap-2 transition-colors cursor-pointer"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" /> Download Report (.XLSX)
+                  </button>
+                </div>
+              </div>
+
+              {/* Report Selection Tabs */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                <button
+                  onClick={() => setReportCategory('aging')}
+                  className={`px-3 py-2 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
+                    reportCategory === 'aging' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  AR Aging Matrix
+                </button>
+                <button
+                  onClick={() => setReportCategory('outstanding')}
+                  className={`px-3 py-2 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
+                    reportCategory === 'outstanding' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Outstanding Invoices
+                </button>
+                <button
+                  onClick={() => setReportCategory('payments')}
+                  className={`px-3 py-2 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
+                    reportCategory === 'payments' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Payment Ledger
+                </button>
+                <button
+                  onClick={() => setReportCategory('collections')}
+                  className={`px-3 py-2 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
+                    reportCategory === 'collections' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Collection Logs
+                </button>
+                <button
+                  onClick={() => setReportCategory('service_revenue')}
+                  className={`px-3 py-2 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
+                    reportCategory === 'service_revenue' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Revenue by Service
+                </button>
+                <button
+                  onClick={() => setReportCategory('client_revenue')}
+                  className={`px-3 py-2 rounded-xl font-bold transition-all shrink-0 cursor-pointer ${
+                    reportCategory === 'client_revenue' ? 'bg-teal-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  Revenue by Client
+                </button>
+              </div>
+            </div>
+
+            {/* Report Display Section */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              {reportCategory === 'aging' && (
+                <div className="space-y-4">
+                  <h4 className="font-bold text-slate-900 text-sm">AR Aging Matrix Breakdown</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] bg-slate-50">
+                          <th className="py-2.5 px-3">Collection #</th>
+                          <th className="py-2.5 px-3">Client Name</th>
+                          <th className="py-2.5 px-3">Due Date</th>
+                          <th className="py-2.5 px-3 text-right">Invoice Amount</th>
+                          <th className="py-2.5 px-3 text-right">Paid Amount</th>
+                          <th className="py-2.5 px-3 text-right">Balance Due</th>
+                          <th className="py-2.5 px-3 text-center">Aging Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {invoices.filter(i => i.status !== 'Cancelled').map(inv => {
+                          const bal = getInvoiceBalance(inv.id);
+                          const due = new Date(inv.dueDate);
+                          const today = new Date();
+                          const diffDays = Math.floor((today.getTime() - due.getTime()) / (1000 * 3600 * 24));
+
+                          let agingTag = 'Current';
+                          let tagColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                          if (bal > 0) {
+                            if (diffDays <= 0) agingTag = 'Current';
+                            else if (diffDays <= 30) { agingTag = '1-30 Days Overdue'; tagColor = 'bg-amber-50 text-amber-800 border-amber-200'; }
+                            else if (diffDays <= 60) { agingTag = '31-60 Days Overdue'; tagColor = 'bg-orange-50 text-orange-800 border-orange-200'; }
+                            else { agingTag = '90+ Days Overdue'; tagColor = 'bg-rose-50 text-rose-800 border-rose-200'; }
+                          } else {
+                            agingTag = 'Paid';
+                          }
+
+                          return (
+                            <tr key={inv.id}>
+                              <td className="py-3 px-3 font-mono font-bold text-slate-900">#{inv.collectionNumber || '1001'}</td>
+                              <td className="py-3 px-3 font-semibold text-slate-800">{inv.clientName}</td>
+                              <td className="py-3 px-3 font-mono text-slate-600">{inv.dueDate}</td>
+                              <td className="py-3 px-3 text-right font-mono font-bold">₱{inv.totalAmount.toLocaleString()}</td>
+                              <td className="py-3 px-3 text-right font-mono text-emerald-600 font-bold">₱{(inv.paidAmount || 0).toLocaleString()}</td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-amber-700">₱{bal.toLocaleString()}</td>
+                              <td className="py-3 px-3 text-center">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${tagColor}`}>
+                                  {agingTag}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {reportCategory === 'payments' && (
+                <div className="space-y-4">
+                  <h4 className="font-bold text-slate-900 text-sm">Payment Transaction Ledger</h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] bg-slate-50">
+                          <th className="py-2.5 px-3">Date</th>
+                          <th className="py-2.5 px-3">C.R. / O.R. #</th>
+                          <th className="py-2.5 px-3">Client</th>
+                          <th className="py-2.5 px-3 text-right">Amount Paid</th>
+                          <th className="py-2.5 px-3">Payment Method</th>
+                          <th className="py-2.5 px-3">Reference #</th>
+                          <th className="py-2.5 px-3 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {payments.length === 0 ? (
+                          <tr><td colSpan={7} className="py-6 text-center text-slate-400">No payment transactions recorded.</td></tr>
+                        ) : (
+                          payments.map(p => {
+                            const inv = invoices.find(i => i.id === p.invoiceId);
+                            return (
+                              <tr key={p.id}>
+                                <td className="py-3 px-3 font-mono text-slate-600">{p.paymentDate}</td>
+                                <td className="py-3 px-3 font-mono font-bold text-slate-900">{p.collectionReceiptNumber || p.officialReceiptNumber || '-'}</td>
+                                <td className="py-3 px-3 font-semibold text-slate-800">{inv?.clientName || 'Client'}</td>
+                                <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">₱{p.amount.toLocaleString()}</td>
+                                <td className="py-3 px-3 text-slate-700">{p.paymentMethod}</td>
+                                <td className="py-3 px-3 font-mono text-slate-500">{p.referenceNumber || '-'}</td>
+                                <td className="py-3 px-3 text-center">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                    p.status === 'Active' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-rose-50 text-rose-700 border border-rose-200'
+                                  }`}>
+                                    {p.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {(reportCategory === 'service_revenue' || reportCategory === 'client_revenue') && (
+                <div className="space-y-4">
+                  <h4 className="font-bold text-slate-900 text-sm">
+                    {reportCategory === 'service_revenue' ? 'Revenue Breakdown by Service Category' : 'Revenue Breakdown by Client'}
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] bg-slate-50">
+                          <th className="py-2.5 px-3">Name / Category</th>
+                          <th className="py-2.5 px-3 text-right">Total Billed</th>
+                          <th className="py-2.5 px-3 text-right">Total Collected</th>
+                          <th className="py-2.5 px-3 text-right">Uncollected Balance</th>
+                          <th className="py-2.5 px-3 text-center">Collection Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(reportCategory === 'service_revenue' ? revCategoryList : clientRevList).map((row: any, idx) => {
+                          const name = row.category || row.clientName;
+                          const rate = row.billed > 0 ? ((row.collected / row.billed) * 100).toFixed(1) : '0.0';
+                          return (
+                            <tr key={idx}>
+                              <td className="py-3 px-3 font-bold text-slate-900">{name}</td>
+                              <td className="py-3 px-3 text-right font-mono font-bold">₱{row.billed.toLocaleString()}</td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">₱{row.collected.toLocaleString()}</td>
+                              <td className="py-3 px-3 text-right font-mono font-bold text-amber-700">₱{(row.billed - row.collected).toLocaleString()}</td>
+                              <td className="py-3 px-3 text-center font-bold text-slate-700">{rate}%</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* SUB-TAB: FINANCIAL AUDIT CONTROL & MODIFICATIONS TRAIL ⭐ */}
+      {activeSubTab === 'audit' && (() => {
+        const { auditLogs } = useData();
+
+        // Filter financial logs
+        const filteredFinancialLogs = auditLogs.filter(log => {
+          const matchAction = auditFilterAction === 'ALL' || log.action.toLowerCase().includes(auditFilterAction.toLowerCase());
+          const matchSearch = auditFilterSearch === '' || 
+                              log.details.toLowerCase().includes(auditFilterSearch.toLowerCase()) ||
+                              log.userName.toLowerCase().includes(auditFilterSearch.toLowerCase()) ||
+                              log.action.toLowerCase().includes(auditFilterSearch.toLowerCase());
+          return matchAction && matchSearch;
+        });
+
+        return (
+          <div className="space-y-5 text-xs">
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-3 border-b border-slate-100">
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <ShieldCheck className="w-5 h-5 text-purple-600" />
+                    Financial Audit Control & Complete Modifications Trail
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Zero physical delete policy: All invoice modifications, payment reversals, and auto-billing actions are immutably logged with user & timestamp context.
+                  </p>
+                </div>
+              </div>
+
+              {/* Filters */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 text-[11px] mb-1">Filter Action Type</label>
+                  <select
+                    value={auditFilterAction}
+                    onChange={e => setAuditFilterAction(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-900"
+                  >
+                    <option value="ALL">All Financial Audit Events</option>
+                    <option value="Payment">Payment Recordings & Reversals</option>
+                    <option value="Invoice">Invoice Modifications & Creations</option>
+                    <option value="Auto-Billing">Recurring Auto-Billing Batch Runs</option>
+                    <option value="Collection">Collection Contact Logs</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 text-[11px] mb-1">Search Audit Details or Staff User</label>
+                  <input
+                    type="text"
+                    placeholder="Search details, user name, or C.R. number..."
+                    value={auditFilterSearch}
+                    onChange={e => setAuditFilterSearch(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Audit Log Table */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-500 font-bold uppercase text-[10px] bg-slate-50">
+                      <th className="py-2.5 px-3">Timestamp</th>
+                      <th className="py-2.5 px-3">Performed By User</th>
+                      <th className="py-2.5 px-3">Action Type</th>
+                      <th className="py-2.5 px-3">Modification Details & Reason</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredFinancialLogs.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-slate-400">
+                          No financial audit log events match the filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredFinancialLogs.map(log => (
+                        <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-3 px-3 font-mono text-slate-600 text-[11px] whitespace-nowrap">{log.timestamp}</td>
+                          <td className="py-3 px-3 font-bold text-slate-900">{log.userName}</td>
+                          <td className="py-3 px-3 font-bold">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                              {log.action}
+                            </span>
+                          </td>
+                          <td className="py-3 px-3 text-slate-800 font-medium">{log.details}</td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              Logged & Verified
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MODAL 1: Generate SOA Invoice */}
       {showCreateModal && (
@@ -876,10 +2380,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <SearchableClientSelect
-                    clients={clients.filter(c => !c.isBranch)}
+                    clients={clients.filter(c => !c.isBranch && c.status !== 'Archived')}
                     selectedClientId={selectedClientId}
                     onSelectClient={id => handleClientChange(id)}
-                    label="Select Main Branch Client Company"
+                    label="Select Active Main Branch Client Company"
                     placeholder="Search client name or TIN number..."
                     required
                   />
@@ -1735,15 +3239,15 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         </div>
       )}
 
-      {/* MODAL 6: View Amended History Log */}
+              {/* MODAL 6: View Transaction Ledger & Amended History */}
       {showHistoryModal && selectedInvoice && (
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 text-xs shadow-2xl text-slate-800 space-y-4 max-h-[85vh] overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full p-6 text-xs shadow-2xl text-slate-800 space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <History className="w-5 h-5 text-amber-600" />
                 <div>
-                  <h3 className="font-bold text-slate-900 text-base">Amended History Audit Log</h3>
+                  <h3 className="font-bold text-slate-900 text-base">Invoice Payment Ledger & History Audit</h3>
                   <p className="text-slate-500 text-[11px]">{selectedInvoice.invoiceNumber} • {selectedInvoice.clientName}</p>
                 </div>
               </div>
@@ -1752,9 +3256,82 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </button>
             </div>
 
-            <div className="space-y-3">
+            {/* Payment Ledger Section ⭐ */}
+            <div className="space-y-2">
+              <h4 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                <CreditCard className="w-4 h-4 text-emerald-600" /> Recorded Payments & Receipts
+              </h4>
+              {getInvoicePayments(selectedInvoice.id).length === 0 ? (
+                <p className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic">
+                  No payment transactions recorded yet.
+                </p>
+              ) : (
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] uppercase font-bold text-slate-500">
+                      <tr>
+                        <th className="py-2 px-3">Date</th>
+                        <th className="py-2 px-3">Method</th>
+                        <th className="py-2 px-3">Receipt / Ref</th>
+                        <th className="py-2 px-3 text-right">Amount</th>
+                        <th className="py-2 px-3 text-center">Status</th>
+                        {isSuperAdmin && <th className="py-2 px-3 text-center">Action</th>}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {getInvoicePayments(selectedInvoice.id).map(pmt => (
+                        <tr key={pmt.id} className={pmt.status === 'Cancelled' ? 'bg-rose-50/30' : ''}>
+                          <td className="py-2 px-3 font-mono">{pmt.paymentDate}</td>
+                          <td className="py-2 px-3 font-medium">{pmt.paymentMethod}</td>
+                          <td className="py-2 px-3 font-mono text-slate-600">
+                            {pmt.collectionReceiptNumber || pmt.referenceNumber || '—'}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                            ₱{pmt.amount.toLocaleString()}
+                          </td>
+                          <td className="py-2 px-3 text-center">
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                              pmt.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+                            }`}>
+                              {pmt.status}
+                            </span>
+                          </td>
+                          {isSuperAdmin && (
+                            <td className="py-2 px-3 text-center">
+                              {pmt.status === 'Active' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const reason = prompt(`Enter cancellation reason for payment of ₱${pmt.amount.toLocaleString()}:`);
+                                    if (reason && reason.trim()) {
+                                      const res = cancelInvoicePayment(pmt.id, reason.trim(), currentUser?.id, currentUser?.fullName);
+                                      alert(res.message);
+                                    }
+                                  }}
+                                  className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded text-[10px] border border-rose-200"
+                                >
+                                  Cancel
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-slate-400 italic">{pmt.cancellationReason || 'Cancelled'}</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Amended History Section */}
+            <div className="space-y-2 pt-2 border-t border-slate-100">
+              <h4 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                <History className="w-4 h-4 text-amber-600" /> Invoice Structural Amendment History
+              </h4>
               {(!selectedInvoice.amendedHistory || selectedInvoice.amendedHistory.length === 0) ? (
-                <p className="text-slate-400 italic text-center py-6">No modifications recorded for this transaction.</p>
+                <p className="text-slate-400 italic text-center py-3">No structural invoice amendments recorded.</p>
               ) : (
                 selectedInvoice.amendedHistory.map((item, idx) => (
                   <div key={idx} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
@@ -1778,7 +3355,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 onClick={() => setShowHistoryModal(false)}
                 className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold"
               >
-                Close History Log
+                Close Audit Log
               </button>
             </div>
           </div>
@@ -1791,6 +3368,143 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         onClose={() => setShowCustomizerModal(false)}
         sampleInvoice={invoices[0]}
       />
+
+      {/* MODAL: Collection Follow-Up Contact Log */}
+      {showCollectionModal && selectedInvoice && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-xl w-full max-h-[90vh] overflow-y-auto space-y-5 text-xs shadow-xl text-slate-800">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <Phone className="w-5 h-5 text-amber-600" />
+                <h3 className="font-bold text-slate-900 text-sm">Log Collection Follow-Up Contact</h3>
+              </div>
+              <button
+                onClick={() => setShowCollectionModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-amber-50/70 border border-amber-200 p-3 rounded-xl flex items-center justify-between text-xs">
+              <div>
+                <p className="font-bold text-slate-900">{selectedInvoice.clientName}</p>
+                <p className="text-slate-500 font-mono text-[11px] mt-0.5">Collection #: {selectedInvoice.collectionNumber || '1001'} • Due: {selectedInvoice.dueDate}</p>
+              </div>
+              <div className="text-right">
+                <span className="text-slate-500 text-[10px] block">Outstanding Balance</span>
+                <span className="font-mono font-bold text-amber-700 text-sm">₱{getInvoiceBalance(selectedInvoice.id).toLocaleString()}</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmitCollectionLog} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Contact Person</label>
+                  <input
+                    type="text"
+                    value={collectionContactPerson}
+                    onChange={e => setCollectionContactPerson(e.target.value)}
+                    required
+                    placeholder="e.g., Ms. Jane Doe (CFO)"
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Contact Method</label>
+                  <select
+                    value={collectionContactMethod}
+                    onChange={e => setCollectionContactMethod(e.target.value as any)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
+                  >
+                    <option value="Phone Call">Phone Call</option>
+                    <option value="Email">Email</option>
+                    <option value="SMS">SMS</option>
+                    <option value="In-Person">In-Person Visit</option>
+                    <option value="Letter">Formal Demand Letter</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Collection Status</label>
+                  <select
+                    value={collectionStatus}
+                    onChange={e => setCollectionStatus(e.target.value as CollectionStatus)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-bold focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
+                  >
+                    <option value="Follow-Up Required">Follow-Up Required</option>
+                    <option value="Promise to Pay">Promise to Pay</option>
+                    <option value="Due Soon">Due Soon</option>
+                    <option value="Overdue">Overdue</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Disputed">Disputed</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">Next Follow-Up Date</label>
+                  <input
+                    type="date"
+                    value={collectionNextFollowUp}
+                    onChange={e => setCollectionNextFollowUp(e.target.value)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-mono focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">Follow-Up Notes & Discussion Summary</label>
+                <textarea
+                  value={collectionNotes}
+                  onChange={e => setCollectionNotes(e.target.value)}
+                  rows={3}
+                  required
+                  placeholder="Record summary of conversation, promised payment date, or issues raised..."
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:bg-white focus:ring-2 focus:ring-amber-100"
+                />
+              </div>
+
+              {/* History of Past Collection Logs */}
+              {selectedInvoice.collectionLogs && selectedInvoice.collectionLogs.length > 0 && (
+                <div className="space-y-2 border-t border-slate-100 pt-3">
+                  <p className="font-bold text-slate-800 text-xs">Past Collection Contact Log History ({selectedInvoice.collectionLogs.length}):</p>
+                  <div className="max-h-36 overflow-y-auto space-y-2 pr-1">
+                    {selectedInvoice.collectionLogs.map(log => (
+                      <div key={log.id} className="bg-slate-50 p-2.5 rounded-lg border border-slate-200 space-y-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-bold text-slate-800">{log.contactPerson} ({log.contactMethod})</span>
+                          <span className="text-slate-400 font-mono">{new Date(log.timestamp).toLocaleString()}</span>
+                        </div>
+                        <p className="text-slate-600 text-xs">{log.notes}</p>
+                        <p className="text-[10px] text-amber-800 font-bold">Status: {log.status} • Logged by: {log.loggedByName}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowCollectionModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Phone className="w-4 h-4" /> Save Collection Log
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   );

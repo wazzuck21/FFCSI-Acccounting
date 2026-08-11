@@ -102,7 +102,12 @@ export interface ClientProfile {
   rdoNumber: string; // 3 alphanumeric, e.g., '038', '044', '050'
   psicCode?: string; // Philippine Standard Industrial Classification Code
   businessNature: string[]; // multi-select nature of business
-  status: 'Active' | 'Inactive' | 'For Compliance';
+  status: 'Active' | 'Inactive' | 'For Compliance' | 'Compliance' | 'Archived';
+  
+  // Archival Metadata ⭐
+  archivedAt?: string;
+  archivedBy?: string;
+  archiveReason?: string;
   
   registrationMethod: 'Manual' | 'eFPS';
   entityType: EntityType;
@@ -153,6 +158,40 @@ export interface ClientProfile {
   branchCode?: string; // e.g. '000' (Main Office), '001' (Branch 1)
   baseTin?: string; // e.g. '009-023-023'
   
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Client Services & Engagement Entity ⭐
+export type ServiceCategory = 'BIR' | 'Benefits' | 'Accounting' | 'Audit' | 'Payroll' | 'SEC' | 'Legal / SEC' | 'DTI' | 'Consulting' | 'Other';
+export type ServiceStatus = 'Active' | 'Suspended' | 'Ended';
+export type ServiceBillingFrequency = 'Monthly' | 'Quarterly' | 'Annual' | 'One-Time';
+
+export interface ClientService {
+  id: string;
+  clientId: string;
+
+  serviceCode: string;
+  serviceName: string;
+  category: ServiceCategory;
+
+  status: ServiceStatus;
+
+  startDate: string;
+  endDate?: string;
+
+  assignedStaffId?: string;
+  assignedStaffName?: string;
+
+  billable: boolean;
+  billingFrequency?: ServiceBillingFrequency;
+
+  fee?: number;
+
+  generatesCompliance?: boolean;
+
+  notes?: string;
+
   createdAt: string;
   updatedAt: string;
 }
@@ -282,23 +321,103 @@ export interface DocumentItem {
 }
 
 // Task & Workflow
+export type TaskWorkflowStage = 'Preparer' | 'Reviewer' | 'Approved' | 'Returned';
+export type TaskStatus = 'Pending' | 'In Progress' | 'For Review' | 'Completed' | 'On Hold' | 'Cancelled' | 'Overdue';
+
 export interface TaskItem {
   id: string;
   clientId?: string;
   clientName?: string;
+  clientServiceId?: string; // Link to ClientService entity ⭐
+  ruleId?: string;          // Link to CustomDeadlineRule ⭐
+  formCode?: string;        // e.g. '0619E', '1601C', '2550Q', 'SSS Contribution' ⭐
   title: string;
   description?: string;
-  category: 'Bookkeeping' | 'Tax Filing' | 'Payroll' | 'Audit' | 'Compliance' | 'Client Request';
-  recurrence: 'Monthly' | 'Quarterly' | 'Annually' | 'One-Time';
-  dueDate: string;
+  category: 'BIR' | 'Benefits' | 'Bookkeeping' | 'Tax Filing' | 'Payroll' | 'Audit' | 'Compliance' | 'Client Request';
+  recurrence?: 'Monthly' | 'Quarterly' | 'Annually' | 'One-Time';
+  taxablePeriod?: string;   // e.g., "August 2026", "3Q-2026", "TY-2025" ⭐
+  dueDate: string;          // YYYY-MM-DD
+  originalDueDate?: string; // For deadline overrides ⭐
+  isOverriddenDeadline?: boolean; // ⭐
+  overrideReason?: string;  // ⭐
+  rdoNumber?: string;       // RDO for filtering & compliance ⭐
   priority: 'Low' | 'Medium' | 'High' | 'Urgent';
-  status: 'Pending' | 'In Progress' | 'Review Needed' | 'Completed' | 'Overdue';
+  status: TaskStatus;
+  workflowStage?: TaskWorkflowStage; // Preparer -> Reviewer -> Approved / Returned ⭐
   assignedToId: string;
   assignedToName: string;
+  preparerId?: string;      // Staff who prepared ⭐
+  preparerName?: string;
+  reviewerId?: string;      // Senior staff/admin assigned to review ⭐
+  reviewerName?: string;
+  reviewNotes?: string;     // Notes from review or return for correction ⭐
   completedAt?: string;
+  completedById?: string;
+  completedByName?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// Payment Record ⭐
+export type PaymentStatus = 'Active' | 'Cancelled';
+
+export interface Payment {
+  id: string;
+  invoiceId: string;
+  clientId: string;
+  amount: number;
+  paymentDate: string; // YYYY-MM-DD
+  paymentMethod: string; // Cash, Bank Transfer, Check, Maya, GCash
+  referenceNumber?: string; // Bank Ref #, Check #, Transaction ID
+  officialReceiptNumber?: string;
+  collectionReceiptNumber?: string;
+  notes?: string;
+  receivedById?: string;
+  receivedByName?: string;
+  status: PaymentStatus; // Active | Cancelled
+  cancelledAt?: string;
+  cancelledById?: string;
+  cancelledByName?: string;
+  cancellationReason?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Billing & Collection
+export interface InvoiceServiceLine {
+  id?: string;
+  clientServiceId?: string; // Link to ClientService entity ⭐
+  serviceCode?: string;
+  serviceCategory?: ServiceCategory;
+  description: string;
+  monthYear?: string;
+  unitPrice?: number;
+  quantity?: number;
+  discount?: number;
+  amount: number; // Final line amount snapshot
+  paymentMethod?: 'Cash' | 'Cheque Payment to FFCSI' | 'Bank Transfer' | string;
+  itemType?: 'Service' | 'One-Time' | 'Adjustment' | 'Other';
+}
+
+// Collection & AR Follow-Up Types ⭐
+export type CollectionStatus = 'Current' | 'Due Soon' | 'Overdue' | 'Follow-Up Required' | 'Promise to Pay' | 'Paid' | 'Disputed';
+
+export interface CollectionLog {
+  id: string;
+  invoiceId: string;
+  clientId: string;
+  logDate: string; // YYYY-MM-DD HH:mm
+  contactPerson?: string;
+  contactMethod?: 'Email' | 'Phone Call' | 'SMS' | 'In-Person' | 'Letter';
+  status: CollectionStatus;
+  notes: string;
+  nextFollowUpDate?: string;
+  loggedById?: string;
+  loggedByName?: string;
+  createdAt: string;
+}
+
 export interface InvoiceItem {
   id: string;
   invoiceNumber: string;
@@ -312,16 +431,22 @@ export interface InvoiceItem {
   totalAmount: number;
   paidAmount: number;
   status: 'Draft' | 'Sent' | 'Partially Paid' | 'Paid' | 'Overdue' | 'Cancelled';
-  services: {
-    description: string;
-    monthYear?: string;
-    amount: number;
-    paymentMethod?: 'Cash' | 'Cheque Payment to FFCSI' | 'Bank Transfer' | string;
-  }[];
+  services: InvoiceServiceLine[];
+  payments?: Payment[]; // Payment transaction ledger ⭐
   officialReceiptNumber?: string;
   collectionReceiptNumber?: string;
   paymentDate?: string;
   paymentMethod?: string;
+  cancelledAt?: string;
+  cancelledBy?: string;
+  cancellationReason?: string;
+  collectionStatus?: CollectionStatus; // AR Collection Status ⭐
+  collectionNotes?: string;
+  lastCollectionFollowUpDate?: string;
+  nextFollowUpDate?: string;
+  billingPeriod?: string; // e.g. "August 2026", "Q3 2026", "2026" ⭐
+  autoGenerated?: boolean; // Flag for recurring auto-billing generator ⭐
+  collectionLogs?: CollectionLog[]; // Collection interaction log history ⭐
   amendedHistory?: {
     date: string;
     modifiedBy: string;

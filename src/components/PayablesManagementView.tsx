@@ -97,7 +97,8 @@ export const PayablesManagementView: React.FC = () => {
         name: itemCode,
         category: 'BIR',
         frequency,
-        deadlineDay: 10
+        deadlineDay: 10,
+        customDescription: ''
       };
     }
 

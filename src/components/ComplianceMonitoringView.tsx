@@ -131,6 +131,8 @@ export const ComplianceMonitoringView: React.FC = () => {
     formattedDateStr: string; // e.g. July 10, 2026
     periodLabel: string;
     status: 'Pending' | 'For Payment' | 'Due Today' | 'Overdue' | 'Already Paid';
+    assessmentTag?: 'Assessed - For Payment' | 'Assessed - Excess Input Tax' | 'Assessed - Zero Return / No Payment' | 'Already Paid' | 'Pending' | 'Due Today' | 'Overdue';
+    isUnenrolledForm?: boolean;
     assignedStaffName: string;
     isBranch?: boolean;
     branchCode?: string;
@@ -151,62 +153,77 @@ export const ComplianceMonitoringView: React.FC = () => {
       // Category filter check
       if (categoryFilter !== 'ALL' && rule.category !== categoryFilter) return;
 
-      // Check if client is enrolled in this rule
+      // Check if client is currently enrolled in this rule
       const isBir = rule.category === 'BIR';
       const hasBir = isBir && (client.birTaxServices || []).some(s => s.toLowerCase() === rule.code.toLowerCase());
       const hasBen = !isBir && (client.benefitsServices || []).some(s => s.toLowerCase().includes(rule.code.toLowerCase()) || rule.code.toLowerCase().includes(s.toLowerCase()));
 
-      if (hasBir || hasBen) {
-        // Get deadline rule for selected month & year (accounting for fiscal year client shift)
-        const deadlineInfo = getRuleDeadlineForMonth(rule, selectedMonth, selectedYear, client);
+      const deadlineInfo = getRuleDeadlineForMonth(rule, selectedMonth, selectedYear, client);
 
-        // Include only if deadline is active and NOT marked N/A / Not Required
-        if (deadlineInfo && !deadlineInfo.isNotRequired && deadlineInfo.dueDateStr !== 'N/A') {
-          const cleanRuleCode = rule.code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          const cleanRuleName = rule.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      if (deadlineInfo && !deadlineInfo.isNotRequired && deadlineInfo.dueDateStr !== 'N/A') {
+        const cleanRuleCode = rule.code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        const cleanRuleName = rule.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
-          // Check if there's an existing compliance item in DataContext state
-          const existing = complianceItems.find(ci => {
-            if (ci.clientId !== client.id) return false;
-            const cleanTitle = ci.title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const isNameMatch = cleanTitle.includes(cleanRuleCode) || cleanRuleCode.includes(cleanTitle) || (cleanRuleName.length > 3 && cleanTitle.includes(cleanRuleName));
-            const isDateMatch = ci.dueDate === deadlineInfo.dueDateStr || ci.dueDate.startsWith(`${selectedYear}-${String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0')}`);
-            return isNameMatch && isDateMatch;
-          });
+        // Check if there's an existing compliance item in DataContext state
+        const existing = complianceItems.find(ci => {
+          if (ci.clientId !== client.id) return false;
+          const cleanTitle = ci.title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const isNameMatch = cleanTitle.includes(cleanRuleCode) || cleanRuleCode.includes(cleanTitle) || (cleanRuleName.length > 3 && cleanTitle.includes(cleanRuleName));
+          const isDateMatch = ci.dueDate === deadlineInfo.dueDateStr || ci.dueDate.startsWith(`${selectedYear}-${String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0')}`);
+          return isNameMatch && isDateMatch;
+        });
 
-          // Check if there is a matching payable record created/tagged in BIR/Benefits Payables
-          const matchedPayable = payables.find(p => {
-            if (p.clientId !== client.id) return false;
-            const cleanItemName = p.itemName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-            const isNameMatch = cleanItemName.includes(cleanRuleCode) || cleanRuleCode.includes(cleanItemName);
-            const isMonthMatch = p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || p.month.includes(`${selectedYear}`);
-            return isNameMatch && isMonthMatch;
-          });
+        // Check if there is a matching payable record created/tagged in BIR/Benefits Payables
+        const matchedPayable = payables.find(p => {
+          if (p.clientId !== client.id) return false;
+          const cleanItemName = p.itemName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+          const isNameMatch = cleanItemName.includes(cleanRuleCode) || cleanRuleCode.includes(cleanItemName);
+          const isMonthMatch = p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || p.month.includes(`${selectedYear}`);
+          return isNameMatch && isMonthMatch;
+        });
 
+        const isHistoricalAssessed = Boolean(existing || matchedPayable);
+
+        // Include item if client is enrolled OR if a historical/assessed compliance record exists
+        if (hasBir || hasBen || isHistoricalAssessed) {
+          const isUnenrolledForm = !(hasBir || hasBen);
           const recordedAmount = matchedPayable ? matchedPayable.payableAmount : existing?.amountDue;
 
-          // If tagged as paid in BIR/Benefits Payables or existing item is Already Paid (and payable is NOT revoked to Unpaid):
           const isTagAsPaidInPayables = matchedPayable?.status === 'Paid';
           const isPayableUnpaid = matchedPayable?.status === 'Unpaid';
-          
+          const isNoPayment = matchedPayable?.status === 'No Payment' || (recordedAmount === 0 && matchedPayable !== undefined);
+          const isExcessInput = recordedAmount !== undefined && recordedAmount !== null && recordedAmount < 0;
+
           let calculatedStatus: CompiledClientDeadline['status'] = 'Pending';
+          let assessmentTag: CompiledClientDeadline['assessmentTag'] = 'Pending';
 
           if (isTagAsPaidInPayables || (existing?.status === 'Already Paid' && !isPayableUnpaid)) {
             calculatedStatus = 'Already Paid';
+            assessmentTag = 'Already Paid';
+          } else if (isExcessInput) {
+            calculatedStatus = 'For Payment';
+            assessmentTag = 'Assessed - Excess Input Tax';
+          } else if (isNoPayment) {
+            calculatedStatus = 'Already Paid';
+            assessmentTag = 'Assessed - Zero Return / No Payment';
           } else {
             const todayStr = new Date().toISOString().substring(0, 10);
             if (deadlineInfo.dueDateStr === todayStr) {
               calculatedStatus = 'Due Today';
+              assessmentTag = 'Due Today';
             } else if (deadlineInfo.dueDateStr < todayStr) {
               calculatedStatus = 'Overdue';
+              assessmentTag = 'Overdue';
             } else if (
               existing?.status === 'For Payment' || 
               isPayableUnpaid || 
               (recordedAmount !== undefined && recordedAmount !== null && recordedAmount > 0)
             ) {
               calculatedStatus = 'For Payment';
+              assessmentTag = 'Assessed - For Payment';
             } else {
               calculatedStatus = (existing?.status && existing.status !== 'Already Paid') ? existing.status : 'Pending';
+              assessmentTag = 'Pending';
             }
           }
 
@@ -223,6 +240,8 @@ export const ComplianceMonitoringView: React.FC = () => {
             formattedDateStr: formatDatePretty(deadlineInfo.dueDateStr),
             periodLabel: deadlineInfo.label,
             status: calculatedStatus,
+            assessmentTag,
+            isUnenrolledForm,
             assignedStaffName: client.assignedStaffName || 'Unassigned',
             isBranch: client.isBranch,
             branchCode: client.branchCode,
@@ -631,7 +650,7 @@ export const ComplianceMonitoringView: React.FC = () => {
                           : 'border-slate-200 hover:border-slate-300'
                       }`}
                     >
-                      {/* 1. Company Name & Branch Tag */}
+                      {/* 1. Company Name & Branch / Unenrolled Tag */}
                       <div className="flex items-start justify-between gap-2 pb-1 border-b border-slate-100">
                         <div className="flex items-start gap-1.5 min-w-0 flex-1">
                           <Building2 className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
@@ -639,20 +658,27 @@ export const ComplianceMonitoringView: React.FC = () => {
                             <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug break-words" title={item.clientName}>
                               {item.clientName}
                             </h4>
-                            {item.isBranch ? (
-                              <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-purple-100 text-purple-800 shrink-0 w-max">
-                                Branch ({item.branchCode || '001'})
-                              </span>
-                            ) : (
-                              <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-indigo-50 text-indigo-700 shrink-0 w-max">
-                                Main Office
-                              </span>
-                            )}
-                            {item.accountingPeriod === 'Fiscal' && (
-                              <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-purple-100 text-purple-800 shrink-0 w-max" title={`Fiscal Year Ends in ${item.fiscalYearEndMonth || 'June'}`}>
-                                Fiscal ({item.fiscalYearEndMonth || 'June'})
-                              </span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1">
+                              {item.isBranch ? (
+                                <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-purple-100 text-purple-800 shrink-0 w-max">
+                                  Branch ({item.branchCode || '001'})
+                                </span>
+                              ) : (
+                                <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-indigo-50 text-indigo-700 shrink-0 w-max">
+                                  Main Office
+                                </span>
+                              )}
+                              {item.accountingPeriod === 'Fiscal' && (
+                                <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-purple-100 text-purple-800 shrink-0 w-max" title={`Fiscal Year Ends in ${item.fiscalYearEndMonth || 'June'}`}>
+                                  Fiscal ({item.fiscalYearEndMonth || 'June'})
+                                </span>
+                              )}
+                              {item.isUnenrolledForm && (
+                                <span className="inline-block px-1.5 py-0.2 rounded text-[8px] font-bold bg-slate-200 text-slate-700 border border-slate-300 shrink-0 w-max" title="This tax/benefit form was unenrolled from client settings, but historical record is preserved.">
+                                  [{item.category === 'BIR' ? 'Unenrolled Tax Form' : 'Unenrolled Benefit'}]
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0 ${
@@ -671,8 +697,16 @@ export const ComplianceMonitoringView: React.FC = () => {
 
                       {/* 3. Amount if available */}
                       <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">For Payment:</span>
-                        {item.payableAmount !== undefined && item.payableAmount !== null && item.payableAmount > 0 ? (
+                        <span className="text-[10px] font-bold text-slate-400 uppercase">Assessment:</span>
+                        {item.assessmentTag === 'Assessed - Excess Input Tax' ? (
+                          <span className="font-mono font-extrabold text-purple-700 text-xs">
+                            ₱{Math.abs(item.payableAmount || 0).toLocaleString()} (Tax Credit)
+                          </span>
+                        ) : item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                          <span className="font-mono font-bold text-teal-700 text-xs">
+                            ₱0.00 (Zero Return)
+                          </span>
+                        ) : item.payableAmount !== undefined && item.payableAmount !== null && item.payableAmount > 0 ? (
                           <span className="font-mono font-extrabold text-emerald-700 text-xs">
                             ₱{item.payableAmount.toLocaleString()}
                           </span>
@@ -685,8 +719,16 @@ export const ComplianceMonitoringView: React.FC = () => {
                       <div className="flex items-center justify-between text-[10px] text-slate-500 pt-0.5">
                         <span>Due: <strong className="text-slate-800 font-mono">{item.formattedDateStr}</strong></span>
                         <div className="flex items-center gap-1">
-                          {item.status === 'Already Paid' ? (
-                            <span className="text-emerald-700 font-bold bg-emerald-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          {item.assessmentTag === 'Assessed - Excess Input Tax' ? (
+                            <span className="text-purple-900 font-bold bg-purple-100 border border-purple-200 px-2 py-0.5 rounded text-[10px]">
+                              Excess Input Tax
+                            </span>
+                          ) : item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                            <span className="text-teal-900 font-bold bg-teal-100 border border-teal-200 px-2 py-0.5 rounded text-[10px]">
+                              Zero Return / No Payment
+                            </span>
+                          ) : item.status === 'Already Paid' ? (
+                            <span className="text-emerald-700 font-bold bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
                               <CheckCircle2 className="w-3 h-3" /> Paid & Settled
                             </span>
                           ) : item.status === 'For Payment' ? (
