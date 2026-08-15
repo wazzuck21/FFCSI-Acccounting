@@ -22,6 +22,9 @@ import { MasterTablesView } from './components/MasterTablesView';
 import { CompanyPayrollView } from './components/CompanyPayrollView';
 import { CompanyExpensesView } from './components/CompanyExpensesView';
 import { TaskWorkflowView } from './components/TaskWorkflowView';
+import { DocumentLibraryView } from './components/DocumentLibraryView';
+import { DataIntegrityBackupView } from './components/DataIntegrityBackupView';
+import { ExecutiveBiView } from './components/ExecutiveBiView';
 import { LoginView } from './components/LoginView';
 import { 
   CheckSquare, 
@@ -90,6 +93,10 @@ const MainAppContent: React.FC = () => {
             <DashboardView onNavigate={setActiveTab} />
           )}
 
+          {activeTab === 'executive-bi' && (
+            <ExecutiveBiView onNavigate={setActiveTab} />
+          )}
+
           {activeTab === 'my-clients' && (
             <MyClientsView 
               onSelectClientWorkspace={(clientId) => {
@@ -141,42 +148,14 @@ const MainAppContent: React.FC = () => {
             />
           )}
 
-          {/* Document Library View */}
+          {/* Document Management & Record Archiving View */}
           {activeTab === 'documents' && (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                <div>
-                  <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                    <FolderGit2 className="w-5 h-5 text-blue-600" />
-                    Firm Document Repository & Archival
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Store BIR 2307 certificates, SEC articles, Mayor's permits, and audited financial statements.
-                  </p>
-                </div>
-                <button 
-                  onClick={() => alert('Document Upload')}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-sm flex items-center gap-2"
-                >
-                  <Upload className="w-4 h-4" /> Upload Document
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {[
-                  { title: 'Tax Returns & Filing Receipts', count: '142 Files', color: 'text-blue-600' },
-                  { title: 'Corporate SEC & DTI Reg', count: '58 Files', color: 'text-indigo-600' },
-                  { title: 'BIR Form 2307 Credentials', count: '210 Files', color: 'text-emerald-600' },
-                  { title: 'Audited Financial Statements', count: '34 Files', color: 'text-amber-600' },
-                ].map((cat, i) => (
-                  <div key={i} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:border-slate-300 cursor-pointer">
-                    <FolderGit2 className={`w-8 h-8 ${cat.color} mb-2`} />
-                    <h4 className="font-bold text-slate-800 text-xs">{cat.title}</h4>
-                    <p className="text-[11px] text-slate-500 mt-1">{cat.count}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <DocumentLibraryView 
+              onNavigateToClient={(clientId) => {
+                setSelectedClientId(clientId);
+                setActiveTab('workspaces');
+              }} 
+            />
           )}
 
           {/* Billing & Invoices View */}
@@ -207,6 +186,11 @@ const MainAppContent: React.FC = () => {
           {/* Settings & Master Tables View */}
           {activeTab === 'settings' && (
             <MasterTablesView />
+          )}
+
+          {/* System Health, Integrity, Sync & Backup View */}
+          {activeTab === 'system-integrity' && (
+            <DataIntegrityBackupView />
           )}
         </main>
       </div>

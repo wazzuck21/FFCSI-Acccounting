@@ -1558,7 +1558,7 @@ export const CompanyPayrollView: React.FC = () => {
       {/* MODAL: ADD / EDIT EMPLOYEE */}
       {showEmployeeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <form onSubmit={handleSaveEmployee} className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-8">
+          <form onSubmit={handleSaveEmployee} className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-auto max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
               <h3 className="font-bold text-base text-slate-900">
                 {editingEmployee ? 'Edit Internal Employee' : 'Add Internal Staff Member'}
@@ -1778,8 +1778,8 @@ export const CompanyPayrollView: React.FC = () => {
 
       {/* MODAL: FILE LEAVE REQUEST */}
       {showLeaveModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleSaveLeave} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <form onSubmit={handleSaveLeave} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
               <h3 className="font-bold text-base text-slate-900">File Employee Leave</h3>
               <button type="button" onClick={() => setShowLeaveModal(false)} className="text-slate-400 hover:text-slate-600">
@@ -1873,8 +1873,8 @@ export const CompanyPayrollView: React.FC = () => {
 
       {/* MODAL: ISSUE NEW VALE (CASH ADVANCE) */}
       {showValeModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleSaveVale} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <form onSubmit={handleSaveVale} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
               <h3 className="font-bold text-base text-slate-900">Issue Employee Cash Advance (Vale)</h3>
               <button type="button" onClick={() => setShowValeModal(false)} className="text-slate-400 hover:text-slate-600">

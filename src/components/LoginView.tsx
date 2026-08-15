@@ -3,14 +3,14 @@ import { useAuth } from '../context/AuthContext';
 import { Building2, Lock, User as UserIcon, Eye, EyeOff, ShieldCheck, ArrowRight, AlertCircle, Sparkles } from 'lucide-react';
 
 export const LoginView: React.FC = () => {
-  const { login, allUsers } = useAuth();
+  const { login, quickSwitchUser, allUsers } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
     if (!username.trim() || !password) {
@@ -19,26 +19,27 @@ export const LoginView: React.FC = () => {
     }
 
     setIsLoading(true);
-    setTimeout(() => {
-      const success = login(username.trim(), password);
-      setIsLoading(false);
-      if (!success) {
-        setErrorMsg('Invalid username or password, or your account is disabled.');
-      }
-    }, 300);
+    const result = await login(username.trim(), password);
+    setIsLoading(false);
+
+    if (!result.success) {
+      setErrorMsg(result.message || 'Invalid username or password, or your account is disabled.');
+    }
   };
 
-  const handleQuickLogin = (userUsername: string, userPass: string = 'password123') => {
+  const handleQuickLogin = async (userId: string, userUsername: string) => {
     setUsername(userUsername);
-    setPassword(userPass);
+    setPassword('••••••••');
     setErrorMsg('');
-    login(userUsername, userPass);
+    setIsLoading(true);
+    await quickSwitchUser(userId);
+    setIsLoading(false);
   };
 
   return (
     <div className="min-h-screen bg-slate-900 bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 flex items-center justify-center p-4 antialiased text-slate-100">
       
-      {/* Background Subtle Decorative Elements */}
+      {/* Background Decorative Elements */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] opacity-25 pointer-events-none" />
 
       <div className="w-full max-w-md relative z-10 space-y-6">
@@ -51,7 +52,7 @@ export const LoginView: React.FC = () => {
 
           <div>
             <h1 className="text-2xl font-black tracking-tight text-white">AFMS Portal</h1>
-            <p className="text-xs text-slate-400 font-medium mt-1">Accounting Firm Management & Compliance System</p>
+            <p className="text-xs text-slate-400 font-medium mt-1">Accounting Firm Management & Security System</p>
           </div>
         </div>
 
@@ -60,7 +61,7 @@ export const LoginView: React.FC = () => {
           
           <div className="border-b border-slate-800 pb-4">
             <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-              <Lock className="w-4 h-4 text-indigo-400" /> Sign In to Your Account
+              <Lock className="w-4 h-4 text-indigo-400" /> Secure Sign In
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">Enter your username and password to access client workspaces and BIR filings.</p>
           </div>
@@ -124,7 +125,7 @@ export const LoginView: React.FC = () => {
               className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold rounded-xl shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2 text-xs transition-all cursor-pointer disabled:opacity-50 mt-2"
             >
               {isLoading ? (
-                <span>Signing In...</span>
+                <span>Verifying Credentials...</span>
               ) : (
                 <>
                   <span>Sign In</span>
@@ -138,15 +139,15 @@ export const LoginView: React.FC = () => {
           {/* Quick Demo Accounts Selection */}
           <div className="pt-4 border-t border-slate-800 space-y-2">
             <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Demo Quick Sign In Accounts
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" /> Demo Quick Switch Accounts
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-[11px]">
               {allUsers.map((u) => (
                 <button
                   key={u.id}
                   type="button"
-                  onClick={() => handleQuickLogin(u.username, u.password || 'password123')}
-                  className="p-2 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/50 rounded-xl text-left transition-all group"
+                  onClick={() => handleQuickLogin(u.id, u.username)}
+                  className="p-2 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/50 rounded-xl text-left transition-all group cursor-pointer"
                 >
                   <p className="font-bold text-slate-200 group-hover:text-indigo-300 transition-colors">{u.fullName}</p>
                   <div className="flex items-center justify-between text-[10px] text-slate-400 mt-0.5">
@@ -159,7 +160,7 @@ export const LoginView: React.FC = () => {
               ))}
             </div>
             <p className="text-[10px] text-slate-500 text-center pt-1">
-              Default password for demo accounts is <span className="font-mono text-slate-400">password123</span>
+              Passwords protected by PBKDF2 with SHA-256 and unique salts.
             </p>
           </div>
 
@@ -168,7 +169,7 @@ export const LoginView: React.FC = () => {
         {/* System Footer */}
         <div className="text-center text-[11px] text-slate-500 flex items-center justify-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-500" />
-          <span>AFMS Offline-First Encrypted Portal</span>
+          <span>AFMS Encrypted Offline-First Security Portal</span>
         </div>
 
       </div>

@@ -2562,7 +2562,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           type="text"
                           required
                           placeholder="e.g. Retainers Fee"
-                          value={item.description}
+                          value={item.description || ''}
                           onChange={e => handleServiceChange(idx, 'description', e.target.value)}
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
                         />
@@ -2571,7 +2571,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         <input
                           type="text"
                           placeholder="e.g. August 2026"
-                          value={item.monthYear !== undefined ? item.monthYear : `${selectedMonth} ${selectedYear}`}
+                          value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : `${selectedMonth} ${selectedYear}`}
                           onChange={e => handleServiceChange(idx, 'monthYear', e.target.value)}
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
                         />
@@ -3153,7 +3153,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         <input
                           type="text"
                           required
-                          value={s.description}
+                          value={s.description || ''}
                           onChange={e => {
                             const updated = [...editServices];
                             updated[idx].description = e.target.value;
@@ -3166,7 +3166,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         <input
                           type="text"
                           placeholder="e.g. August 2026"
-                          value={s.monthYear !== undefined ? s.monthYear : ''}
+                          value={s.monthYear !== undefined && s.monthYear !== null ? s.monthYear : ''}
                           onChange={e => {
                             const updated = [...editServices];
                             updated[idx].monthYear = e.target.value;

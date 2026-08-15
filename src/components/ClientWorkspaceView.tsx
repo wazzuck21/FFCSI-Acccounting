@@ -39,7 +39,9 @@ import {
   Eye,
   Printer,
   X,
-  Archive
+  Archive,
+  Lock,
+  Upload
 } from 'lucide-react';
 
 interface Props {
@@ -762,25 +764,115 @@ export const ClientWorkspaceView: React.FC<Props> = ({
             </div>
           )}
 
-          {/* TAB 6: DOCUMENTS */}
-          {activeTab === 'documents' && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs shadow-sm space-y-4">
-              <h3 className="font-bold text-slate-900 text-sm">Archival Documents for {client.companyName}</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                {clientDocs.length === 0 ? (
-                  <p className="text-slate-400 py-4 col-span-3 text-center">No documents uploaded yet.</p>
-                ) : (
-                  clientDocs.map(d => (
-                    <div key={d.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
-                      <FolderGit2 className="w-6 h-6 text-blue-600" />
-                      <p className="font-bold text-slate-900 truncate">{d.title}</p>
-                      <p className="text-[10px] text-slate-500">{d.category} • {d.uploadDate}</p>
+          {/* TAB 6: CENTRALIZED CLIENT DOCUMENTS & RECORD ARCHIVE */}
+          {activeTab === 'documents' && (() => {
+            const clientDocList = documents.filter(d => d.clientId === client.id);
+
+            return (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 text-xs shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <FolderGit2 className="w-5 h-5 text-blue-600" />
+                      <h3 className="font-bold text-slate-900 text-sm">
+                        Client Document Archive & Vault ({clientDocList.length})
+                      </h3>
                     </div>
-                  ))
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Centralized repository for BIR tax returns, payment confirmations, SEC/DTI licenses, and billing proofs for <strong className="text-slate-800">{client.companyName}</strong>.
+                    </p>
+                  </div>
+
+                  {client.status !== 'Archived' ? (
+                    <button 
+                      onClick={() => {
+                        // Open main document view or trigger document upload modal
+                        alert(`To upload a new document for ${client.companyName}, use the Centralized Document Management section or navigate to Documents tab.`);
+                      }}
+                      className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-2xs transition-all shrink-0"
+                    >
+                      <Upload className="w-3.5 h-3.5" /> Upload Document
+                    </button>
+                  ) : (
+                    <span className="px-3 py-1 bg-purple-100 text-purple-900 border border-purple-200 rounded-xl font-bold text-[11px] flex items-center gap-1.5 shrink-0">
+                      <Lock className="w-3.5 h-3.5 text-purple-700" /> Archival Read-Only
+                    </span>
+                  )}
+                </div>
+
+                {client.status === 'Archived' && (
+                  <div className="p-3 bg-purple-50 border border-purple-200 rounded-xl flex items-center gap-2 text-purple-900 text-xs">
+                    <Archive className="w-4 h-4 text-purple-700 shrink-0" />
+                    <p>
+                      <strong>Preserved Historical Record:</strong> Client is archived. All {clientDocList.length} documents are protected and preserved for tax audit compliance and historical reporting. New uploads are locked.
+                    </p>
+                  </div>
+                )}
+
+                {/* Client Documents Grid / Table */}
+                {clientDocList.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-200 rounded-2xl space-y-2">
+                    <FolderGit2 className="w-8 h-8 text-slate-300 mx-auto" />
+                    <p className="font-bold text-slate-700 text-xs">No documents on file for this client.</p>
+                    <p className="text-[11px] text-slate-400">
+                      Upload BIR returns, SEC certificates, or payment receipts to store them in this client's vault.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {clientDocList.map(doc => {
+                      const taskObj = doc.taskId ? tasks.find(t => t.id === doc.taskId) : null;
+                      const invoiceObj = doc.invoiceId ? invoices.find(i => i.id === doc.invoiceId) : null;
+
+                      return (
+                        <div key={doc.id} className="p-3.5 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-xl space-y-2.5 transition-all">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <div className="p-1.5 bg-white border border-slate-200 rounded-lg shrink-0">
+                                <FileText className="w-4 h-4 text-blue-600" />
+                              </div>
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-bold text-[9px] uppercase">
+                                {doc.category}
+                              </span>
+                            </div>
+
+                            <span className="px-2 py-0.5 bg-slate-200 text-slate-700 rounded font-mono font-bold text-[10px]">
+                              v{doc.version}
+                            </span>
+                          </div>
+
+                          <div>
+                            <p className="font-bold text-slate-900 line-clamp-1">{doc.title}</p>
+                            <p className="text-[11px] text-slate-500 font-mono mt-0.5">{doc.fileName}</p>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-[10px] text-slate-500">
+                            <span>Period: <strong className="text-slate-800">{doc.taxablePeriod || 'N/A'}</strong></span>
+                            <span>{doc.uploadDate}</span>
+                          </div>
+
+                          {(taskObj || invoiceObj || doc.paymentId) && (
+                            <div className="flex flex-wrap gap-1 text-[9px]">
+                              {taskObj && (
+                                <span className="px-1.5 py-0.5 bg-purple-50 text-purple-800 border border-purple-200 rounded font-bold">
+                                  Task: {taskObj.formCode || taskObj.title}
+                                </span>
+                              )}
+                              {invoiceObj && (
+                                <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded font-bold">
+                                  Inv #{invoiceObj.invoiceNumber}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* TAB 7: BILLING HISTORY & STATEMENT OF ACCOUNT LEDGER */}
           {activeTab === 'billing' && (() => {

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { User, UserRole, CompanyServicePermission } from '../types';
+import { hashPassword } from '../lib/cryptoUtils';
+import { ROLE_LABELS, normalizeUserRole } from '../lib/rbac';
 import { 
   UserCog, 
   Plus, 
@@ -28,11 +30,12 @@ import {
   Users,
   LayoutDashboard,
   Settings,
-  Sparkles
+  Sparkles,
+  KeyRound
 } from 'lucide-react';
 
 export const UserManagementView: React.FC = () => {
-  const { allUsers, currentUser, isSuperAdmin, updateUsers } = useAuth();
+  const { allUsers, currentUser, isSuperAdmin, updateUsers, resetUserPassword } = useAuth();
   const { clients, masterChoices, addAuditLog } = useData();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -256,18 +259,30 @@ export const UserManagementView: React.FC = () => {
     });
   };
 
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!fullName.trim() || !username.trim()) {
       alert('Please fill in Full Name and Username.');
       return;
     }
 
+    let passwordHashToUse = editingUser?.passwordHash;
+    let saltToUse = editingUser?.salt;
+
+    // If new password entered or creating new user
+    if (password || !editingUser) {
+      const rawPass = password || 'password123';
+      const hashed = await hashPassword(rawPass);
+      passwordHashToUse = hashed.hash;
+      saltToUse = hashed.salt;
+    }
+
     const userData: User = {
       id: editingUser ? editingUser.id : `user_${Date.now()}`,
       fullName,
       username,
-      password: password || 'password123',
+      passwordHash: passwordHashToUse,
+      salt: saltToUse,
       contactNumber,
       role,
       status,
@@ -281,9 +296,9 @@ export const UserManagementView: React.FC = () => {
         reports: permReports,
         payroll: permPayroll,
         documents: permDocuments,
-        settings: permSettings || role === 'SUPER_ADMIN',
-        userManagement: permUserManagement || role === 'SUPER_ADMIN',
-        dynamicFields: permDynamicFields || role === 'SUPER_ADMIN',
+        settings: permSettings || role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR',
+        userManagement: permUserManagement || role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR',
+        dynamicFields: permDynamicFields || role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR',
         clientAccessList: restrictedClients,
         clientServicePermissions: clientServicePerms
       }
@@ -292,33 +307,44 @@ export const UserManagementView: React.FC = () => {
     if (editingUser) {
       const updated = allUsers.map(u => u.id === editingUser.id ? userData : u);
       updateUsers(updated);
-      addAuditLog('User Edited', `Updated staff account for ${fullName} (${role})`, currentUser?.id || '', currentUser?.fullName || '');
+      addAuditLog(
+        'User Account Updated',
+        `Updated account details and permissions for ${fullName} (${role})`,
+        currentUser?.id || '',
+        currentUser?.fullName || '',
+        'User',
+        editingUser.id
+      );
     } else {
       const updated = [...allUsers, userData];
       updateUsers(updated);
-      addAuditLog('User Created', `Created new user account for ${fullName} (${role})`, currentUser?.id || '', currentUser?.fullName || '');
+      addAuditLog(
+        'User Account Created',
+        `Created new user account for ${fullName} (${role}) with PBKDF2 hash security`,
+        currentUser?.id || '',
+        currentUser?.fullName || '',
+        'User',
+        userData.id
+      );
     }
 
     setShowUserModal(false);
   };
 
   const getRoleLabel = (r: UserRole) => {
-    switch (r) {
-      case 'SUPER_ADMIN': return 'Super Admin';
-      case 'BILLING': return 'Billing';
-      case 'ACCOUNTING': return 'Accounting';
-      case 'BENEFITS': return 'Benefits';
-      case 'STAFF': return 'Staff';
-      default: return r;
-    }
+    return ROLE_LABELS[r] || r;
   };
 
   const getRoleBadgeStyle = (r: UserRole) => {
     switch (r) {
-      case 'SUPER_ADMIN': return 'bg-amber-50 text-amber-800 border-amber-300';
-      case 'BILLING': return 'bg-emerald-50 text-emerald-800 border-emerald-300';
-      case 'ACCOUNTING': return 'bg-blue-50 text-blue-800 border-blue-300';
-      case 'BENEFITS': return 'bg-indigo-50 text-indigo-800 border-indigo-300';
+      case 'SUPER_ADMIN': return 'bg-amber-50 text-amber-800 border-amber-300 font-extrabold';
+      case 'ADMINISTRATOR': return 'bg-purple-50 text-purple-800 border-purple-300 font-bold';
+      case 'SENIOR_ACCOUNTANT': return 'bg-indigo-50 text-indigo-800 border-indigo-300 font-bold';
+      case 'ACCOUNTANT':
+      case 'ACCOUNTING': return 'bg-blue-50 text-blue-800 border-blue-300 font-bold';
+      case 'BILLING':
+      case 'BILLING_STAFF': return 'bg-emerald-50 text-emerald-800 border-emerald-300 font-bold';
+      case 'BENEFITS': return 'bg-cyan-50 text-cyan-800 border-cyan-300 font-bold';
       case 'STAFF': return 'bg-slate-100 text-slate-700 border-slate-300';
       default: return 'bg-slate-100 text-slate-700 border-slate-200';
     }
@@ -393,20 +419,15 @@ export const UserManagementView: React.FC = () => {
                       )}
                     </td>
 
-                    {/* Username & Password */}
+                    {/* Username & Security Status */}
                     <td className="py-3.5 px-4">
                       <div className="space-y-1">
                         <p className="font-mono text-indigo-700 font-bold">@{u.username}</p>
-                        <div className="flex items-center gap-1.5 text-slate-500 font-mono text-[11px]">
-                          <span>{isPasswordShown ? (u.password || 'password123') : '••••••••'}</span>
-                          <button
-                            type="button"
-                            onClick={() => togglePasswordVisibility(u.id)}
-                            className="p-1 text-slate-400 hover:text-slate-700 rounded transition-colors"
-                            title={isPasswordShown ? 'Hide password' : 'Show password'}
-                          >
-                            {isPasswordShown ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
+                        <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium">
+                          <KeyRound className="w-3 h-3 text-emerald-600 shrink-0" />
+                          <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.2 rounded font-mono font-bold">
+                            PBKDF2 Hashed
+                          </span>
                         </div>
                       </div>
                     </td>
@@ -535,7 +556,7 @@ export const UserManagementView: React.FC = () => {
                       type="text"
                       required
                       placeholder="e.g. Maria Santos"
-                      value={fullName}
+                      value={fullName || ''}
                       onChange={e => setFullName(e.target.value)}
                       className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-medium focus:ring-2 focus:ring-indigo-100"
                     />
@@ -547,7 +568,7 @@ export const UserManagementView: React.FC = () => {
                     <input
                       type="text"
                       placeholder="e.g. +63 917 123 4567"
-                      value={contactNumber}
+                      value={contactNumber || ''}
                       onChange={e => setContactNumber(e.target.value)}
                       className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-medium focus:ring-2 focus:ring-indigo-100"
                     />
@@ -562,7 +583,7 @@ export const UserManagementView: React.FC = () => {
                         type="text"
                         required
                         placeholder="username"
-                        value={username}
+                        value={username || ''}
                         onChange={e => setUsername(e.target.value)}
                         className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-indigo-900 font-mono font-bold focus:ring-2 focus:ring-indigo-100"
                       />
@@ -577,7 +598,7 @@ export const UserManagementView: React.FC = () => {
                         type={showFormPassword ? 'text' : 'password'}
                         required
                         placeholder="Enter password"
-                        value={password}
+                        value={password || ''}
                         onChange={e => setPassword(e.target.value)}
                         className="w-full pl-3 pr-9 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono focus:ring-2 focus:ring-indigo-100"
                       />

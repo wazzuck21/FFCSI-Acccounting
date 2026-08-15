@@ -12,7 +12,7 @@ export function extractBaseTin(tinNumber: string | undefined): string {
   if (!tinNumber) return '000-000-000';
   
   // Extract all numeric digits
-  const cleanDigits = tinNumber.replace(/\D/g, '');
+  const cleanDigits = String(tinNumber).replace(/\D/g, '');
   
   if (cleanDigits.length >= 9) {
     const d1 = cleanDigits.substring(0, 3);
@@ -21,25 +21,25 @@ export function extractBaseTin(tinNumber: string | undefined): string {
     return `${d1}-${d2}-${d3}`;
   }
   
-  return tinNumber.trim();
+  return String(tinNumber).trim();
 }
 
 /**
  * Extracts the branch code suffix (e.g. "000" for Main, "001" for Branch 1)
  */
 export function extractBranchCode(tinNumber: string | undefined, explicitBranchCode?: string): string {
-  if (explicitBranchCode && explicitBranchCode.trim()) {
-    return explicitBranchCode.trim().padStart(3, '0');
+  if (explicitBranchCode && String(explicitBranchCode).trim()) {
+    return String(explicitBranchCode).trim().padStart(3, '0');
   }
   
   if (!tinNumber) return '000';
   
-  const parts = tinNumber.split('-');
+  const parts = String(tinNumber).split('-');
   if (parts.length >= 4) {
-    return parts[3].trim().padStart(3, '0');
+    return String(parts[3] || '').trim().padStart(3, '0');
   }
   
-  const cleanDigits = tinNumber.replace(/\D/g, '');
+  const cleanDigits = String(tinNumber).replace(/\D/g, '');
   if (cleanDigits.length > 9) {
     return cleanDigits.substring(9).padStart(3, '0');
   }
@@ -53,7 +53,7 @@ export function extractBranchCode(tinNumber: string | undefined, explicitBranchC
  */
 export function formatFullTin(baseTin: string, branchCode: string = '000'): string {
   const cleanBase = extractBaseTin(baseTin);
-  const cleanBranch = branchCode.trim().padStart(3, '0');
+  const cleanBranch = String(branchCode || '000').trim().padStart(3, '0');
   return `${cleanBase}-${cleanBranch}`;
 }
 

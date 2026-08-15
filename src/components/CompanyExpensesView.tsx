@@ -388,7 +388,7 @@ export const CompanyExpensesView: React.FC = () => {
       {/* MODAL: ADD / EDIT COMPANY BILL / EXPENSE */}
       {showAddModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <form onSubmit={handleSaveExpense} className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 my-8">
+          <form onSubmit={handleSaveExpense} className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
               <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-blue-600" />
@@ -580,8 +580,8 @@ export const CompanyExpensesView: React.FC = () => {
 
       {/* MODAL: MARK EXPENSE PAID */}
       {showPayModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleConfirmPayment} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <form onSubmit={handleConfirmPayment} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
               <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
                 <CheckCircle className="w-5 h-5 text-emerald-600" />

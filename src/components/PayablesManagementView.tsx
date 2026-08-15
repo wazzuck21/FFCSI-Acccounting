@@ -3,10 +3,10 @@ import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { PayableRecord, PayableCategory, CustomDeadlineRule, ClientProfile } from '../types';
 import { 
-  getRuleDeadlineForMonth, 
   MONTHS_LIST, 
   MONTH_FULL_NAMES 
 } from '../data/masterTables';
+import { calculateClientDeadline, isPayableObligation } from '../utils/deadlineEngine';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { 
@@ -102,9 +102,17 @@ export const PayablesManagementView: React.FC = () => {
       };
     }
 
-    const res = getRuleDeadlineForMonth(rule, monthCode, yearNum, client);
-    if (res && res.label && res.label !== 'N/A' && res.label !== 'Not Required') {
-      return res.label;
+    if (client) {
+      const res = calculateClientDeadline({
+        client,
+        rule,
+        month: monthCode,
+        year: yearNum,
+        masterChoices
+      });
+      if (res && res.taxablePeriod && res.taxablePeriod !== 'N/A' && res.taxablePeriod !== 'Not Required') {
+        return res.taxablePeriod;
+      }
     }
 
     const mIdx = MONTHS_LIST.indexOf(monthCode);
@@ -172,13 +180,13 @@ export const PayablesManagementView: React.FC = () => {
   const [sortYear, setSortYear] = useState<string>(currentRealYearStr);
   const [sortItem, setSortItem] = useState<string>('ALL');
 
-  // Dynamic Item Names from Master BIR & Benefits options + Payables history
+  // Dynamic Item Names from Master BIR & Benefits options + Payables history (Excluding NEVER_PAYABLE items)
   const availableItemNames = React.useMemo(() => {
     const set = new Set<string>();
-    (masterChoices.birTaxOptions || []).forEach(o => set.add(o.code));
-    (masterChoices.benefitsOptions || []).forEach(o => set.add(o.code));
+    (masterChoices.birTaxOptions || []).filter(o => isPayableObligation(o.code, o)).forEach(o => set.add(o.code));
+    (masterChoices.benefitsOptions || []).filter(o => isPayableObligation(o.code, o)).forEach(o => set.add(o.code));
     payables.forEach(p => {
-      if (p.itemName) set.add(p.itemName);
+      if (p.itemName && isPayableObligation(p.itemName)) set.add(p.itemName);
     });
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [masterChoices, payables]);
@@ -327,6 +335,11 @@ export const PayablesManagementView: React.FC = () => {
   // Filter & Sort Payables List: Always prioritize Unpaid/Awaiting Payment at top, sorted dynamically by Item Name ⭐
   const filteredPayables = React.useMemo(() => {
     return payables.filter(p => {
+      // Items tagged as Excess Input, No Payment, or NEVER_PAYABLE forms (e.g. SAWT, QAP) do not go to Monthly Assessment & Payables Engine
+      if (p.status === 'No Payment' || (p.payableAmount !== undefined && p.payableAmount <= 0) || !isPayableObligation(p.itemName)) {
+        return false;
+      }
+
       const matchCategory = categoryFilter === 'ALL' || p.category === categoryFilter;
       const matchStatus = statusFilter === 'ALL' || p.status === statusFilter;
       const matchSearch = p.clientName.toLowerCase().includes(searchQuery.toLowerCase()) || p.itemName.toLowerCase().includes(searchQuery.toLowerCase());
@@ -624,8 +637,8 @@ export const PayablesManagementView: React.FC = () => {
 
       {/* Modal: Create Payable Assessment */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-xl text-slate-800">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-xl text-slate-800 max-h-[90vh] overflow-y-auto my-auto">
             <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
               <Receipt className="w-5 h-5 text-rose-600" />
               Create Monthly Assessment / Payable
@@ -667,9 +680,11 @@ export const PayablesManagementView: React.FC = () => {
                 >
                   {category === 'BIR' ? (
                     masterChoices.birTaxOptions && masterChoices.birTaxOptions.length > 0 ? (
-                      masterChoices.birTaxOptions.map(opt => (
-                        <option key={opt.id} value={opt.code}>{opt.code} - {opt.name}</option>
-                      ))
+                      masterChoices.birTaxOptions
+                        .filter(opt => isPayableObligation(opt.code, opt))
+                        .map(opt => (
+                          <option key={opt.id} value={opt.code}>{opt.code} - {opt.name}</option>
+                        ))
                     ) : (
                       <>
                         <option value="0619E">0619E Withholding Expanded</option>
@@ -682,9 +697,11 @@ export const PayablesManagementView: React.FC = () => {
                     )
                   ) : (
                     masterChoices.benefitsOptions && masterChoices.benefitsOptions.length > 0 ? (
-                      masterChoices.benefitsOptions.map(opt => (
-                        <option key={opt.id} value={opt.code}>{opt.code} - {opt.name}</option>
-                      ))
+                      masterChoices.benefitsOptions
+                        .filter(opt => isPayableObligation(opt.code, opt))
+                        .map(opt => (
+                          <option key={opt.id} value={opt.code}>{opt.code} - {opt.name}</option>
+                        ))
                     ) : (
                       <>
                         <option value="SSS Contribution">SSS Contribution</option>
@@ -784,8 +801,8 @@ export const PayablesManagementView: React.FC = () => {
 
       {/* Modal: Super Admin Tag Paid & Verification */}
       {showTagPaidModal && selectedPayable && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-amber-300 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-xl text-slate-800">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-amber-300 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-xl text-slate-800 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center gap-2 text-amber-800 font-bold text-base">
               <ShieldCheck className="w-5 h-5 text-amber-600" /> Super Admin Payment Tagging & Verification
             </div>
@@ -890,8 +907,8 @@ export const PayablesManagementView: React.FC = () => {
 
       {/* Modal: Modify Payment Tag Details */}
       {showModifyModal && modifyPayable && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-blue-300 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-xl text-slate-800">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-blue-300 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-xl text-slate-800 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center gap-2 text-blue-900 font-bold text-base">
               <Edit2 className="w-5 h-5 text-blue-600" /> Modify Payment Tag Details
             </div>

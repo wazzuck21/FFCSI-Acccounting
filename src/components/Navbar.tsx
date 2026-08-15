@@ -22,7 +22,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMenu }) => {
-  const { currentUser, allUsers, switchUser, logout, isSuperAdmin } = useAuth();
+  const { currentUser, allUsers, quickSwitchUser, logout, isSuperAdmin, sessionMinutesRemaining } = useAuth();
   const { syncStatus } = useData();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -146,9 +146,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMen
                 <div className="px-3 py-2 border-b border-slate-100">
                   <p className="font-bold text-slate-900">{currentUser?.fullName}</p>
                   <p className="text-indigo-600 font-mono text-[11px] font-bold">@{currentUser?.username}</p>
-                  <div className="mt-1 flex items-center gap-1.5">
+                  <div className="mt-1 flex items-center justify-between gap-1.5">
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-blue-50 text-blue-700 border border-blue-200">
                       Role: {currentUser?.role}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-medium font-mono" title="Idle session auto-logout time">
+                      Session: {sessionMinutesRemaining}m idle
                     </span>
                   </div>
                 </div>
@@ -162,11 +165,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMen
                     {allUsers.map((u) => (
                       <button
                         key={u.id}
-                        onClick={() => {
-                          switchUser(u.id);
+                        onClick={async () => {
+                          await quickSwitchUser(u.id);
                           setShowUserDropdown(false);
                         }}
-                        className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-xs transition-colors ${
+                        className={`w-full text-left px-2 py-1.5 rounded-lg flex items-center justify-between text-xs transition-colors cursor-pointer ${
                           u.id === currentUser?.id ? 'bg-blue-50 text-blue-700 font-bold' : 'hover:bg-slate-50 text-slate-700'
                         }`}
                       >

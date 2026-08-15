@@ -1,4 +1,13 @@
-export type UserRole = 'SUPER_ADMIN' | 'BILLING' | 'ACCOUNTING' | 'BENEFITS' | 'STAFF';
+export type UserRole = 
+  | 'SUPER_ADMIN' 
+  | 'ADMINISTRATOR' 
+  | 'SENIOR_ACCOUNTANT' 
+  | 'ACCOUNTANT' 
+  | 'STAFF' 
+  | 'BILLING_STAFF' 
+  | 'BILLING' 
+  | 'ACCOUNTING' 
+  | 'BENEFITS';
 
 export interface CompanyServicePermission {
   allowAllBIR: boolean;
@@ -31,6 +40,8 @@ export interface User {
   fullName: string;
   username: string;
   password?: string;
+  passwordHash?: string;
+  salt?: string;
   contactNumber?: string;
   role: UserRole;
   status: 'Active' | 'Inactive' | 'Disabled';
@@ -56,9 +67,24 @@ export interface FormLinkage {
   description?: string;
 }
 
+export type ObligationType = 'PAYMENT' | 'FILING' | 'ONLINE_SUBMISSION' | 'FILING_AND_PAYMENT';
+
+// Filing-Only vs Payable Compliance Architecture Types ⭐
+export type PaymentBehavior = 'ALWAYS_PAYABLE' | 'CONDITIONAL_PAYABLE' | 'NEVER_PAYABLE';
+export type FilingRequired = 'YES' | 'NO' | 'CONDITIONAL';
+export type SubmissionMethod = 'ONLINE' | 'MANUAL' | 'EAFS' | 'OTHER';
+export type ComplianceCategory = 
+  | 'TAX_RETURN' 
+  | 'INFORMATIONAL' 
+  | 'WITHHOLDING' 
+  | 'VAT' 
+  | 'BENEFITS' 
+  | 'RELIEF_ATTACHMENT' 
+  | 'OTHER';
+
 export interface CustomDeadlineRule {
   id: string;
-  code: string; // e.g., '0619E', 'SSS_CONTRIB'
+  code: string; // e.g., '0619E', 'SSS_CONTRIB', 'SAWT', 'QAP'
   name: string; // e.g., 'Withholding Tax - Monthly Remittance (0619E)'
   category: 'BIR' | 'Benefits' | 'DTI' | 'SEC' | 'Other';
   frequency: 'Monthly' | 'Quarterly' | 'Annually' | 'Custom';
@@ -68,6 +94,14 @@ export interface CustomDeadlineRule {
   customDescription: string; // e.g. "Every 10th of the following month"
   monthlySchedule2026?: MonthlyDeadlineSchedule[];
   
+  // Obligation Type & Compliance Behavior Architecture ⭐
+  obligationType?: ObligationType;
+  paymentBehavior?: PaymentBehavior;
+  filingRequired?: FilingRequired;
+  submissionMethod?: SubmissionMethod;
+  complianceCategory?: ComplianceCategory;
+  active?: boolean;
+
   // Custom Applicable Months ⭐
   applicableMonths?: ('Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec')[];
 
@@ -286,38 +320,103 @@ export interface PayableRecord {
 }
 
 // Compliance Schedule Item
+export type ComplianceItemStatus = 
+  | 'Pending' 
+  | 'In Preparation' 
+  | 'Ready for Submission' 
+  | 'Submitted' 
+  | 'Accepted' 
+  | 'Rejected' 
+  | 'For Payment' 
+  | 'Due Today' 
+  | 'Overdue' 
+  | 'Already Paid' 
+  | 'Waived';
+
 export interface ComplianceItem {
   id: string;
   clientId: string;
   clientName: string;
   title: string;
+  formCode?: string;
   category: 'BIR' | 'Benefits' | 'DTI' | 'SEC' | 'Other';
   dueDate: string; // YYYY-MM-DD
-  status: 'Pending' | 'For Payment' | 'Due Today' | 'Overdue' | 'Already Paid' | 'Waived';
+  status: ComplianceItemStatus;
   description?: string;
   assignedStaffName?: string;
   amountDue?: number;
   paidDate?: string;
+  
+  // Filing-Only & Submission Information ⭐
+  paymentBehavior?: PaymentBehavior;
+  complianceCategory?: ComplianceCategory;
+  filingRequired?: FilingRequired;
+  submissionMethod?: SubmissionMethod;
+  submittedBy?: string;
+  submissionDate?: string; // YYYY-MM-DD
+  referenceNumber?: string;
+  confirmationNumber?: string;
+  remarks?: string;
+  attachmentName?: string;
+  attachmentUrl?: string;
 }
 
 // Document Management
-export type DocumentCategory = 'BIR' | 'SEC' | 'Business Permits' | 'Financial Statements' | 'Contracts' | 'Government Forms' | 'Other';
+export type DocumentCategory = 
+  | 'BIR' 
+  | 'SEC' 
+  | 'Business Permits' 
+  | 'Financial Statements' 
+  | 'Contracts' 
+  | 'Government Forms' 
+  | 'Payroll' 
+  | 'Billing & Collections' 
+  | 'Other';
+
+export type DocumentStatus = 'Active' | 'Archived' | 'Superseded' | 'Pending Review';
+
+export interface DocumentVersion {
+  versionNumber: number | string;
+  fileName: string;
+  fileSize: string;
+  fileType?: string;
+  uploadedBy: string;
+  uploadedById?: string;
+  uploadedAt: string;
+  changeReason?: string;
+  dataUrl?: string;
+  downloadUrl?: string;
+  notes?: string;
+}
 
 export interface DocumentItem {
   id: string;
   clientId: string;
   clientName: string;
+  clientServiceId?: string; // Optional link to ClientService
+  taskId?: string;          // Optional link to TaskItem / Compliance task
+  invoiceId?: string;       // Optional link to InvoiceItem
+  paymentId?: string;       // Optional link to Payment
+  documentType?: string;    // e.g., 'BIR Return', 'Tax Payment Confirmation', 'SSS/PhilHealth/HDMF', etc.
+  category: DocumentCategory;
   title: string;
   fileName: string;
-  fileType: 'PDF' | 'Excel' | 'Word' | 'Image' | 'ZIP';
+  fileType: 'PDF' | 'Excel' | 'Word' | 'Image' | 'ZIP' | string;
   fileSize: string;
-  category: DocumentCategory;
-  uploadDate: string;
-  expirationDate?: string;
-  version: string;
+  documentDate?: string;    // YYYY-MM-DD
+  taxablePeriod?: string;   // e.g. "August 2026", "3Q-2026", "TY-2025"
+  uploadDate: string;       // YYYY-MM-DD
+  uploadedAt?: string;      // ISO string or full timestamp
   uploadedBy: string;
+  uploadedById?: string;
+  expirationDate?: string;
+  version: string | number; // e.g., "1.0" or 1
+  status?: DocumentStatus;  // Active | Archived | Superseded | Pending Review
+  notes?: string;
+  tags?: string[];
   downloadUrl?: string;
-  dataUrl?: string; // local preview mock
+  dataUrl?: string;         // local offline preview mock / base64
+  versionHistory?: DocumentVersion[];
 }
 
 // Task & Workflow
@@ -473,7 +572,12 @@ export interface CoreCredential {
   portalType: 'eFPS' | 'Bank' | 'HDMF' | 'PHIC' | 'SSS' | 'BIR' | 'Other';
   portalName?: string; // e.g. Landbank iAccess, BDO Online, eFPS BIR
   username: string;
-  password: string;
+  password?: string;
+  encryptedPassword?: string;
+  encryptedPin?: string;
+  iv?: string;
+  salt?: string;
+  isEncrypted?: boolean;
   pinCode?: string;
   securityQuestions?: string;
   governmentIdNumber?: string; // SSS, PHIC, or Pag-IBIG number
@@ -492,7 +596,122 @@ export interface AuditLog {
   action: string;
   details: string;
   timestamp: string;
+  resourceType?: string; // e.g., 'Client', 'Invoice', 'Payment', 'Credential', 'Document', 'User'
+  resourceId?: string;
+  clientId?: string;
+  reason?: string;
+  before?: any;
+  after?: any;
   ipAddress?: string;
+}
+
+// Holiday & Working Day Rules ⭐
+export interface HolidayItem {
+  id: string;
+  date: string; // YYYY-MM-DD
+  name: string; // e.g. "Araw ng Kagitingan", "Maundy Thursday", "Custom Declared Holiday"
+  type: 'Regular' | 'Special Non-Working' | 'Special Working' | 'Custom';
+  scope: 'Nationwide' | 'Regional';
+  rdoCode?: string; // Optional regional RDO applicability, e.g. '038'
+  year: number; // e.g. 2026
+}
+
+// Deadline Extension & Override Rules ⭐
+export interface DeadlineExtensionRule {
+  id: string;
+  title: string; // e.g. "BIR RMC No. 15-2026 - RDO 038 Deadline Extension"
+  scope?: 'All Clients' | 'RDO' | 'Client' | 'Form';
+  
+  // Dynamic Statutory Type ⭐
+  statutoryType?: 'BIR' | 'BENEFITS';
+  category?: 'BIR' | 'Benefits' | 'All';
+
+  // Dynamic Multi-RDO Selection ⭐
+  targetRdoCodes?: string[]; // e.g. ['038', '039']
+  targetRdos?: string[]; // alias
+  targetRdo?: string; // scalar backward compatibility
+
+  // Dynamic Multi-Client Selection
+  targetClientId?: string; // e.g. "client_1"
+  targetClientIds?: string[];
+  targetClientName?: string;
+
+  // Dynamic Multi-Form / Benefit Selection ⭐
+  applicableFormCodes?: string[]; // e.g. ['0619E', '1601C', '2550Q']
+  targetFormCodes?: string[]; // alias
+  targetFormCode?: string; // scalar backward compatibility
+
+  // Target Period ⭐
+  targetMonth?: string; // normalized "YYYY-MM", e.g. "2026-08"
+  applicableYear?: number; // e.g. 2026
+  applicableMonth?: string; // e.g. "Aug" or "ALL"
+  applicablePeriod?: string; // e.g. "1Q - 2026" or "Aug-26"
+
+  // Dates
+  originalDeadlineDate?: string; // YYYY-MM-DD (optional)
+  extendedDeadlineDate: string; // YYYY-MM-DD (canonical)
+  extendedDueDate?: string; // alias
+
+  reason: string; // e.g. "BIR Memorandum Circular No. 12-2026 or Power Outage"
+  status: 'Active' | 'Expired' | 'Cancelled' | 'ACTIVE' | 'CANCELLED';
+  
+  // Audit Trail Metadata ⭐
+  createdAt: string;
+  createdBy?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+// Weekend & Working Day Adjustment Configuration ⭐
+export interface WeekendAdjustmentConfig {
+  enabled: boolean;
+  rule: 'NEXT_WORKING_DAY' | 'PREVIOUS_WORKING_DAY' | 'NO_ADJUSTMENT';
+  adjustForHolidays: boolean;
+}
+
+// Centralized Calculated Client Deadline Entity ⭐
+export interface CalculatedClientDeadline {
+  id: string; // Stable canonical key: `${clientId}_${formCode}_${periodYear}_${periodMonth}`
+  clientId: string;
+  clientName: string;
+  tinNumber: string;
+  rdoNumber: string;
+  registrationMethod: 'Manual' | 'eFPS';
+  entityType: string;
+  formCode: string;
+  formName: string;
+  category: 'BIR' | 'Benefits' | 'DTI' | 'SEC' | 'Other';
+  frequency: string;
+  taxablePeriod: string; // e.g., "1Q - 2026", "Jul-26", "TY-2025"
+  periodMonth: string; // e.g. "Jan", "Feb", ...
+  periodYear: number;
+  
+  // Deadlines
+  defaultDeadline: string; // YYYY-MM-DD (raw standard from master table / eFPS default)
+  overrideDeadline?: string; // YYYY-MM-DD (if RDO / Client / Form extension applied)
+  adjustedDeadline: string; // YYYY-MM-DD (after holiday and weekend adjustments)
+  finalDeadline: string; // YYYY-MM-DD (the single source of truth date)
+  
+  // Metadata & Sources
+  deadlineSource: string; // e.g. 'Standard Rule', 'eFPS Staggered Filing', 'RDO 038 Extension (RMC 12-2026)', 'Client Extension', etc.
+  appliedExtensionId?: string;
+  appliedExtensionTitle?: string;
+  appliedRuleId?: string;
+  holidayAdjustment: boolean;
+  weekendAdjustment: boolean;
+  wasShifted: boolean;
+  shiftReason?: string;
+  isNotRequired?: boolean;
+  
+  // Assigned staff
+  assignedStaffId?: string;
+  assignedStaffName?: string;
+  
+  // Client branch details
+  isBranch?: boolean;
+  branchCode?: string;
+  parentClientName?: string;
+  baseTin?: string;
 }
 
 // Master choices state
@@ -503,6 +722,9 @@ export interface MasterChoices {
   banksList: string[];
   formLinkages?: FormLinkage[];
   savedCustomServices?: { description: string; defaultAmount?: number }[];
+  holidays?: HolidayItem[];
+  deadlineExtensions?: DeadlineExtensionRule[];
+  weekendConfig?: WeekendAdjustmentConfig;
 }
 
 // Customizable Billing & SOA Template Configuration
@@ -756,5 +978,87 @@ export interface CompanyExpense {
   
   notes?: string;
   createdAt: string;
+}
+
+// ==========================================
+// DATA INTEGRITY, SYNC & BACKUP TYPES ⭐ (PHASE 9)
+// ==========================================
+
+export interface DataConflict {
+  id: string;
+  entityType: 'Invoice' | 'Payment' | 'Payroll' | 'Compliance' | 'ClientService' | 'AuditLog' | 'Client';
+  entityId: string;
+  title: string;
+  description: string;
+  localData: any;
+  incomingData: any;
+  timestamp: string;
+  status: 'REVIEW_REQUIRED' | 'RESOLVED';
+  resolvedBy?: string;
+  resolvedAt?: string;
+  resolutionChoice?: 'KEEP_LOCAL' | 'APPLY_INCOMING' | 'MERGE';
+}
+
+export interface IntegrityIssue {
+  id: string;
+  severity: 'CRITICAL' | 'WARNING' | 'INFO';
+  category: 'ORPHANED_REFERENCE' | 'DUPLICATE_RECORD' | 'BALANCE_MISMATCH' | 'INVALID_RELATION';
+  title: string;
+  description: string;
+  affectedEntityType: string;
+  affectedEntityId: string;
+  canAutoFix: boolean;
+  fixActionName?: string;
+}
+
+export interface DataHealthReport {
+  score: number; // 0 - 100%
+  status: 'OPTIMAL' | 'WARNING' | 'CRITICAL';
+  scanTimestamp: string;
+  totalEntitiesCount: number;
+  issues: IntegrityIssue[];
+}
+
+export interface BackupMetadata {
+  version: string;
+  timestamp: string;
+  backupType: 'FULL' | 'INCREMENTAL';
+  checksum: string;
+  createdByName: string;
+  createdById: string;
+  entityCounts: Record<string, number>;
+}
+
+export interface FullDatabaseBackup {
+  metadata: BackupMetadata;
+  appData: {
+    clients: any[];
+    clientServices: any[];
+    dynamicSections: any[];
+    payables: any[];
+    complianceItems: any[];
+    tasks: any[];
+    invoices: any[];
+    documents: any[];
+    credentials: any[];
+    auditLogs: any[];
+    masterChoices: any;
+    employees: any[];
+    leaveRecords: any[];
+    valeRecords: any[];
+    payrollRuns: any[];
+    companyExpenses: any[];
+    payments: any[];
+    collectionLogs: any[];
+    usedCrNumbers: string[];
+  };
+}
+
+export interface AutoBackupSchedule {
+  enabled: boolean;
+  frequency: 'DAILY' | 'WEEKLY' | 'LOGOUT';
+  lastBackupTimestamp?: string;
+  lastBackupStatus?: 'SUCCESS' | 'FAILED' | 'PENDING';
+  autoDownloadLocal?: boolean;
 }
 

@@ -1,8 +1,12 @@
 import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { CustomDeadlineRule, MonthlyDeadlineSchedule } from '../types';
+import { CustomDeadlineRule, MonthlyDeadlineSchedule, PaymentBehavior, FilingRequired, SubmissionMethod, ComplianceCategory } from '../types';
 import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS, getRuleDeadlineForMonth, generateDefaultScheduleForFrequency } from '../data/masterTables';
+import { getPaymentBehavior, getFilingRequired, getSubmissionMethod, getComplianceCategory } from '../utils/deadlineEngine';
+import { HolidayMasterTab } from './master/HolidayMasterTab';
+import { DeadlineExtensionsTab } from './master/DeadlineExtensionsTab';
+import { WeekendRulesTab } from './master/WeekendRulesTab';
 import { 
   Settings, 
   Plus, 
@@ -30,7 +34,10 @@ import {
   FileCheck,
   Grid,
   List,
-  Ban
+  Ban,
+  Sliders,
+  Sun,
+  ShieldAlert
 } from 'lucide-react';
 
 const MONTHS_LIST: ('Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec')[] = [
@@ -73,7 +80,7 @@ export const MasterTablesView: React.FC = () => {
 
   const { currentUser, isSuperAdmin } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'Matrix' | 'Hierarchy' | 'BIR' | 'Benefits' | 'FormLinkages' | 'BusinessNatures' | 'Banks' | 'Database'>('Matrix');
+  const [activeTab, setActiveTab] = useState<'Matrix' | 'HolidayMaster' | 'DeadlineExtensions' | 'WeekendRules' | 'Hierarchy' | 'BIR' | 'Benefits' | 'FormLinkages' | 'BusinessNatures' | 'Banks' | 'Database'>('Matrix');
   const [searchQuery, setSearchQuery] = useState('');
   const [matrixFilterCategory, setMatrixFilterCategory] = useState<'ALL' | 'BIR' | 'Benefits'>('ALL');
 
@@ -152,6 +159,13 @@ export const MasterTablesView: React.FC = () => {
   const [customDescription, setCustomDescription] = useState('');
   const [ruleParentCategory, setRuleParentCategory] = useState<string>('HDMF (Pag-IBIG Fund)');
   const [applyToAllOnSave, setApplyToAllOnSave] = useState(true);
+
+  // Compliance Architecture Settings ⭐
+  const [paymentBehavior, setPaymentBehavior] = useState<PaymentBehavior>('CONDITIONAL_PAYABLE');
+  const [filingRequired, setFilingRequired] = useState<FilingRequired>('YES');
+  const [submissionMethod, setSubmissionMethod] = useState<SubmissionMethod>('ONLINE');
+  const [complianceCategory, setComplianceCategory] = useState<ComplianceCategory>('TAX_RETURN');
+  const [ruleActive, setRuleActive] = useState<boolean>(true);
 
   // Notification Toast
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -236,6 +250,11 @@ export const MasterTablesView: React.FC = () => {
     setSpecificDate('2026-08-15');
     setCustomDescription('');
     setRuleParentCategory(cat === 'BIR' ? 'BIR Tax Services' : 'HDMF (Pag-IBIG Fund)');
+    setPaymentBehavior(cat === 'BIR' ? 'CONDITIONAL_PAYABLE' : 'ALWAYS_PAYABLE');
+    setFilingRequired('YES');
+    setSubmissionMethod('ONLINE');
+    setComplianceCategory(cat === 'BIR' ? 'TAX_RETURN' : 'BENEFITS');
+    setRuleActive(true);
     setApplyToAllOnSave(true);
     setShowRuleModal(true);
   };
@@ -262,6 +281,11 @@ export const MasterTablesView: React.FC = () => {
 
     setCustomDescription(rule.customDescription || '');
     setRuleParentCategory(rule.parentCategory || (rule.category === 'BIR' ? 'BIR Tax Services' : 'HDMF (Pag-IBIG Fund)'));
+    setPaymentBehavior(rule.paymentBehavior || getPaymentBehavior(rule.code, rule));
+    setFilingRequired(rule.filingRequired || getFilingRequired(rule.code, rule));
+    setSubmissionMethod(rule.submissionMethod || getSubmissionMethod(rule.code, rule));
+    setComplianceCategory(rule.complianceCategory || getComplianceCategory(rule.code, rule));
+    setRuleActive(rule.active !== false);
     setApplyToAllOnSave(true);
     setShowRuleModal(true);
   };
@@ -292,6 +316,11 @@ export const MasterTablesView: React.FC = () => {
       deadlineDay: deadlineType === 'day' ? Number(deadlineDay) : 15,
       fixedMonthDay: deadlineType === 'fixedDate' ? fixedMonthDay : undefined,
       specificDate: deadlineType === 'specificDate' ? specificDate : undefined,
+      paymentBehavior,
+      filingRequired,
+      submissionMethod,
+      complianceCategory,
+      active: ruleActive,
       customDescription: customDescription.trim() || `Every ${deadlineDay}th of applicable period`,
       monthlySchedule2026: customSched
     };
@@ -437,16 +466,16 @@ export const MasterTablesView: React.FC = () => {
   ].filter(r => {
     if (matrixFilterCategory === 'BIR' && r.category !== 'BIR') return false;
     if (matrixFilterCategory === 'Benefits' && r.category !== 'Benefits') return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return r.code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q);
+    if ((searchQuery || '').trim()) {
+      const q = (searchQuery || '').toLowerCase();
+      return (r.code || '').toLowerCase().includes(q) || (r.name || '').toLowerCase().includes(q);
     }
     return true;
   });
 
   const birRules = masterChoices.birTaxOptions.filter(r => 
-    r.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    r.name.toLowerCase().includes(searchQuery.toLowerCase())
+    (r.code || '').toLowerCase().includes((searchQuery || '').toLowerCase()) ||
+    (r.name || '').toLowerCase().includes((searchQuery || '').toLowerCase())
   );
 
   const benRules = masterChoices.benefitsOptions.filter(r => 
@@ -511,43 +540,70 @@ export const MasterTablesView: React.FC = () => {
         <div className="flex flex-wrap gap-1">
           <button
             onClick={() => setActiveTab('Matrix')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'Matrix' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <CalendarIcon className="w-4 h-4" /> Master Deadline Schedule Matrix
+            <CalendarIcon className="w-4 h-4" /> Master Deadline Matrix
+          </button>
+
+          <button
+            onClick={() => setActiveTab('HolidayMaster')}
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+              activeTab === 'HolidayMaster' ? 'bg-rose-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <CalendarIcon className="w-4 h-4" /> Holiday Master ({masterChoices.holidays?.length || 0})
+          </button>
+
+          <button
+            onClick={() => setActiveTab('DeadlineExtensions')}
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+              activeTab === 'DeadlineExtensions' ? 'bg-amber-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4" /> Extensions & Overrides ({masterChoices.deadlineExtensions?.length || 0})
+          </button>
+
+          <button
+            onClick={() => setActiveTab('WeekendRules')}
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+              activeTab === 'WeekendRules' ? 'bg-blue-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+          >
+            <Sliders className="w-4 h-4" /> Weekend & Shift Rules
           </button>
 
           <button
             onClick={() => setActiveTab('Hierarchy')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'Hierarchy' ? 'bg-purple-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <Zap className="w-4 h-4" /> Parent vs Child Hierarchy Mapping
+            <Zap className="w-4 h-4" /> Hierarchy
           </button>
 
           <button
             onClick={() => setActiveTab('BIR')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'BIR' ? 'bg-blue-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <FileText className="w-4 h-4" /> BIR Tax Returns ({masterChoices.birTaxOptions.length})
+            <FileText className="w-4 h-4" /> BIR Returns ({masterChoices.birTaxOptions.length})
           </button>
 
           <button
             onClick={() => setActiveTab('Benefits')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'Benefits' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
-            <ShieldCheck className="w-4 h-4" /> Benefits & SSS ({masterChoices.benefitsOptions.length})
+            <ShieldCheck className="w-4 h-4" /> Benefits ({masterChoices.benefitsOptions.length})
           </button>
 
           <button
             onClick={() => setActiveTab('FormLinkages')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'FormLinkages' ? 'bg-indigo-700 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
@@ -556,8 +612,8 @@ export const MasterTablesView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('BusinessNatures')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
-              activeTab === 'BusinessNatures' ? 'bg-amber-600 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
+              activeTab === 'BusinessNatures' ? 'bg-amber-700 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
             <Building2 className="w-4 h-4" /> Business Natures ({masterChoices.businessNatures.length})
@@ -565,7 +621,7 @@ export const MasterTablesView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('Banks')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'Banks' ? 'bg-slate-800 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
@@ -574,7 +630,7 @@ export const MasterTablesView: React.FC = () => {
 
           <button
             onClick={() => setActiveTab('Database')}
-            className={`px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all ${
+            className={`px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 transition-all ${
               activeTab === 'Database' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-600 hover:bg-slate-100'
             }`}
           >
@@ -971,6 +1027,15 @@ export const MasterTablesView: React.FC = () => {
         </div>
       )}
 
+      {/* TAB: HOLIDAY MASTER ⭐ */}
+      {activeTab === 'HolidayMaster' && <HolidayMasterTab />}
+
+      {/* TAB: DEADLINE EXTENSIONS & RMC OVERRIDES ⭐ */}
+      {activeTab === 'DeadlineExtensions' && <DeadlineExtensionsTab />}
+
+      {/* TAB: WEEKEND & SHIFT RULES ⭐ */}
+      {activeTab === 'WeekendRules' && <WeekendRulesTab />}
+
       {/* TAB 2: BIR TAX RETURNS MASTER LIST */}
       {activeTab === 'BIR' && (
         <div className="space-y-4 text-xs">
@@ -998,6 +1063,10 @@ export const MasterTablesView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {birRules.map(rule => {
               const enrolledCount = getEnrolledClientCount(rule.code, 'BIR');
+              const behavior = rule.paymentBehavior || getPaymentBehavior(rule.code, rule);
+              const compCat = rule.complianceCategory || getComplianceCategory(rule.code, rule);
+              const subMethod = rule.submissionMethod || getSubmissionMethod(rule.code, rule);
+
               return (
                 <div key={rule.id} className="bg-white border border-slate-200 hover:border-indigo-300 rounded-2xl p-4 shadow-xs flex flex-col justify-between space-y-3 transition-all">
                   <div className="space-y-2">
@@ -1005,12 +1074,45 @@ export const MasterTablesView: React.FC = () => {
                       <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 font-mono font-bold text-indigo-800 rounded-lg text-xs">
                         BIR {rule.code}
                       </span>
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-semibold rounded text-[10px] uppercase">
-                        {rule.frequency}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-semibold rounded text-[10px] uppercase">
+                          {rule.frequency}
+                        </span>
+                        {rule.active === false && (
+                          <span className="px-1.5 py-0.5 bg-rose-100 text-rose-700 font-bold rounded text-[9px]">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <h4 className="font-bold text-slate-900 text-xs leading-snug">{rule.name}</h4>
+
+                    {/* Payment Behavior & Compliance Badges ⭐ */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {behavior === 'NEVER_PAYABLE' && (
+                        <span className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 font-bold rounded-md text-[10px] flex items-center gap-1">
+                          <span>📁</span> Filing/Attachment Only (Never Payable)
+                        </span>
+                      )}
+                      {behavior === 'CONDITIONAL_PAYABLE' && (
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-900 border border-blue-200 font-semibold rounded-md text-[10px] flex items-center gap-1">
+                          <span>⚖️</span> Conditional Payable
+                        </span>
+                      )}
+                      {behavior === 'ALWAYS_PAYABLE' && (
+                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 font-semibold rounded-md text-[10px] flex items-center gap-1">
+                          <span>💵</span> Always Payable
+                        </span>
+                      )}
+
+                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 font-medium rounded text-[10px]">
+                        {compCat}
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 font-medium rounded text-[10px]">
+                        {subMethod}
+                      </span>
+                    </div>
 
                     {/* Form Linkages & Attachments Connection */}
                     {(() => {
@@ -1115,6 +1217,10 @@ export const MasterTablesView: React.FC = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {benRules.map(rule => {
               const enrolledCount = getEnrolledClientCount(rule.code, 'Benefits');
+              const behavior = rule.paymentBehavior || getPaymentBehavior(rule.code, rule);
+              const compCat = rule.complianceCategory || getComplianceCategory(rule.code, rule);
+              const subMethod = rule.submissionMethod || getSubmissionMethod(rule.code, rule);
+
               return (
                 <div key={rule.id} className="bg-white border border-slate-200 hover:border-emerald-300 rounded-2xl p-4 shadow-xs flex flex-col justify-between space-y-3 transition-all">
                   <div className="space-y-2">
@@ -1122,12 +1228,46 @@ export const MasterTablesView: React.FC = () => {
                       <span className="px-2.5 py-1 bg-emerald-50 border border-emerald-200 font-bold text-emerald-800 rounded-lg text-xs">
                         {rule.code}
                       </span>
-                      <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-semibold rounded text-[10px] uppercase">
-                        {rule.frequency}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-600 font-semibold rounded text-[10px] uppercase">
+                          {rule.frequency}
+                        </span>
+                        {rule.active === false && (
+                          <span className="px-1.5 py-0.5 bg-rose-100 text-rose-700 font-bold rounded text-[9px]">
+                            Inactive
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <h4 className="font-bold text-slate-900 text-xs leading-snug">{rule.name}</h4>
+
+                    {/* Payment Behavior & Compliance Badges ⭐ */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {behavior === 'NEVER_PAYABLE' && (
+                        <span className="px-2 py-0.5 bg-amber-50 text-amber-900 border border-amber-300 font-bold rounded-md text-[10px] flex items-center gap-1">
+                          <span>📁</span> Filing/Attachment Only (Never Payable)
+                        </span>
+                      )}
+                      {behavior === 'CONDITIONAL_PAYABLE' && (
+                        <span className="px-2 py-0.5 bg-blue-50 text-blue-900 border border-blue-200 font-semibold rounded-md text-[10px] flex items-center gap-1">
+                          <span>⚖️</span> Conditional Payable
+                        </span>
+                      )}
+                      {behavior === 'ALWAYS_PAYABLE' && (
+                        <span className="px-2 py-0.5 bg-emerald-50 text-emerald-900 border border-emerald-200 font-semibold rounded-md text-[10px] flex items-center gap-1">
+                          <span>💵</span> Always Payable
+                        </span>
+                      )}
+
+                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-600 font-medium rounded text-[10px]">
+                        {compCat}
+                      </span>
+                      <span className="px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-100 font-medium rounded text-[10px]">
+                        {subMethod}
+                      </span>
+                    </div>
+
                     <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs space-y-1">
                       <div className="flex items-center gap-1.5 text-slate-800 font-bold">
                         <CalendarIcon className="w-4 h-4 text-emerald-600" />
@@ -1453,16 +1593,12 @@ export const MasterTablesView: React.FC = () => {
           </div>
 
         </div>
-      )}
-
-
-
-      {/* MODAL 2: STANDARD CREATE / EDIT DEADLINE RULE MODAL */}
+      )}      {/* MODAL 2: STANDARD CREATE / EDIT DEADLINE RULE MODAL */}
       {showRuleModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full space-y-5 text-xs shadow-2xl text-slate-800">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full text-xs shadow-2xl text-slate-800 max-h-[90vh] flex flex-col my-auto">
             
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 shrink-0">
               <div className="flex items-center gap-2">
                 <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
                   <CalendarIcon className="w-5 h-5" />
@@ -1476,14 +1612,16 @@ export const MasterTablesView: React.FC = () => {
               </div>
 
               <button
+                type="button"
                 onClick={() => setShowRuleModal(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg"
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveRule} className="space-y-4">
+            <form onSubmit={handleSaveRule} className="flex flex-col flex-1 min-h-0">
+              <div className="overflow-y-auto flex-1 pr-1.5 space-y-4 my-3">
               
               <div>
                 <label className="block text-slate-700 font-semibold mb-1">Category</label>
@@ -1532,7 +1670,7 @@ export const MasterTablesView: React.FC = () => {
                   type="text"
                   required
                   placeholder={modalCategory === 'BIR' ? 'e.g. 0619E or 1601EQ' : 'e.g. SSS Contribution or PhilHealth Cont.'}
-                  value={code}
+                  value={code || ''}
                   onChange={e => setCode(e.target.value)}
                   className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono font-bold"
                 />
@@ -1544,7 +1682,7 @@ export const MasterTablesView: React.FC = () => {
                   type="text"
                   required
                   placeholder="e.g. Monthly Remittance Return of Creditable Income Taxes Withheld"
-                  value={name}
+                  value={name || ''}
                   onChange={e => setName(e.target.value)}
                   className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-medium"
                 />
@@ -1698,7 +1836,7 @@ export const MasterTablesView: React.FC = () => {
                     <input
                       type="text"
                       placeholder="e.g. 04-15"
-                      value={fixedMonthDay}
+                      value={fixedMonthDay || ''}
                       onChange={e => setFixedMonthDay(e.target.value)}
                       className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono font-bold"
                     />
@@ -1710,7 +1848,7 @@ export const MasterTablesView: React.FC = () => {
                     <label className="block text-slate-700 font-semibold mb-1">Specific Calendar Date (YYYY-MM-DD)</label>
                     <input
                       type="date"
-                      value={specificDate}
+                      value={specificDate || ''}
                       onChange={e => setSpecificDate(e.target.value)}
                       className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono font-bold"
                     />
@@ -1718,12 +1856,121 @@ export const MasterTablesView: React.FC = () => {
                 )}
               </div>
 
+              {/* Compliance & Payment Architecture Configuration ⭐ */}
+              <div className="p-3.5 bg-slate-900 text-white rounded-xl space-y-3 shadow-md border border-slate-800">
+                <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                  <span className="font-bold text-xs text-indigo-300 flex items-center gap-1.5 uppercase tracking-wider">
+                    <ShieldCheck className="w-4 h-4 text-indigo-400" /> Compliance & Payment Behavior Settings
+                  </span>
+                  <span className="text-[10px] text-slate-400">Compliance ≠ Payment</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {/* Payment Behavior */}
+                  <div>
+                    <label className="block text-slate-300 font-semibold mb-1 text-[11px]">
+                      Payment Behavior *
+                    </label>
+                    <select
+                      value={paymentBehavior}
+                      onChange={e => setPaymentBehavior(e.target.value as PaymentBehavior)}
+                      className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold text-xs focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="ALWAYS_PAYABLE">ALWAYS_PAYABLE (Generates Obligation)</option>
+                      <option value="CONDITIONAL_PAYABLE">CONDITIONAL_PAYABLE (Depends on Tax Calc)</option>
+                      <option value="NEVER_PAYABLE">NEVER_PAYABLE (Filing/Attachment Only)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {paymentBehavior === 'NEVER_PAYABLE' 
+                        ? '🚫 Never generates a payable in Payables Engine (e.g. SAWT, QAP, SLSP, 1604).'
+                        : paymentBehavior === 'CONDITIONAL_PAYABLE'
+                        ? '⚖️ Generates payable only when calculated tax due > 0.'
+                        : '💵 Always generates a payable obligation record upon deadline.'}
+                    </p>
+                  </div>
+
+                  {/* Filing Required */}
+                  <div>
+                    <label className="block text-slate-300 font-semibold mb-1 text-[11px]">
+                      Filing / Submission Requirement *
+                    </label>
+                    <select
+                      value={filingRequired}
+                      onChange={e => setFilingRequired(e.target.value as FilingRequired)}
+                      className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold text-xs focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="YES">YES (Mandatory Filing/Submission)</option>
+                      <option value="NO">NO (Payment Remittance Only)</option>
+                      <option value="CONDITIONAL">CONDITIONAL (Filing If Applicable)</option>
+                    </select>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Determines if this requirement generates a compliance task on the To-Do list.
+                    </p>
+                  </div>
+
+                  {/* Submission Method */}
+                  <div>
+                    <label className="block text-slate-300 font-semibold mb-1 text-[11px]">
+                      Default Submission Method *
+                    </label>
+                    <select
+                      value={submissionMethod}
+                      onChange={e => setSubmissionMethod(e.target.value as SubmissionMethod)}
+                      className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold text-xs focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="ONLINE">ONLINE (eFPS / eBIRForms / Online Portal)</option>
+                      <option value="EAFS">EAFS (Electronic AFS Portal)</option>
+                      <option value="MANUAL">MANUAL (Physical / Over-the-counter)</option>
+                      <option value="OTHER">OTHER (Special Submission)</option>
+                    </select>
+                  </div>
+
+                  {/* Compliance Category */}
+                  <div>
+                    <label className="block text-slate-300 font-semibold mb-1 text-[11px]">
+                      Compliance Category *
+                    </label>
+                    <select
+                      value={complianceCategory}
+                      onChange={e => setComplianceCategory(e.target.value as ComplianceCategory)}
+                      className="w-full px-2.5 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-bold text-xs focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                    >
+                      <option value="TAX_RETURN">TAX_RETURN (Main Tax Returns)</option>
+                      <option value="WITHHOLDING">WITHHOLDING (Withholding Tax Remittance)</option>
+                      <option value="VAT">VAT (Value-Added / Percentage Taxes)</option>
+                      <option value="RELIEF_ATTACHMENT">RELIEF_ATTACHMENT (SAWT, QAP, SLSP, Rel)</option>
+                      <option value="INFORMATIONAL">INFORMATIONAL (Alphalist, Books, Inv)</option>
+                      <option value="BENEFITS">BENEFITS (SSS, PhilHealth, HDMF)</option>
+                      <option value="OTHER">OTHER (Custom / Other Compliance)</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Active Toggle */}
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
+                  <label className="flex items-center gap-2 cursor-pointer text-slate-200 text-xs font-semibold">
+                    <input
+                      type="checkbox"
+                      checked={ruleActive}
+                      onChange={e => setRuleActive(e.target.checked)}
+                      className="rounded border-slate-700 text-indigo-500 focus:ring-indigo-500"
+                    />
+                    <span>Active Status (Include in deadline scheduling)</span>
+                  </label>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    ruleActive ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' : 'bg-slate-700 text-slate-400'
+                  }`}>
+                    {ruleActive ? 'Active' : 'Inactive'}
+                  </span>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-700 font-semibold mb-1">Rule Description / eFPS Extended Notes</label>
                 <input
                   type="text"
                   placeholder="e.g. Every 10th of the following month (eFPS: 11th - 15th)"
-                  value={customDescription}
+                  value={customDescription || ''}
                   onChange={e => setCustomDescription(e.target.value)}
                   className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900"
                 />
@@ -1741,17 +1988,19 @@ export const MasterTablesView: React.FC = () => {
                 </label>
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowRuleModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold"
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-2xs"
+                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-2xs cursor-pointer"
                 >
                   Save Master Rule
                 </button>
@@ -1762,26 +2011,25 @@ export const MasterTablesView: React.FC = () => {
         </div>
       )}
 
-
-
       {/* Modal for adding/editing Form Linkage Rule */}
       {showFormLinkageModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full space-y-4 text-xs">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full space-y-4 text-xs max-h-[90vh] flex flex-col my-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3 shrink-0">
               <h4 className="font-bold text-white text-sm flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-indigo-400" />
                 {editingLinkageId ? 'Edit Form Linkage Rule' : 'Add New Form Linkage Rule'}
               </h4>
               <button
+                type="button"
                 onClick={() => setShowFormLinkageModal(false)}
-                className="text-slate-400 hover:text-white"
+                className="text-slate-400 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto flex-1 pr-1 my-1">
               <div>
                 <label className="block text-slate-300 font-bold mb-1">Primary Form Code (e.g. 1701Q)</label>
                 <input
@@ -1819,7 +2067,7 @@ export const MasterTablesView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800 shrink-0">
               <button
                 type="button"
                 onClick={() => setShowFormLinkageModal(false)}

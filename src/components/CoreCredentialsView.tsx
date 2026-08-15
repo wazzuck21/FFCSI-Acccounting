@@ -3,6 +3,7 @@ import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { CoreCredential, CredentialAmendment } from '../types';
 import { SearchableClientSelect } from './SearchableClientSelect';
+import { credentialVault, VAULT_REQUIRE_UNLOCK } from '../lib/credentialVaultService';
 import { 
   Lock, 
   Key, 
@@ -20,17 +21,19 @@ import {
   ShieldCheck, 
   X, 
   AlertTriangle,
-  History
+  History,
+  Unlock
 } from 'lucide-react';
 
 export const CoreCredentialsView: React.FC = () => {
   const { credentials, clients, addCredential, updateCredential, deleteCredential, addAuditLog } = useData();
-  const { currentUser, isSuperAdmin } = useAuth();
+  const { currentUser, isSuperAdmin, can } = useAuth();
 
-  // Vault Unlock State
-  const [isUnlocked, setIsUnlocked] = useState(false);
+  // Vault Unlock State - Default to Unlocked in Dev mode ⭐
+  const [isUnlocked, setIsUnlocked] = useState(credentialVault.isUnlocked());
   const [vaultPassword, setVaultPassword] = useState('');
   const [vaultError, setVaultError] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -62,37 +65,69 @@ export const CoreCredentialsView: React.FC = () => {
     }
   };
 
-  // Masking state per credential ID
+  // Masking & decrypted secret state per credential ID
   const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
+  const [decryptedMap, setDecryptedMap] = useState<Record<string, string>>({});
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  // Handle Vault Unlock
-  const handleUnlockVault = (e: React.FormEvent) => {
+  // Handle Secure Vault Unlock with Hash Verification
+  const handleUnlockVault = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!vaultPassword) {
+    if (VAULT_REQUIRE_UNLOCK && !vaultPassword) {
       setVaultError('Please enter user password to unlock confidential vault.');
       return;
     }
 
-    // Verify user password or superadmin password
-    const userPass = currentUser?.password || 'password123';
-    if (vaultPassword === userPass || vaultPassword === 'admin123' || vaultPassword === 'password123') {
+    setIsVerifying(true);
+    const isValid = await credentialVault.unlock(
+      vaultPassword,
+      currentUser?.passwordHash,
+      currentUser?.salt,
+      currentUser?.password
+    );
+
+    setIsVerifying(false);
+
+    if (isValid) {
       setIsUnlocked(true);
       setVaultError('');
       setVaultPassword('');
       addAuditLog(
         'Confidential Credentials Vault Unlocked',
-        `User ${currentUser?.fullName} unlocked the Core Portal Credentials Vault.`,
+        `User ${currentUser?.fullName} (${currentUser?.role}) unlocked the Core Portal Credentials Vault.`,
         currentUser?.id || 'system',
-        currentUser?.fullName || 'System Admin'
+        currentUser?.fullName || 'System Admin',
+        'CredentialVault',
+        'VAULT_UNLOCK',
+        undefined,
+        'Vault Unlocked'
       );
     } else {
       setVaultError('Invalid password! Access denied to confidential credentials.');
     }
   };
 
-  const togglePasswordVisibility = (id: string) => {
-    setVisiblePasswords(prev => ({ ...prev, [id]: !prev[id] }));
+  const togglePasswordVisibility = async (cred: CoreCredential) => {
+    const isCurrentlyVisible = visiblePasswords[cred.id];
+    if (!isCurrentlyVisible) {
+      // Decrypt if encrypted
+      let plaintextPass = cred.password || '';
+      if (cred.isEncrypted && cred.encryptedPassword && cred.iv && cred.salt) {
+        plaintextPass = await credentialVault.decryptSecret(cred.encryptedPassword, cred.iv, cred.salt);
+      }
+      setDecryptedMap(prev => ({ ...prev, [cred.id]: plaintextPass }));
+      addAuditLog(
+        'Credential Password Unmasked',
+        `User ${currentUser?.fullName} unmasked ${cred.portalType} password for ${cred.clientName}.`,
+        currentUser?.id || 'system',
+        currentUser?.fullName || 'User',
+        'Credential',
+        cred.id,
+        cred.clientId,
+        'Vault Inspection'
+      );
+    }
+    setVisiblePasswords(prev => ({ ...prev, [cred.id]: !prev[cred.id] }));
   };
 
   const handleCopyText = (text: string, fieldKey: string) => {
@@ -118,13 +153,18 @@ export const CoreCredentialsView: React.FC = () => {
     setShowAddModal(true);
   };
 
-  const handleOpenEdit = (cred: CoreCredential) => {
+  const handleOpenEdit = async (cred: CoreCredential) => {
     setEditingCred(cred);
     setSelectedClientId(cred.clientId);
     setPortalType(cred.portalType);
     setPortalName(cred.portalName || '');
     setUsername(cred.username);
-    setPassword(cred.password);
+
+    let plainPass = cred.password || '';
+    if (cred.isEncrypted && cred.encryptedPassword && cred.iv && cred.salt) {
+      plainPass = await credentialVault.decryptSecret(cred.encryptedPassword, cred.iv, cred.salt);
+    }
+    setPassword(plainPass);
     setPinCode(cred.pinCode || '');
     setSecurityQuestions(cred.securityQuestions || '');
     setGovernmentIdNumber(cred.governmentIdNumber || '');
@@ -134,7 +174,7 @@ export const CoreCredentialsView: React.FC = () => {
     setShowAddModal(true);
   };
 
-  const handleSubmitForm = (e: React.FormEvent) => {
+  const handleSubmitForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId) {
       alert('Please select a client.');
@@ -145,6 +185,9 @@ export const CoreCredentialsView: React.FC = () => {
     if (!client) return;
 
     const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    // AES-GCM encrypt the password secret
+    const encryptedResult = await credentialVault.encryptSecret(password);
 
     if (editingCred) {
       const changesList: string[] = [];
@@ -171,7 +214,11 @@ export const CoreCredentialsView: React.FC = () => {
         portalType,
         portalName: portalName || `${portalType} Portal`,
         username,
-        password,
+        encryptedPassword: encryptedResult.ciphertext,
+        iv: encryptedResult.iv,
+        salt: encryptedResult.salt,
+        isEncrypted: true,
+        password: '••••••••', // Masked placeholder in state
         pinCode,
         securityQuestions,
         governmentIdNumber,
@@ -185,7 +232,10 @@ export const CoreCredentialsView: React.FC = () => {
         'Credential Updated',
         `Updated ${portalType} credential for ${client.companyName}. Changes: ${amendment.fieldChanged}`,
         currentUser?.id || 'system',
-        currentUser?.fullName || 'Admin'
+        currentUser?.fullName || 'Admin',
+        'Credential',
+        editingCred.id,
+        client.id
       );
     } else {
       addCredential({
@@ -194,7 +244,11 @@ export const CoreCredentialsView: React.FC = () => {
         portalType,
         portalName: portalName || `${portalType} Portal`,
         username,
-        password,
+        encryptedPassword: encryptedResult.ciphertext,
+        iv: encryptedResult.iv,
+        salt: encryptedResult.salt,
+        isEncrypted: true,
+        password: '••••••••',
         pinCode,
         securityQuestions,
         governmentIdNumber,
@@ -213,7 +267,10 @@ export const CoreCredentialsView: React.FC = () => {
         'Credential Created',
         `Added new ${portalType} portal credential for ${client.companyName}.`,
         currentUser?.id || 'system',
-        currentUser?.fullName || 'Admin'
+        currentUser?.fullName || 'Admin',
+        'Credential',
+        undefined,
+        client.id
       );
     }
 
@@ -308,7 +365,7 @@ export const CoreCredentialsView: React.FC = () => {
               Confidential Core Credentials Manager
             </h2>
             <span className="px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold rounded-full flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-600" /> Vault Unlocked
+              <ShieldCheck className="w-3 h-3 text-emerald-600" /> Vault Status: Unlocked
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
@@ -318,8 +375,11 @@ export const CoreCredentialsView: React.FC = () => {
 
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => setIsUnlocked(false)}
-            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors"
+            onClick={() => {
+              credentialVault.lock();
+              setIsUnlocked(false);
+            }}
+            className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
           >
             <Lock className="w-3.5 h-3.5 text-slate-500" /> Lock Vault
           </button>
@@ -455,11 +515,11 @@ export const CoreCredentialsView: React.FC = () => {
                       <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
                         <div className="flex items-center gap-2">
                           <span className="bg-slate-100 px-2 py-1 rounded border border-slate-200 text-slate-800">
-                            {isPassVisible ? cred.password : '••••••••••••'}
+                            {isPassVisible ? (decryptedMap[cred.id] || cred.password || '••••••••') : '••••••••••••'}
                           </span>
 
                           <button
-                            onClick={() => togglePasswordVisibility(cred.id)}
+                            onClick={() => togglePasswordVisibility(cred)}
                             title={isPassVisible ? 'Hide Password' : 'Show Password'}
                             className="p-1 text-slate-400 hover:text-slate-700 rounded"
                           >
@@ -566,7 +626,7 @@ export const CoreCredentialsView: React.FC = () => {
                   <input
                     type="text"
                     placeholder="e.g. SSS / PHIC / Pag-IBIG #"
-                    value={governmentIdNumber}
+                    value={governmentIdNumber || ''}
                     onChange={e => setGovernmentIdNumber(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -577,7 +637,7 @@ export const CoreCredentialsView: React.FC = () => {
                   <input
                     type="text"
                     placeholder="000-000-000-000"
-                    value={tinNumber}
+                    value={tinNumber || ''}
                     onChange={e => setTinNumber(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -588,7 +648,7 @@ export const CoreCredentialsView: React.FC = () => {
                 <div>
                   <label className="block text-slate-600 mb-1 font-semibold">Portal Category *</label>
                   <select
-                    value={portalType}
+                    value={portalType || 'eFPS'}
                     onChange={e => setPortalType(e.target.value as CoreCredential['portalType'])}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-100 font-semibold"
                   >
@@ -607,7 +667,7 @@ export const CoreCredentialsView: React.FC = () => {
                   <input
                     type="text"
                     placeholder="e.g. Landbank iAccess, eFPS BIR"
-                    value={portalName}
+                    value={portalName || ''}
                     onChange={e => setPortalName(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -621,7 +681,7 @@ export const CoreCredentialsView: React.FC = () => {
                     type="text"
                     required
                     placeholder="Portal Username"
-                    value={username}
+                    value={username || ''}
                     onChange={e => setUsername(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -633,7 +693,7 @@ export const CoreCredentialsView: React.FC = () => {
                     type="text"
                     required
                     placeholder="Portal Password"
-                    value={password}
+                    value={password || ''}
                     onChange={e => setPassword(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -646,7 +706,7 @@ export const CoreCredentialsView: React.FC = () => {
                   <input
                     type="text"
                     placeholder="e.g. 1234"
-                    value={pinCode}
+                    value={pinCode || ''}
                     onChange={e => setPinCode(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-mono focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -657,7 +717,7 @@ export const CoreCredentialsView: React.FC = () => {
                   <input
                     type="text"
                     placeholder="e.g. Pet Name: Max"
-                    value={securityQuestions}
+                    value={securityQuestions || ''}
                     onChange={e => setSecurityQuestions(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-100"
                   />
@@ -669,7 +729,7 @@ export const CoreCredentialsView: React.FC = () => {
                 <textarea
                   rows={2}
                   placeholder="Additional notes for staff..."
-                  value={notes}
+                  value={notes || ''}
                   onChange={e => setNotes(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 focus:bg-white focus:ring-2 focus:ring-indigo-100"
                 />

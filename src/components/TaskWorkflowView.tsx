@@ -909,19 +909,20 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
 
       {/* MODAL 1: CREATE / EDIT TASK MODAL */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl animate-in zoom-in-95">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full shadow-2xl animate-in zoom-in-95 max-h-[90vh] flex flex-col my-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-200 shrink-0">
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <CheckSquare className="w-4 h-4 text-indigo-600" />
                 {editingTask ? 'Edit Engagement Task' : 'Create Custom Engagement Task'}
               </h3>
-              <button onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <button type="button" onClick={() => setShowCreateModal(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSaveTask} className="space-y-3">
+            <form onSubmit={handleSaveTask} className="flex flex-col flex-1 min-h-0 space-y-3">
+              <div className="overflow-y-auto flex-1 pr-1.5 space-y-3 my-2">
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Select Client</label>
                 <SearchableClientSelect
@@ -937,7 +938,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                 <input
                   type="text"
                   required
-                  value={formTitle}
+                  value={formTitle || ''}
                   onChange={(e) => setFormTitle(e.target.value)}
                   placeholder="e.g. 0619E Monthly Expanded Withholding Return"
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold focus:bg-white focus:outline-none focus:border-indigo-500"
@@ -948,7 +949,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Category</label>
                   <select
-                    value={formCategory}
+                    value={formCategory || 'BIR'}
                     onChange={(e) => setFormCategory(e.target.value as any)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
                   >
@@ -965,7 +966,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                   <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Form Code (Optional)</label>
                   <input
                     type="text"
-                    value={formFormCode}
+                    value={formFormCode || ''}
                     onChange={(e) => setFormFormCode(e.target.value)}
                     placeholder="e.g. 1601C, 2550Q, SSS"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold"
@@ -979,7 +980,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                   <input
                     type="date"
                     required
-                    value={formDueDate}
+                    value={formDueDate || ''}
                     onChange={(e) => setFormDueDate(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold"
                   />
@@ -988,7 +989,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                 <div>
                   <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Priority</label>
                   <select
-                    value={formPriority}
+                    value={formPriority || 'Medium'}
                     onChange={(e) => setFormPriority(e.target.value as any)}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
                   >
@@ -1003,7 +1004,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
               <div>
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Assigned Staff</label>
                 <select
-                  value={formAssignedStaffId}
+                  value={formAssignedStaffId || ''}
                   onChange={(e) => setFormAssignedStaffId(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold"
                 >
@@ -1017,24 +1018,25 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                 <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Description & Notes</label>
                 <textarea
                   rows={2}
-                  value={formDescription}
+                  value={formDescription || ''}
                   onChange={(e) => setFormDescription(e.target.value)}
                   placeholder="Instructions for preparer..."
                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:bg-white"
                 />
               </div>
+              </div>
 
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
+              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs"
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-2xs"
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs shadow-2xs cursor-pointer"
                 >
                   {editingTask ? 'Save Changes' : 'Create Task'}
                 </button>
@@ -1046,8 +1048,8 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
 
       {/* MODAL 2: SUBMIT FOR REVIEW MODAL */}
       {showSubmitModal && targetTaskForSubmit && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <Send className="w-4 h-4 text-purple-600" />
@@ -1067,7 +1069,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
               <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Preparer Notes / Summary</label>
               <textarea
                 rows={3}
-                value={preparerNotesInput}
+                value={preparerNotesInput || ''}
                 onChange={(e) => setPreparerNotesInput(e.target.value)}
                 placeholder="e.g. Return 0619E prepared with total tax withheld ₱12,500. Verified against ledger."
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs"
@@ -1095,14 +1097,14 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
 
       {/* MODAL 3: REVIEW / APPROVE / RETURN MODAL */}
       {showReviewModal && targetTaskForReview && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
                 {reviewAction === 'APPROVE' ? 'Approve & Verify Filing' : 'Return Task for Correction'}
               </h3>
-              <button onClick={() => setShowReviewModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setShowReviewModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1119,7 +1121,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
               </label>
               <textarea
                 rows={3}
-                value={reviewNotesInput}
+                value={reviewNotesInput || ''}
                 onChange={(e) => setReviewNotesInput(e.target.value)}
                 placeholder={reviewAction === 'APPROVE' ? 'Verified with eFPS/BIR payment confirmation...' : 'Please re-check schedule of expanded withholding tax line 3...'}
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs"
@@ -1127,7 +1129,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-              <button onClick={() => setShowReviewModal(false)} className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl">
+              <button onClick={() => setShowReviewModal(false)} className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl cursor-pointer">
                 Cancel
               </button>
               {reviewAction === 'APPROVE' ? (
@@ -1137,7 +1139,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                     showToast(res.message);
                     setShowReviewModal(false);
                   }}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs"
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs cursor-pointer"
                 >
                   Approve Task
                 </button>
@@ -1152,7 +1154,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                     showToast(res.message);
                     setShowReviewModal(false);
                   }}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl shadow-2xs"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl shadow-2xs cursor-pointer"
                 >
                   Return to Preparer
                 </button>
@@ -1164,14 +1166,14 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
 
       {/* MODAL 4: OVERRIDE DEADLINE MODAL */}
       {showOverrideModal && targetTaskForOverride && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <Clock className="w-4 h-4 text-indigo-600" />
                 Override / Extend Deadline
               </h3>
-              <button onClick={() => setShowOverrideModal(false)} className="text-slate-400 hover:text-slate-600">
+              <button onClick={() => setShowOverrideModal(false)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1184,7 +1186,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
               <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">New Due Date *</label>
               <input
                 type="date"
-                value={newDueDateInput}
+                value={newDueDateInput || ''}
                 onChange={(e) => setNewDueDateInput(e.target.value)}
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono font-bold"
               />
@@ -1194,7 +1196,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
               <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Reason for Extension / BIR Memorandum *</label>
               <textarea
                 rows={2}
-                value={overrideReasonInput}
+                value={overrideReasonInput || ''}
                 onChange={(e) => setOverrideReasonInput(e.target.value)}
                 placeholder="e.g. BIR RMC No. 12-2026 extension or client document delay..."
                 className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs"
@@ -1202,7 +1204,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200">
-              <button onClick={() => setShowOverrideModal(false)} className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl">
+              <button onClick={() => setShowOverrideModal(false)} className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl cursor-pointer">
                 Cancel
               </button>
               <button
@@ -1215,7 +1217,7 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                   showToast(res.message);
                   setShowOverrideModal(false);
                 }}
-                className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl shadow-2xs"
+                className="px-4 py-2 bg-indigo-600 text-white font-bold rounded-xl shadow-2xs cursor-pointer"
               >
                 Save Extension
               </button>
@@ -1226,8 +1228,8 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
 
       {/* MODAL 5: REASSIGN STAFF MODAL */}
       {showReassignModal && targetTaskForReassign && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-200">
               <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                 <Users className="w-4 h-4 text-amber-600" />

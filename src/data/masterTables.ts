@@ -39,6 +39,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Monthly',
     deadlineDay: 10,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'WITHHOLDING',
+    active: true,
     customDescription: 'Every 10th day of the following month (eFPS: 11th - 15th)',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-10', periodLabel: 'Dec-25' },
@@ -63,6 +68,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Monthly',
     deadlineDay: 10,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'WITHHOLDING',
+    active: true,
     customDescription: 'Every 10th day of the following month (eFPS: 11th - 15th)',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-10', periodLabel: 'Dec-25' },
@@ -87,6 +97,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
     deadlineDay: 30,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'WITHHOLDING',
+    active: true,
     customDescription: 'Every 30th day of the month following the close of the quarter',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-30', periodLabel: '4Q - 2025' },
@@ -103,6 +118,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
     deadlineDay: 25,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'VAT',
+    active: true,
     customDescription: 'Every 25th day of the month following the close of the taxable quarter',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-25', periodLabel: '4Q - 2025' },
@@ -119,6 +139,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
     deadlineDay: 25,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'VAT',
+    active: true,
     customDescription: 'Every 25th day of the month following the close of the taxable quarter',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-25', periodLabel: '4Q - 2025' },
@@ -135,6 +160,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
     deadlineDay: 29,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'TAX_RETURN',
+    active: true,
     customDescription: 'Every 29th day of the month following the close of each of the first 3 quarters (May 29 for 1Q-2026)',
     monthlySchedule2026: [
       { month: 'May', dueDate: '2026-05-29', periodLabel: '1Q - 2026' },
@@ -150,6 +180,11 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Quarterly',
     deadlineDay: 15,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'TAX_RETURN',
+    active: true,
     customDescription: 'May 15 (1Q-2026), Aug 15 (2Q-2026), Nov 15 (3Q-2026)',
     monthlySchedule2026: [
       { month: 'May', dueDate: '2026-05-15', periodLabel: '1Q - 2026' },
@@ -165,9 +200,156 @@ export const DEFAULT_BIR_TAX_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'BIR Tax Services',
     frequency: 'Annually',
     deadlineDay: 15,
+    paymentBehavior: 'CONDITIONAL_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'TAX_RETURN',
+    active: true,
     customDescription: 'Every 15th day of April following the close of the taxable year',
     monthlySchedule2026: [
       { month: 'Apr', dueDate: '2026-04-15', periodLabel: 'TY - 2025' }
+    ]
+  },
+  // --- FILING-ONLY / SUBMISSION-ONLY MASTER FORMS ⭐ ---
+  {
+    id: 'bir_sawt',
+    code: 'SAWT',
+    name: 'Summary Alphalist of Withholding Taxes (SAWT Attachment)',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Quarterly',
+    deadlineDay: 30,
+    paymentBehavior: 'NEVER_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'EAFS',
+    complianceCategory: 'RELIEF_ATTACHMENT',
+    active: true,
+    customDescription: 'Mandatory quarterly electronic attachment for 1601EQ / 1702Q / 2550Q withholding validation (Submission only, no payable)',
+    monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-30', periodLabel: '4Q - 2025' },
+      { month: 'Apr', dueDate: '2026-04-30', periodLabel: '1Q - 2026' },
+      { month: 'Jul', dueDate: '2026-07-31', periodLabel: '2Q - 2026' },
+      { month: 'Oct', dueDate: '2026-10-30', periodLabel: '3Q - 2026' }
+    ]
+  },
+  {
+    id: 'bir_qap',
+    code: 'QAP',
+    name: 'Quarterly Alphabetical List of Payees (QAP)',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Quarterly',
+    deadlineDay: 30,
+    paymentBehavior: 'NEVER_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'RELIEF_ATTACHMENT',
+    active: true,
+    customDescription: 'Quarterly alphalist schedule submitted online with creditable withholding returns (Submission only, no payable)',
+    monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-30', periodLabel: '4Q - 2025' },
+      { month: 'Apr', dueDate: '2026-04-30', periodLabel: '1Q - 2026' },
+      { month: 'Jul', dueDate: '2026-07-31', periodLabel: '2Q - 2026' },
+      { month: 'Oct', dueDate: '2026-10-30', periodLabel: '3Q - 2026' }
+    ]
+  },
+  {
+    id: 'bir_at_relief',
+    code: 'AT RELIEF',
+    name: 'VAT Reconciliation of Listing for Enforcement (AT RELIEF / SLSP)',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Quarterly',
+    deadlineDay: 25,
+    paymentBehavior: 'NEVER_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'RELIEF_ATTACHMENT',
+    active: true,
+    customDescription: 'Electronic Summary List of Sales & Purchases submitted online via BIR RELIEF portal (Submission only, no payable)',
+    monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-25', periodLabel: '4Q - 2025' },
+      { month: 'Apr', dueDate: '2026-04-25', periodLabel: '1Q - 2026' },
+      { month: 'Jul', dueDate: '2026-07-25', periodLabel: '2Q - 2026' },
+      { month: 'Oct', dueDate: '2026-10-25', periodLabel: '3Q - 2026' }
+    ]
+  },
+  {
+    id: 'bir_slsp',
+    code: 'SLSP',
+    name: 'Summary List of Sales and Purchases (SLSP)',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Quarterly',
+    deadlineDay: 25,
+    paymentBehavior: 'NEVER_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'RELIEF_ATTACHMENT',
+    active: true,
+    customDescription: 'Quarterly summary list of sales and purchases for VAT registered taxpayers (Filing only, no payable)',
+    monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-25', periodLabel: '4Q - 2025' },
+      { month: 'Apr', dueDate: '2026-04-25', periodLabel: '1Q - 2026' },
+      { month: 'Jul', dueDate: '2026-07-25', periodLabel: '2Q - 2026' },
+      { month: 'Oct', dueDate: '2026-10-25', periodLabel: '3Q - 2026' }
+    ]
+  },
+  {
+    id: 'bir_1604c',
+    code: '1604C',
+    name: 'Annual Information Return of Income Taxes Withheld on Compensation',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Annually',
+    deadlineDay: 31,
+    fixedMonthDay: '01-31',
+    paymentBehavior: 'NEVER_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'INFORMATIONAL',
+    active: true,
+    customDescription: 'Annual informational return due on or before January 31 following the calendar year',
+    monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-31', periodLabel: 'TY - 2025' }
+    ]
+  },
+  {
+    id: 'bir_1604e',
+    code: '1604E',
+    name: 'Annual Information Return of Creditable Income Taxes Withheld (Expanded)',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Annually',
+    deadlineDay: 1,
+    fixedMonthDay: '03-01',
+    paymentBehavior: 'NEVER_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'INFORMATIONAL',
+    active: true,
+    customDescription: 'Annual informational return of creditable withholding taxes due on or before March 1',
+    monthlySchedule2026: [
+      { month: 'Mar', dueDate: '2026-03-01', periodLabel: 'TY - 2025' }
+    ]
+  },
+  {
+    id: 'bir_0605',
+    code: '0605',
+    name: 'Payment Form (Annual Registration Fee / Deficiency Taxes)',
+    category: 'BIR',
+    parentCategory: 'BIR Tax Services',
+    frequency: 'Annually',
+    deadlineDay: 31,
+    fixedMonthDay: '01-31',
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'TAX_RETURN',
+    active: true,
+    customDescription: 'Annual registration / special payment remittance form',
+    monthlySchedule2026: [
+      { month: 'Jan', dueDate: '2026-01-31', periodLabel: 'TY - 2026' }
     ]
   }
 ];
@@ -182,6 +364,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'HDMF (Pag-IBIG Fund)',
     frequency: 'Monthly',
     deadlineDay: 15,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 15th day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-15', periodLabel: 'Dec-25' },
@@ -206,6 +393,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'HDMF (Pag-IBIG Fund)',
     frequency: 'Monthly',
     deadlineDay: 15,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 15th day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-15', periodLabel: 'Dec-25' },
@@ -230,6 +422,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'HDMF (Pag-IBIG Fund)',
     frequency: 'Monthly',
     deadlineDay: 15,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 15th day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-15', periodLabel: 'Dec-25' },
@@ -254,6 +451,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'HDMF (Pag-IBIG Fund)',
     frequency: 'Monthly',
     deadlineDay: 15,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 15th day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-15', periodLabel: 'Dec-25' },
@@ -280,6 +482,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'SSS (Social Security System)',
     frequency: 'Monthly',
     deadlineDay: 30,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every last day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-31', periodLabel: 'Dec-25' },
@@ -304,6 +511,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'SSS (Social Security System)',
     frequency: 'Monthly',
     deadlineDay: 10,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 10th of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-10', periodLabel: 'Dec-25' },
@@ -328,6 +540,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'SSS (Social Security System)',
     frequency: 'Monthly',
     deadlineDay: 10,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 10th of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-10', periodLabel: 'Dec-25' },
@@ -352,6 +569,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'SSS (Social Security System)',
     frequency: 'Monthly',
     deadlineDay: 30,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every last day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-31', periodLabel: 'Dec-25' },
@@ -378,6 +600,11 @@ export const DEFAULT_BENEFITS_OPTIONS: CustomDeadlineRule[] = [
     parentCategory: 'PhilHealth (PHIC)',
     frequency: 'Monthly',
     deadlineDay: 10,
+    paymentBehavior: 'ALWAYS_PAYABLE',
+    filingRequired: 'YES',
+    submissionMethod: 'ONLINE',
+    complianceCategory: 'BENEFITS',
+    active: true,
     customDescription: 'Every 10th day of the month following the applicable month',
     monthlySchedule2026: [
       { month: 'Jan', dueDate: '2026-01-10', periodLabel: 'Dec-25' },
@@ -503,7 +730,7 @@ export function generateDefaultScheduleForFrequency(
   code: string = '',
   applicableMonths?: string[]
 ): { month: 'Jan'|'Feb'|'Mar'|'Apr'|'May'|'Jun'|'Jul'|'Aug'|'Sep'|'Oct'|'Nov'|'Dec'; dueDate: string; periodLabel: string }[] {
-  const codeUpper = code.trim().toUpperCase();
+  const codeUpper = (code || '').trim().toUpperCase();
   const dayStr = String(deadlineDay || 10).padStart(2, '0');
 
   if (frequency === 'Monthly') {
@@ -604,7 +831,7 @@ export function getRuleDeadlineForMonth(
     }
 
     const fyMonthFullName = MONTH_FULL_NAMES[MONTHS_LIST[fyEndIdx]] || rawFyMonth;
-    const codeUpper = rule.code.trim().toUpperCase();
+    const codeUpper = (rule.code || '').trim().toUpperCase();
 
     // 1. Annual Income Tax Return (ITR / 1702 / 1702-RT / 1702-EX / 1702-MX / 1701)
     if (codeUpper === 'ITR' || (codeUpper.includes('1702') && !codeUpper.includes('1702Q')) || rule.frequency === 'Annually') {
@@ -791,7 +1018,7 @@ export function getRuleDeadlineForMonth(
   const mStr = String(mIdx + 1).padStart(2, '0');
 
   if (rule.frequency === 'Quarterly') {
-    const codeUpper = rule.code.trim().toUpperCase();
+    const codeUpper = (rule.code || '').trim().toUpperCase();
     if (['Jan', 'Apr', 'Jul', 'Oct'].includes(m) && ['1601EQ', '2550Q', '2551Q'].includes(codeUpper)) {
       const day = String(rule.deadlineDay || (codeUpper === '1601EQ' ? 30 : 25)).padStart(2, '0');
       const qLabel = m === 'Jan' ? `4Q - ${targetYear - 1}` : m === 'Apr' ? `1Q - ${targetYear}` : m === 'Jul' ? `2Q - ${targetYear}` : `3Q - ${targetYear}`;

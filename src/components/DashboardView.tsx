@@ -14,7 +14,8 @@ import {
   ArrowUpRight, 
   ShieldCheck, 
   Sparkles,
-  FileText
+  FileText,
+  BarChart3
 } from 'lucide-react';
 
 export const DashboardView: React.FC<{ onNavigate: (tab: any) => void }> = ({ onNavigate }) => {
@@ -46,7 +47,7 @@ export const DashboardView: React.FC<{ onNavigate: (tab: any) => void }> = ({ on
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            Executive Operations Dashboard
+            Operations Dashboard
             <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
               Live Firmware Sync
             </span>
@@ -56,7 +57,13 @@ export const DashboardView: React.FC<{ onNavigate: (tab: any) => void }> = ({ on
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => onNavigate('executive-bi')}
+            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs flex items-center gap-2 transition-all shadow-sm"
+          >
+            <BarChart3 className="w-4 h-4 text-blue-400" /> Executive BI
+          </button>
           <button
             onClick={() => onNavigate('payables')}
             className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-medium text-xs flex items-center gap-2 transition-all shadow-sm"

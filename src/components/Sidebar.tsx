@@ -18,11 +18,14 @@ import {
   X,
   Key,
   Banknote,
-  CreditCard
+  CreditCard,
+  Database,
+  BarChart3
 } from 'lucide-react';
 
 export type NavTab = 
   | 'dashboard' 
+  | 'executive-bi'
   | 'my-clients'
   | 'clients' 
   | 'workspaces' 
@@ -36,7 +39,8 @@ export type NavTab =
   | 'company-expenses'
   | 'credentials'
   | 'users' 
-  | 'settings';
+  | 'settings'
+  | 'system-integrity';
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -58,8 +62,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { hasPermission, isSuperAdmin } = useAuth();
 
   const menuItems: { id: NavTab; label: string; icon: any; permissionKey?: any; badge?: number; highlight?: boolean }[] = [
-    { id: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' },
-    { id: 'my-clients', label: 'My Clients (To-Do List)', icon: Briefcase, permissionKey: 'clients', highlight: true },
+    { id: 'dashboard', label: 'Operations Dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' },
+    { id: 'executive-bi', label: 'Executive BI Analytics', icon: BarChart3, permissionKey: 'reports', highlight: true },
+    { id: 'my-clients', label: 'My Clients (To-Do List)', icon: Briefcase, permissionKey: 'clients' },
     { id: 'clients', label: 'Client Management', icon: Building2, permissionKey: 'clients' },
     { 
       id: 'payables', 
@@ -83,6 +88,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'credentials', label: 'Core Credentials Vault', icon: Key, permissionKey: 'clients' },
     { id: 'users', label: 'User Management', icon: UserCog, permissionKey: 'userManagement' },
     { id: 'settings', label: 'System & Master Tables', icon: Settings, permissionKey: 'settings' },
+    { id: 'system-integrity', label: 'Data Integrity & Sync', icon: Database, permissionKey: 'settings' },
   ];
 
   const handleSelectTab = (tab: NavTab) => {

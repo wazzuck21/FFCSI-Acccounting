@@ -22,7 +22,15 @@ import {
   CollectionLog,
   CollectionStatus,
   ServiceBillingFrequency,
-  InvoiceServiceLine
+  InvoiceServiceLine,
+  DataConflict,
+  DataHealthReport,
+  AutoBackupSchedule,
+  FullDatabaseBackup,
+  HolidayItem,
+  DeadlineExtensionRule,
+  WeekendAdjustmentConfig,
+  CalculatedClientDeadline
 } from '../types';
 import { 
   INITIAL_CLIENTS, 
@@ -50,7 +58,23 @@ import {
   MONTH_FULL_NAMES,
   getRuleDeadlineForMonth
 } from '../data/masterTables';
+import { 
+  DEFAULT_HOLIDAYS,
+  DEFAULT_DEADLINE_EXTENSIONS,
+  DEFAULT_WEEKEND_CONFIG,
+  calculateClientDeadline,
+  calculateAllClientDeadlinesForMonth
+} from '../utils/deadlineEngine';
 import { saveLocalData, getLocalData } from '../lib/idbStorage';
+import { 
+  initMultiTabSync, 
+  notifyTabStateChange, 
+  notifyTabConflict, 
+  reserveNextInvoiceNumber, 
+  reserveNextCRNumber 
+} from '../lib/syncEngine';
+import { runDataHealthCheck, autoRepairState, FullAppState } from '../lib/dataIntegrity';
+import { generateFullDatabaseBackup, verifyBackupFile } from '../lib/backupRestoreEngine';
 
 interface DataContextType {
   clients: ClientProfile[];
@@ -141,7 +165,14 @@ interface DataContextType {
   // Saved Custom Services
   saveCustomService: (service: { description: string; defaultAmount?: number }) => void;
 
-  addDocument: (doc: Omit<DocumentItem, 'id' | 'uploadDate'>) => void;
+  // Document Management Phase 7 ⭐
+  addDocument: (doc: Omit<DocumentItem, 'id' | 'uploadDate'>, userId?: string, userName?: string) => DocumentItem;
+  updateDocument: (id: string, updates: Partial<DocumentItem>, userId?: string, userName?: string) => void;
+  uploadDocumentVersion: (id: string, newVersionData: { fileName: string; fileSize: string; fileType?: string; dataUrl?: string; changeReason?: string; notes?: string }, userId?: string, userName?: string) => void;
+  archiveDocument: (id: string, reason?: string, userId?: string, userName?: string) => void;
+  restoreDocument: (id: string, userId?: string, userName?: string) => void;
+  deleteDocument: (id: string, reason?: string, userId?: string, userName?: string) => void;
+  logDocumentAction: (documentId: string, action: string, details: string, userId?: string, userName?: string) => void;
   
   addMasterBusinessNature: (nature: string) => void;
   deleteMasterBusinessNature: (nature: string) => void;
@@ -159,6 +190,23 @@ interface DataContextType {
   addFormLinkage: (primaryCode: string, linkedCodes: string[], description?: string) => void;
   updateFormLinkage: (primaryCode: string, linkedCodes: string[], description?: string) => void;
   deleteFormLinkage: (primaryCode: string) => void;
+
+  // Holiday Master Management ⭐
+  addHoliday: (holiday: Omit<HolidayItem, 'id'>) => void;
+  updateHoliday: (id: string, updates: Partial<HolidayItem>) => void;
+  deleteHoliday: (id: string) => void;
+
+  // Deadline Extensions & Overrides ⭐
+  addDeadlineExtension: (ext: Omit<DeadlineExtensionRule, 'id' | 'createdAt'>) => void;
+  updateDeadlineExtension: (id: string, updates: Partial<DeadlineExtensionRule>) => void;
+  deleteDeadlineExtension: (id: string) => void;
+
+  // Weekend & Working Day Configuration ⭐
+  updateWeekendConfig: (config: Partial<WeekendAdjustmentConfig>) => void;
+
+  // Centralized Client Deadline Engine Accessors ⭐
+  calculateClientDeadlineForPeriod: (clientId: string, complianceCode: string, month: string, year?: number) => CalculatedClientDeadline | null;
+  calculateAllClientDeadlines: (month: string, year?: number, filterParams?: any) => CalculatedClientDeadline[];
   
   // Internal Employee Actions ⭐
   addEmployee: (emp: Omit<CompanyEmployee, 'id'>) => void;
@@ -189,6 +237,17 @@ interface DataContextType {
   addAuditLog: (action: string, details: string, userId: string, userName: string) => void;
   importBackupData: (jsonString: string) => boolean;
   exportBackupData: () => string;
+
+  // Data Integrity, Sync & Backup Phase 9 ⭐
+  getNextInvoiceNumber: () => string;
+  syncConflicts: DataConflict[];
+  resolveConflict: (conflictId: string, choice: 'KEEP_LOCAL' | 'APPLY_INCOMING' | 'MERGE', resolvedBy: string, resolvedByName: string) => void;
+  runIntegrityScan: () => DataHealthReport;
+  autoRepairIntegrity: () => { repairedCount: number; reportLog: string[] };
+  autoBackupSchedule: AutoBackupSchedule;
+  updateAutoBackupSchedule: (updates: Partial<AutoBackupSchedule>) => void;
+  runAutoBackupNow: (createdByName: string, createdById: string) => string;
+  safeRestoreDatabase: (jsonString: string, superAdminUserId: string, superAdminName: string) => { success: boolean; message: string; repairedCount?: number };
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -223,6 +282,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Company Expenses ⭐
   const [companyExpenses, setCompanyExpenses] = useState<CompanyExpense[]>(INITIAL_COMPANY_EXPENSES);
   
+  // Phase 9 Integrity, Sync & Backup States ⭐
+  const [syncConflicts, setSyncConflicts] = useState<DataConflict[]>([]);
+  const [autoBackupSchedule, setAutoBackupSchedule] = useState<AutoBackupSchedule>({
+    enabled: true,
+    frequency: 'WEEKLY',
+    lastBackupTimestamp: new Date().toISOString().substring(0, 10),
+    lastBackupStatus: 'SUCCESS',
+    autoDownloadLocal: false
+  });
+  
   const [masterChoices, setMasterChoices] = useState<MasterChoices>({
     businessNatures: DEFAULT_BUSINESS_NATURES,
     birTaxOptions: DEFAULT_BIR_TAX_OPTIONS,
@@ -241,7 +310,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       { description: 'Out-of-Pocket BIR Filing & Stamp Fee', defaultAmount: 500 },
       { description: 'Special SEC Registration & Filing Fee', defaultAmount: 15000 },
       { description: 'Annual Business Permit Renewal Processing', defaultAmount: 8500 }
-    ]
+    ],
+    holidays: DEFAULT_HOLIDAYS,
+    deadlineExtensions: DEFAULT_DEADLINE_EXTENSIONS,
+    weekendConfig: DEFAULT_WEEKEND_CONFIG
   });
 
   const [syncStatus, setSyncStatus] = useState<'Online' | 'Offline' | 'Syncing'>('Online');
@@ -253,6 +325,34 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     if (!navigator.onLine) setSyncStatus('Offline');
+
+    // Initialize Multi-Tab Cross-Tab Sync
+    initMultiTabSync(
+      async (key) => {
+        if (key === 'afms_invoices') {
+          const invs = await getLocalData<InvoiceItem[]>('afms_invoices');
+          if (invs) setInvoices(invs);
+        } else if (key === 'afms_clients') {
+          const cls = await getLocalData<ClientProfile[]>('afms_clients');
+          if (cls) setClients(cls);
+        } else if (key === 'afms_payments') {
+          const pymts = await getLocalData<Payment[]>('afms_payments');
+          if (pymts) setPayments(pymts);
+        } else if (key === 'afms_compliance') {
+          const comps = await getLocalData<ComplianceItem[]>('afms_compliance');
+          if (comps) setComplianceItems(comps);
+        } else if (key === 'afms_tasks') {
+          const tsks = await getLocalData<TaskItem[]>('afms_tasks');
+          if (tsks) setTasks(tsks);
+        } else if (key === 'afms_payroll_runs') {
+          const py = await getLocalData<PayrollRun[]>('afms_payroll_runs');
+          if (py) setPayrollRuns(py);
+        }
+      },
+      (conflict) => {
+        setSyncConflicts(prev => [conflict, ...prev]);
+      }
+    );
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -329,7 +429,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             { description: 'Out-of-Pocket BIR Filing & Stamp Fee', defaultAmount: 500 },
             { description: 'Special SEC Registration & Filing Fee', defaultAmount: 15000 },
             { description: 'Annual Business Permit Renewal Processing', defaultAmount: 8500 }
-          ]
+          ],
+          holidays: (storedMaster.holidays && storedMaster.holidays.length > 0) ? storedMaster.holidays : DEFAULT_HOLIDAYS,
+          deadlineExtensions: (storedMaster.deadlineExtensions && storedMaster.deadlineExtensions.length > 0) ? storedMaster.deadlineExtensions : DEFAULT_DEADLINE_EXTENSIONS,
+          weekendConfig: storedMaster.weekendConfig || DEFAULT_WEEKEND_CONFIG
         });
       }
 
@@ -1862,15 +1965,217 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_invoices', updated);
   };
 
-  const addDocument = (docData: Omit<DocumentItem, 'id' | 'uploadDate'>) => {
+  const addDocument = (
+    docData: Omit<DocumentItem, 'id' | 'uploadDate'>, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ): DocumentItem => {
+    const nowIso = new Date().toISOString();
+    const todayStr = nowIso.substring(0, 10);
     const newDoc: DocumentItem = {
       ...docData,
-      id: `doc_${Date.now()}`,
-      uploadDate: new Date().toISOString().substring(0, 10),
+      id: `doc_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
+      uploadDate: todayStr,
+      uploadedAt: docData.uploadedAt || nowIso,
+      version: docData.version || '1.0',
+      status: docData.status || 'Active',
+      versionHistory: docData.versionHistory || []
     };
+
     const updated = [newDoc, ...documents];
     setDocuments(updated);
     persistState('afms_documents', updated);
+
+    addAuditLog(
+      'Document Uploaded',
+      `Uploaded document "${newDoc.title}" (${newDoc.fileName}) for client "${newDoc.clientName}". Category: ${newDoc.category}${newDoc.taxablePeriod ? ` • Period: ${newDoc.taxablePeriod}` : ''}`,
+      userId,
+      userName
+    );
+
+    return newDoc;
+  };
+
+  const updateDocument = (
+    id: string, 
+    updates: Partial<DocumentItem>, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ) => {
+    let docTitle = '';
+    const updated = documents.map(d => {
+      if (d.id === id) {
+        docTitle = updates.title || d.title;
+        return { ...d, ...updates };
+      }
+      return d;
+    });
+
+    setDocuments(updated);
+    persistState('afms_documents', updated);
+
+    addAuditLog(
+      'Document Metadata Updated',
+      `Updated metadata for document "${docTitle || id}". Changed fields: ${Object.keys(updates).join(', ')}.`,
+      userId,
+      userName
+    );
+  };
+
+  const uploadDocumentVersion = (
+    id: string, 
+    newVersionData: { fileName: string; fileSize: string; fileType?: string; dataUrl?: string; changeReason?: string; notes?: string }, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ) => {
+    const nowIso = new Date().toISOString();
+    let docTitle = '';
+    let newVerStr = '';
+
+    const updated = documents.map(d => {
+      if (d.id === id) {
+        docTitle = d.title;
+        // Parse current version
+        const currentVerNum = typeof d.version === 'number' ? d.version : parseFloat(String(d.version)) || 1.0;
+        const nextVerNum = Number((currentVerNum + 1.0).toFixed(1));
+        newVerStr = `${nextVerNum}`;
+
+        // Save snapshot of current version into history
+        const prevHistory = d.versionHistory || [];
+        const currentSnapshot = {
+          versionNumber: d.version || '1.0',
+          fileName: d.fileName,
+          fileSize: d.fileSize,
+          fileType: d.fileType,
+          uploadedBy: d.uploadedBy,
+          uploadedById: d.uploadedById,
+          uploadedAt: d.uploadedAt || d.uploadDate || nowIso,
+          dataUrl: d.dataUrl,
+          downloadUrl: d.downloadUrl,
+          notes: d.notes,
+          changeReason: newVersionData.changeReason || 'New version upload'
+        };
+
+        return {
+          ...d,
+          fileName: newVersionData.fileName,
+          fileSize: newVersionData.fileSize,
+          fileType: newVersionData.fileType || d.fileType,
+          dataUrl: newVersionData.dataUrl || d.dataUrl,
+          version: newVerStr,
+          status: 'Active' as const, // Reset superseded status if re-activated
+          uploadedBy: userName,
+          uploadedById: userId,
+          uploadedAt: nowIso,
+          uploadDate: nowIso.substring(0, 10),
+          notes: newVersionData.notes !== undefined ? newVersionData.notes : d.notes,
+          versionHistory: [currentSnapshot, ...prevHistory]
+        };
+      }
+      return d;
+    });
+
+    setDocuments(updated);
+    persistState('afms_documents', updated);
+
+    addAuditLog(
+      'Document Version Uploaded',
+      `Uploaded Version ${newVerStr} for document "${docTitle}". File: ${newVersionData.fileName} (${newVersionData.fileSize}). Reason: "${newVersionData.changeReason || 'Updated document version'}"`,
+      userId,
+      userName
+    );
+  };
+
+  const archiveDocument = (
+    id: string, 
+    reason?: string, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ) => {
+    let docTitle = '';
+    const updated = documents.map(d => {
+      if (d.id === id) {
+        docTitle = d.title;
+        return { ...d, status: 'Archived' as const };
+      }
+      return d;
+    });
+
+    setDocuments(updated);
+    persistState('afms_documents', updated);
+
+    addAuditLog(
+      'Document Archived',
+      `Archived document "${docTitle || id}". Reason: "${reason || 'Archived by user'}"`,
+      userId,
+      userName
+    );
+  };
+
+  const restoreDocument = (
+    id: string, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ) => {
+    let docTitle = '';
+    const updated = documents.map(d => {
+      if (d.id === id) {
+        docTitle = d.title;
+        return { ...d, status: 'Active' as const };
+      }
+      return d;
+    });
+
+    setDocuments(updated);
+    persistState('afms_documents', updated);
+
+    addAuditLog(
+      'Document Restored',
+      `Restored document "${docTitle || id}" to Active status.`,
+      userId,
+      userName
+    );
+  };
+
+  const deleteDocument = (
+    id: string, 
+    reason?: string, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ) => {
+    let docTitle = '';
+    const updated = documents.filter(d => {
+      if (d.id === id) {
+        docTitle = d.title;
+        return false;
+      }
+      return true;
+    });
+
+    setDocuments(updated);
+    persistState('afms_documents', updated);
+
+    addAuditLog(
+      'Document Deleted',
+      `Deleted document record "${docTitle || id}". Reason: "${reason || 'Removed from system'}"`,
+      userId,
+      userName
+    );
+  };
+
+  const logDocumentAction = (
+    documentId: string, 
+    action: string, 
+    details: string, 
+    userId: string = 'system', 
+    userName: string = 'System Admin'
+  ) => {
+    addAuditLog(
+      `Document Audit: ${action}`,
+      `Doc #${documentId}: ${details}`,
+      userId,
+      userName
+    );
   };
 
   // Dynamic Master Options additions
@@ -2099,6 +2404,147 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = { ...masterChoices, formLinkages: updatedLinkages };
     setMasterChoices(updated);
     persistState('afms_master_choices', updated);
+  };
+
+  // ==========================================
+  // HOLIDAY MASTER MANAGEMENT ⭐
+  // ==========================================
+  const addHoliday = (holiday: Omit<HolidayItem, 'id'>) => {
+    const newHol: HolidayItem = {
+      ...holiday,
+      id: `hol_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+    };
+    const currentHols = masterChoices.holidays || DEFAULT_HOLIDAYS;
+    const updatedHols = [...currentHols, newHol].sort((a, b) => a.date.localeCompare(b.date));
+    const updated = { ...masterChoices, holidays: updatedHols };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('ADD_HOLIDAY', `Added holiday "${newHol.name}" on ${newHol.date} (${newHol.scope}).`, 'admin', 'System Admin');
+  };
+
+  const updateHoliday = (id: string, updates: Partial<HolidayItem>) => {
+    const currentHols = masterChoices.holidays || DEFAULT_HOLIDAYS;
+    const updatedHols = currentHols.map(h => h.id === id ? { ...h, ...updates } : h).sort((a, b) => a.date.localeCompare(b.date));
+    const updated = { ...masterChoices, holidays: updatedHols };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('UPDATE_HOLIDAY', `Updated holiday ID ${id}.`, 'admin', 'System Admin');
+  };
+
+  const deleteHoliday = (id: string) => {
+    const currentHols = masterChoices.holidays || DEFAULT_HOLIDAYS;
+    const targetHol = currentHols.find(h => h.id === id);
+    const updatedHols = currentHols.filter(h => h.id !== id);
+    const updated = { ...masterChoices, holidays: updatedHols };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('DELETE_HOLIDAY', `Deleted holiday "${targetHol?.name || id}".`, 'admin', 'System Admin');
+  };
+
+  // ==========================================
+  // DEADLINE EXTENSIONS & OVERRIDES ⭐
+  // ==========================================
+  const addDeadlineExtension = (ext: Omit<DeadlineExtensionRule, 'id' | 'createdAt'>) => {
+    const newExt: DeadlineExtensionRule = {
+      ...ext,
+      id: `ext_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      createdAt: new Date().toISOString().substring(0, 10)
+    };
+    const currentExts = masterChoices.deadlineExtensions || DEFAULT_DEADLINE_EXTENSIONS;
+    const updatedExts = [newExt, ...currentExts];
+    const updated = { ...masterChoices, deadlineExtensions: updatedExts };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('ADD_DEADLINE_EXTENSION', `Added deadline extension "${newExt.title}" to ${newExt.extendedDeadlineDate}.`, 'admin', 'System Admin');
+  };
+
+  const updateDeadlineExtension = (id: string, updates: Partial<DeadlineExtensionRule>) => {
+    const currentExts = masterChoices.deadlineExtensions || DEFAULT_DEADLINE_EXTENSIONS;
+    const updatedExts = currentExts.map(e => e.id === id ? { ...e, ...updates } : e);
+    const updated = { ...masterChoices, deadlineExtensions: updatedExts };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('UPDATE_DEADLINE_EXTENSION', `Updated deadline extension ID ${id}.`, 'admin', 'System Admin');
+  };
+
+  const deleteDeadlineExtension = (id: string) => {
+    const currentExts = masterChoices.deadlineExtensions || DEFAULT_DEADLINE_EXTENSIONS;
+    const target = currentExts.find(e => e.id === id);
+    const updatedExts = currentExts.filter(e => e.id !== id);
+    const updated = { ...masterChoices, deadlineExtensions: updatedExts };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('DELETE_DEADLINE_EXTENSION', `Deleted extension rule "${target?.title || id}".`, 'admin', 'System Admin');
+  };
+
+  // ==========================================
+  // WEEKEND & WORKING DAY RULES ⭐
+  // ==========================================
+  const updateWeekendConfig = (configUpdates: Partial<WeekendAdjustmentConfig>) => {
+    const current = masterChoices.weekendConfig || DEFAULT_WEEKEND_CONFIG;
+    const updatedConfig: WeekendAdjustmentConfig = { ...current, ...configUpdates };
+    const updated = { ...masterChoices, weekendConfig: updatedConfig };
+    setMasterChoices(updated);
+    persistState('afms_master_choices', updated);
+    addAuditLog('UPDATE_WEEKEND_CONFIG', `Updated weekend adjustment rule to ${updatedConfig.rule}.`, 'admin', 'System Admin');
+  };
+
+  // ==========================================
+  // CENTRALIZED CLIENT DEADLINE ENGINE ACCESSORS ⭐
+  // ==========================================
+  const calculateClientDeadlineForPeriod = (
+    clientId: string,
+    complianceCode: string,
+    month: string,
+    year: number = 2026
+  ): CalculatedClientDeadline | null => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return null;
+
+    const allRules: CustomDeadlineRule[] = [
+      ...(masterChoices.birTaxOptions || []),
+      ...(masterChoices.benefitsOptions || [])
+    ];
+
+    let rule = allRules.find(r => r.code.toLowerCase() === complianceCode.toLowerCase());
+    if (!rule) {
+      const codeUpper = complianceCode.toUpperCase();
+      let frequency: 'Monthly' | 'Quarterly' | 'Annually' = 'Monthly';
+      if (codeUpper.includes('Q') || codeUpper.includes('QUARTER')) frequency = 'Quarterly';
+      if (codeUpper === 'ITR' || codeUpper.includes('ANNUAL') || codeUpper.includes('1702') || codeUpper.includes('1701')) frequency = 'Annually';
+
+      rule = {
+        id: complianceCode,
+        code: complianceCode,
+        name: complianceCode,
+        category: complianceCode.toLowerCase().includes('sss') || complianceCode.toLowerCase().includes('philhealth') || complianceCode.toLowerCase().includes('hdmf') ? 'Benefits' : 'BIR',
+        frequency,
+        deadlineDay: 10,
+        customDescription: ''
+      };
+    }
+
+    return calculateClientDeadline({
+      client,
+      rule,
+      month,
+      year,
+      masterChoices
+    });
+  };
+
+  const calculateAllClientDeadlines = (
+    month: string,
+    year: number = 2026,
+    filterParams: any = {}
+  ): CalculatedClientDeadline[] => {
+    return calculateAllClientDeadlinesForMonth({
+      clients,
+      masterChoices,
+      month,
+      year,
+      ...filterParams
+    });
   };
 
   const updateFormLinkage = (idOrCode: string, updates: { primaryCode?: string; linkedCodes?: string[]; description?: string } | FormLinkage) => {
@@ -2393,49 +2839,149 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_company_expenses', updated);
   };
 
-  // Backup JSON export/import
-  const exportBackupData = () => {
-    const data = {
+  // Phase 9 Integrity, Sync & Backup Implementations ⭐
+  const getNextInvoiceNumber = (): string => {
+    return reserveNextInvoiceNumber(invoices);
+  };
+
+  const runIntegrityScan = (): DataHealthReport => {
+    return runDataHealthCheck({
       clients,
-      dynamicSections,
-      payables,
+      clientServices,
+      invoices,
+      payments,
       complianceItems,
       tasks,
-      invoices,
       documents,
-      auditLogs,
-      masterChoices,
-      employees,
-      leaveRecords,
-      valeRecords,
-      payrollRuns,
-      companyExpenses,
-      exportTimestamp: new Date().toISOString()
+      payables,
+      credentials
+    });
+  };
+
+  const autoRepairIntegrity = (): { repairedCount: number; reportLog: string[] } => {
+    const result = autoRepairState({
+      clients,
+      clientServices,
+      invoices,
+      payments,
+      complianceItems,
+      tasks,
+      documents,
+      payables,
+      credentials
+    });
+
+    if (result.repairedCount > 0) {
+      setClientServices(result.newState.clientServices); persistState('afms_client_services', result.newState.clientServices);
+      setComplianceItems(result.newState.complianceItems); persistState('afms_compliance', result.newState.complianceItems);
+      setTasks(result.newState.tasks); persistState('afms_tasks', result.newState.tasks);
+      setInvoices(result.newState.invoices); persistState('afms_invoices', result.newState.invoices);
+    }
+
+    return { repairedCount: result.repairedCount, reportLog: result.reportLog };
+  };
+
+  const resolveConflict = (
+    conflictId: string, 
+    choice: 'KEEP_LOCAL' | 'APPLY_INCOMING' | 'MERGE', 
+    resolvedBy: string, 
+    resolvedByName: string
+  ) => {
+    const updated = syncConflicts.map(c => {
+      if (c.id === conflictId) {
+        return {
+          ...c,
+          status: 'RESOLVED' as const,
+          resolvedBy: resolvedByName,
+          resolvedAt: new Date().toISOString(),
+          resolutionChoice: choice
+        };
+      }
+      return c;
+    });
+    setSyncConflicts(updated);
+    addAuditLog('CONFLICT_RESOLVED', `Conflict ${conflictId} resolved choosing ${choice}`, resolvedBy, resolvedByName);
+  };
+
+  const updateAutoBackupSchedule = (updates: Partial<AutoBackupSchedule>) => {
+    const next = { ...autoBackupSchedule, ...updates };
+    setAutoBackupSchedule(next);
+    persistState('afms_auto_backup_schedule', next);
+  };
+
+  const runAutoBackupNow = (createdByName: string, createdById: string): string => {
+    const fullBackup = generateFullDatabaseBackup(
+      {
+        clients, clientServices, dynamicSections, payables, complianceItems, tasks, invoices, documents, credentials, auditLogs, masterChoices, employees, leaveRecords, valeRecords, payrollRuns, companyExpenses, payments, collectionLogs, usedCrNumbers
+      },
+      createdByName,
+      createdById
+    );
+    const jsonStr = JSON.stringify(fullBackup, null, 2);
+    updateAutoBackupSchedule({
+      lastBackupTimestamp: new Date().toISOString(),
+      lastBackupStatus: 'SUCCESS'
+    });
+    addAuditLog('SYSTEM_BACKUP', `Full database backup generated (Checksum: ${fullBackup.metadata.checksum})`, createdById, createdByName);
+    return jsonStr;
+  };
+
+  const safeRestoreDatabase = (
+    jsonString: string, 
+    superAdminUserId: string, 
+    superAdminName: string
+  ): { success: boolean; message: string; repairedCount?: number } => {
+    const verification = verifyBackupFile(jsonString);
+    if (!verification.isValid || !verification.backupObj) {
+      return { success: false, message: verification.error || 'Backup file verification failed.' };
+    }
+
+    const backupObj = verification.backupObj;
+    const appData = backupObj.appData;
+
+    // Save pre-restore safety snapshot in IndexedDB
+    const currentState = {
+      clients, clientServices, dynamicSections, payables, complianceItems, tasks, invoices, documents, credentials, auditLogs, masterChoices, employees, leaveRecords, valeRecords, payrollRuns, companyExpenses, payments, collectionLogs, usedCrNumbers
     };
-    return JSON.stringify(data, null, 2);
+    saveLocalData('afms_pre_restore_safety_snapshot', currentState);
+
+    if (appData.clients) { setClients(appData.clients); persistState('afms_clients', appData.clients); }
+    if (appData.clientServices) { setClientServices(appData.clientServices); persistState('afms_client_services', appData.clientServices); }
+    if (appData.dynamicSections) { setDynamicSections(appData.dynamicSections); persistState('afms_dynamic_sections', appData.dynamicSections); }
+    if (appData.payables) { setPayables(appData.payables); persistState('afms_payables', appData.payables); }
+    if (appData.complianceItems) { setComplianceItems(appData.complianceItems); persistState('afms_compliance', appData.complianceItems); }
+    if (appData.tasks) { setTasks(appData.tasks); persistState('afms_tasks', appData.tasks); }
+    if (appData.invoices) { setInvoices(appData.invoices); persistState('afms_invoices', appData.invoices); }
+    if (appData.documents) { setDocuments(appData.documents); persistState('afms_documents', appData.documents); }
+    if (appData.credentials) { setCredentials(appData.credentials); persistState('afms_credentials', appData.credentials); }
+    if (appData.masterChoices) { setMasterChoices(appData.masterChoices); persistState('afms_master_choices', appData.masterChoices); }
+    if (appData.employees) { setEmployees(appData.employees); persistState('afms_employees', appData.employees); }
+    if (appData.leaveRecords) { setLeaveRecords(appData.leaveRecords); persistState('afms_leave_records', appData.leaveRecords); }
+    if (appData.valeRecords) { setValeRecords(appData.valeRecords); persistState('afms_vale_records', appData.valeRecords); }
+    if (appData.payrollRuns) { setPayrollRuns(appData.payrollRuns); persistState('afms_payroll_runs', appData.payrollRuns); }
+    if (appData.companyExpenses) { setCompanyExpenses(appData.companyExpenses); persistState('afms_company_expenses', appData.companyExpenses); }
+    if (appData.payments) { setPayments(appData.payments); persistState('afms_payments', appData.payments); }
+    if (appData.collectionLogs) { setCollectionLogs(appData.collectionLogs); persistState('afms_collection_logs', appData.collectionLogs); }
+    if (appData.usedCrNumbers) { setUsedCrNumbers(appData.usedCrNumbers); persistState('afms_used_cr_numbers', appData.usedCrNumbers); }
+
+    addAuditLog(
+      'SYSTEM_RESTORE',
+      `Database safely restored from backup file (Checksum: ${backupObj.metadata.checksum}). Pre-restore safety snapshot created in IndexedDB.`,
+      superAdminUserId,
+      superAdminName
+    );
+
+    return { success: true, message: 'Database successfully restored from verified backup file.' };
+  };
+
+  // Backup JSON export/import
+  const exportBackupData = () => {
+    return runAutoBackupNow('User Export', 'user_export');
   };
 
   const importBackupData = (jsonString: string): boolean => {
-    try {
-      const parsed = JSON.parse(jsonString);
-      if (parsed.clients) setClients(parsed.clients);
-      if (parsed.dynamicSections) setDynamicSections(parsed.dynamicSections);
-      if (parsed.payables) setPayables(parsed.payables);
-      if (parsed.complianceItems) setComplianceItems(parsed.complianceItems);
-      if (parsed.tasks) setTasks(parsed.tasks);
-      if (parsed.invoices) setInvoices(parsed.invoices);
-      if (parsed.documents) setDocuments(parsed.documents);
-      if (parsed.masterChoices) setMasterChoices(parsed.masterChoices);
-      if (parsed.employees) setEmployees(parsed.employees);
-      if (parsed.leaveRecords) setLeaveRecords(parsed.leaveRecords);
-      if (parsed.valeRecords) setValeRecords(parsed.valeRecords);
-      if (parsed.payrollRuns) setPayrollRuns(parsed.payrollRuns);
-      if (parsed.companyExpenses) setCompanyExpenses(parsed.companyExpenses);
-      return true;
-    } catch (e) {
-      console.error('Failed to parse backup JSON:', e);
-      return false;
-    }
+    const res = safeRestoreDatabase(jsonString, 'system', 'System User');
+    return res.success;
   };
 
   return (
@@ -2493,6 +3039,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addInvoice,
         updateInvoice,
         recordInvoicePayment,
+        getNextInvoiceNumber,
         getNextCrNumber,
         isCrNumberUsed,
         getNextCollectionNumber,
@@ -2505,6 +3052,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteCredential,
         saveCustomService,
         addDocument,
+        updateDocument,
+        uploadDocumentVersion,
+        archiveDocument,
+        restoreDocument,
+        deleteDocument,
+        logDocumentAction,
         addMasterBusinessNature,
         deleteMasterBusinessNature,
         addMasterBirOption,
@@ -2519,6 +3072,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addFormLinkage,
         updateFormLinkage,
         deleteFormLinkage,
+        addHoliday,
+        updateHoliday,
+        deleteHoliday,
+        addDeadlineExtension,
+        updateDeadlineExtension,
+        deleteDeadlineExtension,
+        updateWeekendConfig,
+        calculateClientDeadlineForPeriod,
+        calculateAllClientDeadlines,
         addEmployee,
         updateEmployee,
         deleteEmployee,
@@ -2545,6 +3107,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addAuditLog,
         exportBackupData,
         importBackupData,
+        syncConflicts,
+        resolveConflict,
+        runIntegrityScan,
+        autoRepairIntegrity,
+        autoBackupSchedule,
+        updateAutoBackupSchedule,
+        runAutoBackupNow,
+        safeRestoreDatabase,
       }}
     >
       {children}

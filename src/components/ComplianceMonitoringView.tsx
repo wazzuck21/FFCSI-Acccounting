@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { ComplianceItem, CustomDeadlineRule } from '../types';
+import { ComplianceItem, CustomDeadlineRule, PaymentBehavior, FilingRequired, SubmissionMethod, ComplianceCategory } from '../types';
 import { 
   MONTHS_LIST, 
   MONTH_FULL_NAMES, 
-  MONTH_INDEX, 
-  getRuleDeadlineForMonth 
+  MONTH_INDEX 
 } from '../data/masterTables';
+import { calculateClientDeadline, formatDeadlinePretty, isPayableObligation, getPaymentBehavior, getComplianceCategory, getSubmissionMethod, getFilingRequired } from '../utils/deadlineEngine';
 import { 
   ShieldAlert, 
   CheckCircle2, 
@@ -28,7 +28,10 @@ import {
   ArrowRight,
   RotateCcw,
   AlertTriangle,
-  Lock
+  Lock,
+  ArrowUpDown,
+  Sparkles,
+  MapPin
 } from 'lucide-react';
 
 export const ComplianceMonitoringView: React.FC = () => {
@@ -43,9 +46,14 @@ export const ComplianceMonitoringView: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState<('Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec')>(currentMonthCode);
   const [selectedYear, setSelectedYear] = useState<number>(currentYearNum);
   const [clientStatusTab, setClientStatusTab] = useState<'Active' | 'For Compliance'>('Active');
+  const [filerTypeFilter, setFilerTypeFilter] = useState<'ALL' | 'Manual' | 'eFPS'>('ALL');
+  const [deadlineSortOrder, setDeadlineSortOrder] = useState<'DateAsc' | 'ClientAsc'>('DateAsc');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'GroupedByDate' | 'Kanban' | 'AllCards'>('Kanban');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'Pending' | 'Done'>('ALL');
+  const [showEnrolledClientsModal, setShowEnrolledClientsModal] = useState(false);
+  const [enrolledSearchQuery, setEnrolledSearchQuery] = useState('');
 
   // Revert Modal State & Toast Notifications
   const [revertModalOpen, setRevertModalOpen] = useState(false);
@@ -96,18 +104,27 @@ export const ComplianceMonitoringView: React.FC = () => {
     return `${mName} ${d}, ${y}`;
   };
 
-  // 1. Filter matching clients based on status tab (Active vs For Compliance) and search
-  const activeMatchingClients = clients.filter(c => {
-    const statusMatch = clientStatusTab === 'Active' ? c.status === 'Active' : c.status === 'For Compliance';
-    if (!statusMatch) return false;
+  // 1. Clients belonging to current Active vs For Compliance tab
+  const currentTabClients = clients.filter(c => 
+    clientStatusTab === 'Active' ? c.status === 'Active' : c.status === 'For Compliance'
+  );
 
-    if (!searchQuery.trim()) return true;
+  const manualClientsCount = currentTabClients.filter(c => (c.registrationMethod || 'Manual') === 'Manual').length;
+  const efpsClientsCount = currentTabClients.filter(c => c.registrationMethod === 'eFPS').length;
 
-    const q = searchQuery.toLowerCase();
+  // Filter matching clients based on status tab, filer type (Manual vs eFPS), and search
+  const activeMatchingClients = currentTabClients.filter(c => {
+    const regMethod = c.registrationMethod || 'Manual';
+    if (filerTypeFilter === 'Manual' && regMethod !== 'Manual') return false;
+    if (filerTypeFilter === 'eFPS' && regMethod !== 'eFPS') return false;
+
+    if (!(searchQuery || '').trim()) return true;
+
+    const q = (searchQuery || '').toLowerCase();
     return (
-      c.companyName.toLowerCase().includes(q) ||
-      c.tradeName?.toLowerCase().includes(q) ||
-      c.tinNumber.toLowerCase().includes(q)
+      (c.companyName || '').toLowerCase().includes(q) ||
+      (c.tradeName || '').toLowerCase().includes(q) ||
+      (c.tinNumber || '').toLowerCase().includes(q)
     );
   });
 
@@ -144,6 +161,16 @@ export const ComplianceMonitoringView: React.FC = () => {
     existingCompItemId?: string;
     accountingPeriod?: 'Calendar' | 'Fiscal';
     fiscalYearEndMonth?: string;
+    registrationMethod?: 'Manual' | 'eFPS';
+    rdoNumber?: string;
+    wasShifted?: boolean;
+    holidayAdjustment?: any;
+    extensionOverride?: any;
+    deadlineSource?: string;
+    paymentBehavior?: PaymentBehavior;
+    filingRequired?: FilingRequired;
+    submissionMethod?: SubmissionMethod;
+    complianceCategory?: ComplianceCategory;
   }
 
   const compiledDeadlines: CompiledClientDeadline[] = [];
@@ -158,9 +185,16 @@ export const ComplianceMonitoringView: React.FC = () => {
       const hasBir = isBir && (client.birTaxServices || []).some(s => s.toLowerCase() === rule.code.toLowerCase());
       const hasBen = !isBir && (client.benefitsServices || []).some(s => s.toLowerCase().includes(rule.code.toLowerCase()) || rule.code.toLowerCase().includes(s.toLowerCase()));
 
-      const deadlineInfo = getRuleDeadlineForMonth(rule, selectedMonth, selectedYear, client);
+      // Centralized Client-Based Deadline Engine Calculation
+      const deadlineInfo = calculateClientDeadline({
+        client,
+        rule,
+        month: selectedMonth,
+        year: selectedYear,
+        masterChoices
+      });
 
-      if (deadlineInfo && !deadlineInfo.isNotRequired && deadlineInfo.dueDateStr !== 'N/A') {
+      if (deadlineInfo && !deadlineInfo.isNotRequired && deadlineInfo.finalDeadline !== 'N/A') {
         const cleanRuleCode = rule.code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
         const cleanRuleName = rule.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
@@ -169,7 +203,7 @@ export const ComplianceMonitoringView: React.FC = () => {
           if (ci.clientId !== client.id) return false;
           const cleanTitle = ci.title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
           const isNameMatch = cleanTitle.includes(cleanRuleCode) || cleanRuleCode.includes(cleanTitle) || (cleanRuleName.length > 3 && cleanTitle.includes(cleanRuleName));
-          const isDateMatch = ci.dueDate === deadlineInfo.dueDateStr || ci.dueDate.startsWith(`${selectedYear}-${String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0')}`);
+          const isDateMatch = ci.dueDate === deadlineInfo.finalDeadline || ci.dueDate.startsWith(`${selectedYear}-${String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0')}`);
           return isNameMatch && isDateMatch;
         });
 
@@ -201,17 +235,17 @@ export const ComplianceMonitoringView: React.FC = () => {
             calculatedStatus = 'Already Paid';
             assessmentTag = 'Already Paid';
           } else if (isExcessInput) {
-            calculatedStatus = 'For Payment';
+            calculatedStatus = 'Already Paid';
             assessmentTag = 'Assessed - Excess Input Tax';
           } else if (isNoPayment) {
             calculatedStatus = 'Already Paid';
             assessmentTag = 'Assessed - Zero Return / No Payment';
           } else {
             const todayStr = new Date().toISOString().substring(0, 10);
-            if (deadlineInfo.dueDateStr === todayStr) {
+            if (deadlineInfo.finalDeadline === todayStr) {
               calculatedStatus = 'Due Today';
               assessmentTag = 'Due Today';
-            } else if (deadlineInfo.dueDateStr < todayStr) {
+            } else if (deadlineInfo.finalDeadline < todayStr) {
               calculatedStatus = 'Overdue';
               assessmentTag = 'Overdue';
             } else if (
@@ -236,9 +270,9 @@ export const ComplianceMonitoringView: React.FC = () => {
             ruleName: rule.name,
             category: rule.category,
             frequency: rule.frequency || 'Monthly',
-            dueDate: deadlineInfo.dueDateStr,
-            formattedDateStr: formatDatePretty(deadlineInfo.dueDateStr),
-            periodLabel: deadlineInfo.label,
+            dueDate: deadlineInfo.finalDeadline,
+            formattedDateStr: formatDeadlinePretty(deadlineInfo.finalDeadline),
+            periodLabel: deadlineInfo.taxablePeriod,
             status: calculatedStatus,
             assessmentTag,
             isUnenrolledForm,
@@ -252,23 +286,94 @@ export const ComplianceMonitoringView: React.FC = () => {
             paidDate: existing?.paidDate || matchedPayable?.paymentDetails?.paidDate,
             existingCompItemId: existing?.id,
             accountingPeriod: client.accountingPeriod,
-            fiscalYearEndMonth: client.fiscalYearEndMonth
+            fiscalYearEndMonth: client.fiscalYearEndMonth,
+            registrationMethod: client.registrationMethod || 'Manual',
+            rdoNumber: client.rdoNumber,
+            wasShifted: deadlineInfo.wasShifted,
+            holidayAdjustment: deadlineInfo.holidayAdjustment,
+            extensionOverride: deadlineInfo.appliedExtensionTitle || deadlineInfo.overrideDeadline,
+            deadlineSource: deadlineInfo.deadlineSource,
+            paymentBehavior: rule.paymentBehavior || getPaymentBehavior(rule.code, rule),
+            filingRequired: rule.filingRequired || getFilingRequired(rule.code, rule),
+            submissionMethod: rule.submissionMethod || getSubmissionMethod(rule.code, rule),
+            complianceCategory: rule.complianceCategory || getComplianceCategory(rule.code, rule)
           });
         }
       }
     });
   });
 
-  // Filter compiled deadlines by search query (if search targets form code or rule name)
-  const filteredDeadlines = compiledDeadlines.filter(item => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
+  // 1. Initial filter by search query (client name, form code, rule name, date)
+  const searchFilteredDeadlines = compiledDeadlines.filter(item => {
+    if (!(searchQuery || '').trim()) return true;
+    const q = (searchQuery || '').toLowerCase();
     return (
-      item.clientName.toLowerCase().includes(q) ||
-      item.ruleCode.toLowerCase().includes(q) ||
-      item.ruleName.toLowerCase().includes(q) ||
-      item.formattedDateStr.toLowerCase().includes(q)
+      (item.clientName || '').toLowerCase().includes(q) ||
+      (item.ruleCode || '').toLowerCase().includes(q) ||
+      (item.ruleName || '').toLowerCase().includes(q) ||
+      (item.formattedDateStr || '').toLowerCase().includes(q)
     );
+  });
+
+  // Summary counts for selected month
+  const totalDeadlines = searchFilteredDeadlines.length;
+  const settledCount = searchFilteredDeadlines.filter(d => d.status === 'Already Paid').length;
+  const pendingCount = totalDeadlines - settledCount;
+  const uniqueClientsCount = new Set(searchFilteredDeadlines.map(d => d.clientId)).size;
+
+  // Derived unique enrolled clients in current selected month/year schedule
+  const enrolledClientWorkspaces = React.useMemo(() => {
+    const clientMap = new Map<string, {
+      client: typeof clients[0];
+      deadlinesCount: number;
+      settledCount: number;
+      pendingCount: number;
+    }>();
+
+    searchFilteredDeadlines.forEach(item => {
+      if (!clientMap.has(item.clientId)) {
+        const clientObj = clients.find(c => c.id === item.clientId);
+        if (clientObj) {
+          clientMap.set(item.clientId, {
+            client: clientObj,
+            deadlinesCount: 0,
+            settledCount: 0,
+            pendingCount: 0
+          });
+        }
+      }
+
+      const entry = clientMap.get(item.clientId);
+      if (entry) {
+        entry.deadlinesCount++;
+        if (item.status === 'Already Paid') {
+          entry.settledCount++;
+        } else {
+          entry.pendingCount++;
+        }
+      }
+    });
+
+    return Array.from(clientMap.values());
+  }, [searchFilteredDeadlines, clients]);
+
+  // Filter searchFilteredDeadlines by statusFilter
+  const statusFilteredDeadlines = searchFilteredDeadlines.filter(item => {
+    if (statusFilter === 'Pending') {
+      return item.status !== 'Already Paid';
+    }
+    if (statusFilter === 'Done') {
+      return item.status === 'Already Paid';
+    }
+    return true;
+  });
+
+  // Sort deadlines by deadlineSortOrder
+  const filteredDeadlines = [...statusFilteredDeadlines].sort((a, b) => {
+    if (deadlineSortOrder === 'ClientAsc') {
+      return a.clientName.localeCompare(b.clientName);
+    }
+    return a.dueDate.localeCompare(b.dueDate);
   });
 
   // Group compiled deadlines by Due Date
@@ -282,12 +387,6 @@ export const ComplianceMonitoringView: React.FC = () => {
 
   // Sorted list of due dates
   const sortedDueDates = Object.keys(groupedByDateMap).sort();
-
-  // Summary counts for selected month
-  const totalDeadlines = filteredDeadlines.length;
-  const settledCount = filteredDeadlines.filter(d => d.status === 'Already Paid').length;
-  const pendingCount = totalDeadlines - settledCount;
-  const uniqueClientsCount = new Set(filteredDeadlines.map(d => d.clientId)).size;
 
   // Active Clients vs For Compliance Clients Pending Deadline Counts
   const activeClientsList = clients.filter(c => c.status === 'Active');
@@ -303,8 +402,14 @@ export const ComplianceMonitoringView: React.FC = () => {
         const hasBen = !isBir && (client.benefitsServices || []).some(s => s.toLowerCase().includes(rule.code.toLowerCase()) || rule.code.toLowerCase().includes(s.toLowerCase()));
 
         if (hasBir || hasBen) {
-          const deadlineInfo = getRuleDeadlineForMonth(rule, selectedMonth, selectedYear, client);
-          if (deadlineInfo && !deadlineInfo.isNotRequired && deadlineInfo.dueDateStr !== 'N/A') {
+          const deadlineInfo = calculateClientDeadline({
+            client,
+            rule,
+            month: selectedMonth,
+            year: selectedYear,
+            masterChoices
+          });
+          if (deadlineInfo && !deadlineInfo.isNotRequired && deadlineInfo.finalDeadline !== 'N/A') {
             const cleanRuleCode = rule.code.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
             const cleanRuleName = rule.name.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
@@ -312,7 +417,7 @@ export const ComplianceMonitoringView: React.FC = () => {
               if (ci.clientId !== client.id) return false;
               const cleanTitle = ci.title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
               const isNameMatch = cleanTitle.includes(cleanRuleCode) || cleanRuleCode.includes(cleanTitle) || (cleanRuleName.length > 3 && cleanTitle.includes(cleanRuleName));
-              const isDateMatch = ci.dueDate === deadlineInfo.dueDateStr || ci.dueDate.startsWith(`${selectedYear}-${String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0')}`);
+              const isDateMatch = ci.dueDate === deadlineInfo.finalDeadline || ci.dueDate.startsWith(`${selectedYear}-${String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0')}`);
               return isNameMatch && isDateMatch;
             });
 
@@ -324,7 +429,10 @@ export const ComplianceMonitoringView: React.FC = () => {
               return isNameMatch && isMonthMatch;
             });
 
-            const isPaid = (matchedPayable?.status === 'Paid') || (existing?.status === 'Already Paid' && matchedPayable?.status !== 'Unpaid');
+            const isPaid = (matchedPayable?.status === 'Paid') ||
+                           (matchedPayable?.status === 'No Payment') ||
+                           (matchedPayable?.payableAmount !== undefined && matchedPayable?.payableAmount <= 0) ||
+                           (existing?.status === 'Already Paid' && matchedPayable?.status !== 'Unpaid');
             if (!isPaid) {
               pending++;
             }
@@ -420,6 +528,44 @@ export const ComplianceMonitoringView: React.FC = () => {
                   </span>
                 </button>
               </div>
+
+              {/* Filer Method Filter / Sort: Manual vs eFPS */}
+              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 text-xs items-center gap-1">
+                <span className="text-[10px] font-bold text-slate-500 uppercase px-1.5 hidden sm:inline">Filer:</span>
+                <button
+                  type="button"
+                  onClick={() => setFilerTypeFilter('ALL')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                    filerTypeFilter === 'ALL' ? 'bg-slate-800 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilerTypeFilter('Manual')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    filerTypeFilter === 'Manual' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <span>Manual Filer</span>
+                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${filerTypeFilter === 'Manual' ? 'bg-indigo-800 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                    {manualClientsCount}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilerTypeFilter('eFPS')}
+                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    filerTypeFilter === 'eFPS' ? 'bg-purple-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  <span>eFPS Filer</span>
+                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${filerTypeFilter === 'eFPS' ? 'bg-purple-800 text-white' : 'bg-slate-200 text-slate-700'}`}>
+                    {efpsClientsCount}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -482,43 +628,60 @@ export const ComplianceMonitoringView: React.FC = () => {
             </select>
           </div>
 
-          {/* View Mode Toggle */}
-          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setViewMode('Kanban');
-                setSelectedMonth(currentMonthCode);
-              }}
-              className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                viewMode === 'Kanban' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Kanban className="w-3.5 h-3.5" />
-              <span>Kanban Board</span>
-            </button>
+          {/* View Mode Toggle & Sort By Selector */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('Kanban');
+                  setSelectedMonth(currentMonthCode);
+                }}
+                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  viewMode === 'Kanban' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Kanban className="w-3.5 h-3.5" />
+                <span>Kanban Board</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setViewMode('GroupedByDate')}
-              className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                viewMode === 'GroupedByDate' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <CalendarIcon className="w-3.5 h-3.5" />
-              <span>Grouped by Date</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('GroupedByDate')}
+                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  viewMode === 'GroupedByDate' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <CalendarIcon className="w-3.5 h-3.5" />
+                <span>Grouped by Date</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setViewMode('AllCards')}
-              className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                viewMode === 'AllCards' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>All Deadline Cards ({filteredDeadlines.length})</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('AllCards')}
+                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  viewMode === 'AllCards' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>All Deadline Cards ({filteredDeadlines.length})</span>
+              </button>
+            </div>
+
+            {/* Sort By Dropdown placed right beside All Deadline Cards */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 px-3 rounded-xl border border-slate-200 text-xs font-bold text-slate-700">
+              <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <label htmlFor="deadlineSortSelect" className="text-slate-600 shrink-0">Sort By:</label>
+              <select
+                id="deadlineSortSelect"
+                value={deadlineSortOrder}
+                onChange={e => setDeadlineSortOrder(e.target.value as any)}
+                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+              >
+                <option value="DateAsc">Due Date (Earliest First)</option>
+                <option value="ClientAsc">Client Name (A - Z)</option>
+              </select>
+            </div>
           </div>
 
         </div>
@@ -527,38 +690,116 @@ export const ComplianceMonitoringView: React.FC = () => {
 
       {/* Summary KPI Banner for Month */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-1">
-          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Client Deadlines</p>
+        {/* 1. Total Client Deadlines */}
+        <button
+          type="button"
+          onClick={() => setStatusFilter('ALL')}
+          className={`text-left bg-white border p-4 rounded-2xl shadow-2xs space-y-1 transition-all cursor-pointer ${
+            statusFilter === 'ALL'
+              ? 'ring-2 ring-indigo-500 border-indigo-300'
+              : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50/50'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Client Deadlines</p>
+            {statusFilter === 'ALL' && (
+              <span className="text-[9px] bg-slate-800 text-white px-1.5 py-0.5 rounded-full font-bold">All</span>
+            )}
+          </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-slate-900">{totalDeadlines}</span>
             <span className="text-xs text-slate-500 font-medium">items for {selectedMonth} {selectedYear}</span>
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-emerald-200/80 p-4 rounded-2xl shadow-2xs space-y-1 bg-emerald-50/20">
-          <p className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Already Paid / Settled</p>
+        {/* 2. Already Paid / Settled */}
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('Done');
+          }}
+          className={`text-left bg-white border p-4 rounded-2xl shadow-2xs space-y-1 transition-all cursor-pointer ${
+            statusFilter === 'Done'
+              ? 'ring-2 ring-emerald-500 border-emerald-300 bg-emerald-50/40'
+              : 'border-emerald-200/80 bg-emerald-50/20 hover:border-emerald-300 hover:bg-emerald-50/40'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Already Paid / Settled</p>
+            {statusFilter === 'Done' && (
+              <span className="text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded-full font-bold">Active Filter</span>
+            )}
+          </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-emerald-700">{settledCount}</span>
             <span className="text-xs text-emerald-600 font-semibold">({totalDeadlines > 0 ? Math.round((settledCount/totalDeadlines)*100) : 0}%)</span>
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-amber-200/80 p-4 rounded-2xl shadow-2xs space-y-1 bg-amber-50/20">
-          <p className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Pending / Action Needed</p>
+        {/* 3. Pending / Action Needed */}
+        <button
+          type="button"
+          onClick={() => {
+            setStatusFilter('Pending');
+          }}
+          className={`text-left bg-white border p-4 rounded-2xl shadow-2xs space-y-1 transition-all cursor-pointer ${
+            statusFilter === 'Pending'
+              ? 'ring-2 ring-amber-500 border-amber-300 bg-amber-50/40'
+              : 'border-amber-200/80 bg-amber-50/20 hover:border-amber-300 hover:bg-amber-50/40'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Pending / Action Needed</p>
+            {statusFilter === 'Pending' && (
+              <span className="text-[9px] bg-amber-600 text-white px-1.5 py-0.5 rounded-full font-bold">Active Filter</span>
+            )}
+          </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-amber-800">{pendingCount}</span>
             <span className="text-xs text-amber-700 font-medium">due for filing</span>
           </div>
-        </div>
+        </button>
 
-        <div className="bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-1">
-          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Enrolled Clients</p>
+        {/* 4. Enrolled Clients */}
+        <button
+          type="button"
+          onClick={() => {
+            setEnrolledSearchQuery('');
+            setShowEnrolledClientsModal(true);
+          }}
+          className="text-left bg-white border border-slate-200 p-4 rounded-2xl shadow-2xs space-y-1 transition-all cursor-pointer hover:border-indigo-400 hover:ring-2 hover:ring-indigo-500/20 hover:bg-indigo-50/20 group"
+        >
+          <div className="flex items-center justify-between">
+            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider group-hover:text-indigo-700 transition-colors">Enrolled Clients</p>
+            <span className="text-[9px] bg-indigo-50 text-indigo-700 group-hover:bg-indigo-600 group-hover:text-white px-2 py-0.5 rounded-full font-bold transition-all">
+              View Workspaces →
+            </span>
+          </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-black text-indigo-700">{uniqueClientsCount}</span>
-            <span className="text-xs text-slate-500 font-medium">active workspace(s)</span>
+            <span className="text-xs text-slate-500 font-medium group-hover:text-indigo-600 transition-colors">active workspace(s)</span>
           </div>
-        </div>
+        </button>
       </div>
+
+      {/* Active Filter Indicator Banner */}
+      {statusFilter !== 'ALL' && (
+        <div className="bg-indigo-50/90 border border-indigo-200 rounded-2xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-indigo-950 font-medium">
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>
+              Filtering schedule by <strong>{statusFilter === 'Pending' ? 'Pending / Action Needed' : 'Already Paid / Settled'}</strong> status: showing <strong>{filteredDeadlines.length}</strong> of {totalDeadlines} compliance items.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('ALL')}
+            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-[11px] transition-colors cursor-pointer shadow-2xs shrink-0"
+          >
+            Show All Deadlines ({totalDeadlines})
+          </button>
+        </div>
+      )}
 
       {/* VIEW MODE 0: KANBAN BOARD VIEW */}
       {viewMode === 'Kanban' && (
@@ -698,7 +939,11 @@ export const ComplianceMonitoringView: React.FC = () => {
                       {/* 3. Amount if available */}
                       <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-100">
                         <span className="text-[10px] font-bold text-slate-400 uppercase">Assessment:</span>
-                        {item.assessmentTag === 'Assessed - Excess Input Tax' ? (
+                        {item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
+                          <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1">
+                            <span>📁</span> Filing Only
+                          </span>
+                        ) : item.assessmentTag === 'Assessed - Excess Input Tax' ? (
                           <span className="font-mono font-extrabold text-purple-700 text-xs">
                             ₱{Math.abs(item.payableAmount || 0).toLocaleString()} (Tax Credit)
                           </span>
@@ -1016,6 +1261,125 @@ export const ComplianceMonitoringView: React.FC = () => {
               No compliance records match your filters for {MONTH_FULL_NAMES[selectedMonth]} {selectedYear}.
             </div>
           )}
+        </div>
+      )}
+
+      {/* ENROLLED CLIENT WORKSPACES MODAL */}
+      {showEnrolledClientsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-3xl max-w-2xl w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] flex flex-col">
+            
+            {/* Modal Header */}
+            <div className="flex justify-between items-start border-b border-slate-100 pb-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-2xl shrink-0">
+                  <Building2 className="w-5 h-5 text-indigo-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-lg text-slate-900">Enrolled Client Workspaces</h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {enrolledClientWorkspaces.length} active client workspaces scheduled for <strong>{MONTH_FULL_NAMES[selectedMonth]} {selectedYear}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowEnrolledClientsModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* In-Modal Search Input */}
+            <div className="relative shrink-0">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search enrolled client name or TIN..."
+                value={enrolledSearchQuery}
+                onChange={e => setEnrolledSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500/20 text-xs"
+              />
+            </div>
+
+            {/* Workspace Cards List */}
+            <div className="overflow-y-auto space-y-2.5 pr-1 flex-1">
+              {enrolledClientWorkspaces
+                .filter(item => {
+                  if (!(enrolledSearchQuery || '').trim()) return true;
+                  const q = (enrolledSearchQuery || '').toLowerCase();
+                  return (
+                    (item.client?.name || '').toLowerCase().includes(q) ||
+                    (item.client?.tin && String(item.client.tin).includes(q))
+                  );
+                })
+                .map(item => (
+                  <div
+                    key={item.client.id}
+                    className="p-3.5 bg-slate-50 hover:bg-indigo-50/30 border border-slate-200 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-sm text-slate-900">{item.client.name}</span>
+                        <span className="text-[10px] bg-indigo-100 text-indigo-800 font-bold px-2 py-0.5 rounded-md">
+                          {item.client.registrationMethod || 'Manual'} Filer
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                        {item.client.tin && (
+                          <span>TIN: <strong className="font-mono text-slate-700">{item.client.tin}</strong></span>
+                        )}
+                        <span>Branch: <strong className="font-mono text-slate-700">{item.client.branchCode || '00000'}</strong></span>
+                        <span>Type: <strong className="text-slate-700">{item.client.companyType || 'Corporation'}</strong></span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <div className="text-right text-[11px] mr-1">
+                        <span className="font-bold text-slate-900 block">{item.deadlinesCount} Scheduled Deadlines</span>
+                        <span className="text-emerald-700 font-semibold">{item.settledCount} Settled</span>
+                        <span className="text-slate-400 mx-1">•</span>
+                        <span className="text-amber-800 font-semibold">{item.pendingCount} Pending</span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSearchQuery(item.client.name);
+                          setShowEnrolledClientsModal(false);
+                        }}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs transition-all shadow-2xs cursor-pointer shrink-0"
+                      >
+                        Filter Schedule
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+              {enrolledClientWorkspaces.length === 0 && (
+                <div className="p-8 text-center text-slate-500 font-medium">
+                  No enrolled client workspaces found for {MONTH_FULL_NAMES[selectedMonth]} {selectedYear}.
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-slate-100 flex justify-between items-center shrink-0">
+              <span className="text-[11px] text-slate-500 font-medium">
+                Showing {enrolledClientWorkspaces.length} active client workspace(s)
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowEnrolledClientsModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
         </div>
       )}
 

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
-import { ClientProfile, PayableCategory, CustomDeadlineRule } from '../types';
-import { MONTHS_LIST, MONTH_FULL_NAMES, MONTH_INDEX, getRuleDeadlineForMonth } from '../data/masterTables';
+import { ClientProfile, PayableCategory, CustomDeadlineRule, PaymentBehavior, FilingRequired, SubmissionMethod, ComplianceCategory } from '../types';
+import { MONTHS_LIST, MONTH_FULL_NAMES, MONTH_INDEX } from '../data/masterTables';
+import { calculateClientDeadline, isPayableObligation, getPaymentBehavior, getComplianceCategory, getSubmissionMethod, getFilingRequired } from '../utils/deadlineEngine';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { 
@@ -128,12 +129,12 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                   (currentUser?.fullName && client.assignedStaffName?.toLowerCase().includes(currentUser.fullName.toLowerCase()));
     return match;
   }).filter(client => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return client.companyName.toLowerCase().includes(q) ||
-           client.tinNumber.includes(q) ||
-           client.birTaxServices.some(t => t.toLowerCase().includes(q)) ||
-           client.benefitsServices.some(b => b.toLowerCase().includes(q));
+    if (!(searchQuery || '').trim()) return true;
+    const q = (searchQuery || '').toLowerCase();
+    return (client.companyName || '').toLowerCase().includes(q) ||
+           (client.tinNumber || '').includes(q) ||
+           (client.birTaxServices || []).some(t => t.toLowerCase().includes(q)) ||
+           (client.benefitsServices || []).some(b => b.toLowerCase().includes(q));
   });
 
   // Combine Master BIR & Benefits options
@@ -144,11 +145,22 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
   // Helper: Get Deadline Date string for a rule in selectedMonth & selectedYear
   const getDeadlineInfo = (rule: CustomDeadlineRule, client?: ClientProfile) => {
-    const res = getRuleDeadlineForMonth(rule, selectedMonth, selectedYear, client);
-    if (!res || res.isNotRequired || res.dueDateStr === 'N/A') {
+    if (!client) return null;
+    const res = calculateClientDeadline({
+      client,
+      rule,
+      month: selectedMonth,
+      year: selectedYear,
+      masterChoices
+    });
+    if (!res || res.isNotRequired || res.finalDeadline === 'N/A') {
       return null;
     }
-    return res;
+    return {
+      dueDateStr: res.finalDeadline,
+      label: res.taxablePeriod,
+      isNotRequired: res.isNotRequired
+    };
   };
 
   // Structure Deadline Groups for To-Do List
@@ -161,6 +173,10 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     periodLabel: string;
     existingPayable?: any;
     status: 'NO_ACTION' | 'PAYABLE_LOGGED' | 'NO_PAYMENT' | 'FILED';
+    paymentBehavior?: PaymentBehavior;
+    filingRequired?: FilingRequired;
+    submissionMethod?: SubmissionMethod;
+    complianceCategory?: ComplianceCategory;
   }
 
   interface ToDoGroup {
@@ -230,7 +246,11 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
             dueDateStr: dInfo.dueDateStr,
             periodLabel: dInfo.label || currentPeriodCode,
             existingPayable: matchingPayable,
-            status
+            status,
+            paymentBehavior: rule.paymentBehavior || getPaymentBehavior(rule.code, rule),
+            filingRequired: rule.filingRequired || getFilingRequired(rule.code, rule),
+            submissionMethod: rule.submissionMethod || getSubmissionMethod(rule.code, rule),
+            complianceCategory: rule.complianceCategory || getComplianceCategory(rule.code, rule),
           });
         }
       });
@@ -280,8 +300,10 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     setActionDueDate(item.dueDateStr);
     setActionPeriodLabel(item.periodLabel || currentPeriodCode);
     
+    const isNeverPayable = item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.formCode);
+
     if (item.existingPayable) {
-      if (item.existingPayable.payableAmount > 0) {
+      if (item.existingPayable.payableAmount > 0 && !isNeverPayable) {
         setActionChoice('PAYABLE');
         setPayableAmountInput(String(item.existingPayable.payableAmount));
       } else {
@@ -289,8 +311,13 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         setPayableAmountInput('0');
       }
     } else {
-      setActionChoice('PAYABLE');
-      setPayableAmountInput('');
+      if (isNeverPayable) {
+        setActionChoice('NO_PAYMENT');
+        setPayableAmountInput('0');
+      } else {
+        setActionChoice('PAYABLE');
+        setPayableAmountInput('');
+      }
     }
 
     setActionNotes('');
@@ -359,7 +386,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         month: monthStr,
         year: selectedYear,
         payableAmount: negativeAmount,
-        status: 'Unpaid',
+        status: 'No Payment',
         createdById: currentUser?.id || 'staff',
         createdByName: currentUser?.fullName || 'Accountant',
       });
@@ -752,6 +779,12 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                                 {item.formCode}
                               </span>
 
+                              {item.paymentBehavior === 'NEVER_PAYABLE' && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-300 flex items-center gap-1">
+                                  <span>📁</span> Filing Only
+                                </span>
+                              )}
+
                               <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-mono font-bold rounded text-[10px] border border-slate-200">
                                 Period: {item.periodLabel || currentPeriodCode}
                               </span>
@@ -984,8 +1017,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
       {/* SET ACTION MODAL (Entering Payable or Zero Payment) */}
       {actionModalOpen && actionClient && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto my-auto">
             
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div className="flex items-center gap-2.5">
@@ -1027,73 +1060,130 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               <div className="space-y-2">
                 <label className="block text-slate-900 font-bold text-xs">Select Action Type:</label>
 
-                <div 
-                  onClick={() => setActionChoice('PAYABLE')}
-                  className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                    actionChoice === 'PAYABLE' 
-                      ? 'bg-indigo-50/80 border-indigo-500 text-slate-900 ring-2 ring-indigo-200' 
-                      : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
-                  }`}
-                >
-                  <div className="space-y-0.5">
-                    <span className="font-bold text-xs block text-slate-900">1. Enter Payable Amount (₱)</span>
-                    <p className="text-[11px] text-slate-500">Creates an assessment payable record for client billing & settlement.</p>
-                  </div>
-                  {actionChoice === 'PAYABLE' && <Check className="w-5 h-5 text-indigo-600 shrink-0" />}
-                </div>
+                {(() => {
+                  const isNeverPayable = !isPayableObligation(actionFormCode);
+                  if (isNeverPayable) {
+                    return (
+                      <div className="space-y-2">
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center gap-2">
+                          <span className="text-base">📁</span>
+                          <div>
+                            <p className="font-bold">Filing / Submission Only (Never Payable)</p>
+                            <p className="text-[11px] text-amber-800">This compliance requirement (e.g. SAWT, QAP, AT RELIEF) is strictly for document submission or schedule filing. It generates no payment obligation.</p>
+                          </div>
+                        </div>
 
-                {actionCategory === 'BIR' && (
-                  <div 
-                    onClick={() => setActionChoice('EXCESS_INPUT')}
-                    className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                      actionChoice === 'EXCESS_INPUT' 
-                        ? 'bg-purple-50/80 border-purple-500 text-slate-900 ring-2 ring-purple-200' 
-                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
-                    }`}
-                  >
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-xs block text-purple-900">2. Excess Input (Negative Payable Amount)</span>
-                      <p className="text-[11px] text-slate-500">Converts amount to negative (e.g. input 1,000 becomes -1,000 payable credit).</p>
-                    </div>
-                    {actionChoice === 'EXCESS_INPUT' && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
-                  </div>
-                )}
+                        {viewMode === 'DONE_FILING' ? (
+                          <div 
+                            onClick={() => setActionChoice('RESET')}
+                            className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                              actionChoice === 'RESET' 
+                                ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
+                                : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <div className="space-y-0.5">
+                              <span className="font-bold text-xs block text-amber-900">
+                                Cancel submission status / reset to action pending
+                              </span>
+                              <p className="text-[11px] text-slate-500">Removes logged status and returns item back to To-Do List.</p>
+                            </div>
+                            {actionChoice === 'RESET' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
+                          </div>
+                        ) : (
+                          <div 
+                            onClick={() => setActionChoice('NO_PAYMENT')}
+                            className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                              actionChoice === 'NO_PAYMENT' 
+                                ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
+                                : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                            }`}
+                          >
+                            <div className="space-y-0.5">
+                              <span className="font-bold text-xs block text-emerald-900">
+                                Mark as Submitted / Filed (Compliance Completed)
+                              </span>
+                              <p className="text-[11px] text-slate-500">Confirms that this schedule/attachment has been filed successfully.</p>
+                            </div>
+                            {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
 
-                {viewMode === 'DONE_FILING' ? (
-                  <div 
-                    onClick={() => setActionChoice('RESET')}
-                    className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                      actionChoice === 'RESET' 
-                        ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
-                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
-                    }`}
-                  >
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-xs block text-amber-900">
-                        {actionCategory === 'BIR' ? '3. Cancel choice / reset to action pending' : '2. Cancel choice / reset to action pending'}
-                      </span>
-                      <p className="text-[11px] text-slate-500">Removes logged assessment and returns item back to To-Do List.</p>
-                    </div>
-                    {actionChoice === 'RESET' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
-                  </div>
-                ) : (
-                  <div 
-                    onClick={() => setActionChoice('NO_PAYMENT')}
-                    className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                      actionChoice === 'NO_PAYMENT' 
-                        ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
-                        : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
-                    }`}
-                  >
-                    <div className="space-y-0.5">
-                      <span className="font-bold text-xs block text-emerald-900">
-                        {actionCategory === 'BIR' ? '3. No Payment Needed / Zero Tax Filed' : '2. No Payment Needed / Zero Tax Filed'}
-                      </span>
-                      <p className="text-[11px] text-slate-500">Marks this return as filed with zero payment / no tax due.</p>
-                    </div>
-                    {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
-                  </div>
-                )}
+                  return (
+                    <>
+                      <div 
+                        onClick={() => setActionChoice('PAYABLE')}
+                        className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                          actionChoice === 'PAYABLE' 
+                            ? 'bg-indigo-50/80 border-indigo-500 text-slate-900 ring-2 ring-indigo-200' 
+                            : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                        }`}
+                      >
+                        <div className="space-y-0.5">
+                          <span className="font-bold text-xs block text-slate-900">1. Enter Payable Amount (₱)</span>
+                          <p className="text-[11px] text-slate-500">Creates an assessment payable record for client billing & settlement.</p>
+                        </div>
+                        {actionChoice === 'PAYABLE' && <Check className="w-5 h-5 text-indigo-600 shrink-0" />}
+                      </div>
+
+                      {actionCategory === 'BIR' && (
+                        <div 
+                          onClick={() => setActionChoice('EXCESS_INPUT')}
+                          className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                            actionChoice === 'EXCESS_INPUT' 
+                              ? 'bg-purple-50/80 border-purple-500 text-slate-900 ring-2 ring-purple-200' 
+                              : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-xs block text-purple-900">2. Excess Input (Negative Payable Amount)</span>
+                            <p className="text-[11px] text-slate-500">Converts amount to negative (e.g. input 1,000 becomes -1,000 payable credit).</p>
+                          </div>
+                          {actionChoice === 'EXCESS_INPUT' && <Check className="w-5 h-5 text-purple-600 shrink-0" />}
+                        </div>
+                      )}
+
+                      {viewMode === 'DONE_FILING' ? (
+                        <div 
+                          onClick={() => setActionChoice('RESET')}
+                          className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                            actionChoice === 'RESET' 
+                              ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
+                              : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-xs block text-amber-900">
+                              {actionCategory === 'BIR' ? '3. Cancel choice / reset to action pending' : '2. Cancel choice / reset to action pending'}
+                            </span>
+                            <p className="text-[11px] text-slate-500">Removes logged assessment and returns item back to To-Do List.</p>
+                          </div>
+                          {actionChoice === 'RESET' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
+                        </div>
+                      ) : (
+                        <div 
+                          onClick={() => setActionChoice('NO_PAYMENT')}
+                          className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                            actionChoice === 'NO_PAYMENT' 
+                              ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
+                              : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                          }`}
+                        >
+                          <div className="space-y-0.5">
+                            <span className="font-bold text-xs block text-emerald-900">
+                              {actionCategory === 'BIR' ? '3. No Payment Needed / Zero Tax Filed' : '2. No Payment Needed / Zero Tax Filed'}
+                            </span>
+                            <p className="text-[11px] text-slate-500">Marks this return as filed with zero payment / no tax due.</p>
+                          </div>
+                          {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
 
                 <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600 flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -1102,7 +1192,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               </div>
 
               {/* Amount Input (Prominent & Larger Text) */}
-              {actionChoice === 'PAYABLE' && (
+              {actionChoice === 'PAYABLE' && isPayableObligation(actionFormCode) && (
                 <div className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-200 space-y-1.5">
                   <label className="block text-indigo-950 font-extrabold text-sm">
                     Enter Assessed Payable Amount (₱) *
@@ -1121,7 +1211,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                 </div>
               )}
 
-              {actionChoice === 'EXCESS_INPUT' && (
+              {actionChoice === 'EXCESS_INPUT' && isPayableObligation(actionFormCode) && (
                 <div className="bg-purple-50/50 p-4 rounded-xl border border-purple-200 space-y-1.5">
                   <label className="block text-purple-950 font-extrabold text-sm">
                     Enter Excess Input Amount (Will convert to -₱) *
@@ -1165,8 +1255,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
       {/* Modal: Create Monthly Assessment / Payable */}
       {showCreateAssessmentModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-2xl text-slate-800 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full space-y-4 text-xs shadow-2xl text-slate-800 animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-rose-600" />
@@ -1218,9 +1308,11 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                   >
                     {assessmentCategory === 'BIR' ? (
                       masterChoices.birTaxOptions && masterChoices.birTaxOptions.length > 0 ? (
-                        masterChoices.birTaxOptions.map((opt, idx) => (
-                          <option key={`bir_${opt.id}_${idx}`} value={opt.code}>{opt.code} - {opt.name}</option>
-                        ))
+                        masterChoices.birTaxOptions
+                          .filter(opt => isPayableObligation(opt.code, opt))
+                          .map((opt, idx) => (
+                            <option key={`bir_${opt.id}_${idx}`} value={opt.code}>{opt.code} - {opt.name}</option>
+                          ))
                       ) : (
                         <>
                           <option value="0619E">0619E Withholding Expanded</option>
@@ -1233,9 +1325,11 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                       )
                     ) : (
                       masterChoices.benefitsOptions && masterChoices.benefitsOptions.length > 0 ? (
-                        masterChoices.benefitsOptions.map((opt, idx) => (
-                          <option key={`ben_${opt.id}_${idx}`} value={opt.code}>{opt.code} - {opt.name}</option>
-                        ))
+                        masterChoices.benefitsOptions
+                          .filter(opt => isPayableObligation(opt.code, opt))
+                          .map((opt, idx) => (
+                            <option key={`ben_${opt.id}_${idx}`} value={opt.code}>{opt.code} - {opt.name}</option>
+                          ))
                       ) : (
                         <>
                           <option value="SSS Contribution">SSS Contribution</option>

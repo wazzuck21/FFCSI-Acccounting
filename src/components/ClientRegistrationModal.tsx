@@ -1732,8 +1732,8 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
 
         {/* Modal for adding custom BIR Deadline Rule */}
         {showAddBirModal && (
-          <div className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 max-w-md w-full space-y-4 text-xs">
+          <div className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 max-w-md w-full space-y-4 text-xs max-h-[90vh] overflow-y-auto my-auto">
               <h4 className="font-bold text-white text-sm">Add New Custom BIR Form / Rule</h4>
               <div>
                 <label className="block text-slate-400 mb-1">Form Code (e.g. 2551Q, 1601C)</label>
@@ -1772,14 +1772,14 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
                 <button
                   type="button"
                   onClick={() => setShowAddBirModal(false)}
-                  className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded"
+                  className="px-3 py-1.5 bg-slate-800 text-slate-300 rounded cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleAddCustomBirOption}
-                  className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold rounded"
+                  className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold rounded cursor-pointer"
                 >
                   Save & Add
                 </button>
@@ -1790,8 +1790,8 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
 
         {/* Modal for adding custom Employee Benefits Statutory Item */}
         {showAddBenefitsModal && (
-          <div className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 max-w-md w-full space-y-4 text-xs">
+          <div className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-slate-900 border border-slate-700 rounded-xl p-5 max-w-md w-full space-y-4 text-xs max-h-[90vh] overflow-y-auto my-auto">
               <h4 className="font-bold text-white text-sm flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                 Add New Child Loan / Benefit Item
