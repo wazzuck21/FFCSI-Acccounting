@@ -32,7 +32,8 @@ import {
   ExternalLink,
   Sparkles,
   Layers,
-  Lock
+  Lock,
+  MessageSquare
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 
@@ -60,6 +61,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'BIR' | 'Benefits'>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'PENDING_ACTION' | 'LOGGED' | 'ZERO_PAYMENT'>('PENDING_ACTION');
+  const [clientStatusFilter, setClientStatusFilter] = useState<'ALL' | 'Active' | 'For Compliance'>('ALL');
 
   // View Mode: 'TO_DO_LIST' vs 'DONE_FILING' ⭐
   const [viewMode, setViewMode] = useState<'TO_DO_LIST' | 'DONE_FILING'>('TO_DO_LIST');
@@ -87,6 +89,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const [assessmentYear, setAssessmentYear] = useState<number>(2026);
   const [isNoPaymentChoice, setIsNoPaymentChoice] = useState<boolean>(false);
   const [assessmentPayableAmount, setAssessmentPayableAmount] = useState<string>('');
+  const [assessmentNotes, setAssessmentNotes] = useState<string>('');
 
   // Toast
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -123,6 +126,11 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const myAssignedClients = clients
     .filter(client => client.status !== 'Archived')
     .filter(client => {
+      if (clientStatusFilter === 'Active') return client.status === 'Active';
+      if (clientStatusFilter === 'For Compliance') return client.status === 'For Compliance';
+      return true;
+    })
+    .filter(client => {
     if (selectedStaffName === 'ALL_STAFF') return true;
     const match = client.assignedStaffName === selectedStaffName || 
                   client.assignedStaffId === currentUser?.id ||
@@ -136,6 +144,18 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
            (client.birTaxServices || []).some(t => t.toLowerCase().includes(q)) ||
            (client.benefitsServices || []).some(b => b.toLowerCase().includes(q));
   });
+
+  // Client counts for status filter options
+  const assignedBaseClients = clients
+    .filter(client => client.status !== 'Archived')
+    .filter(client => {
+      if (selectedStaffName === 'ALL_STAFF') return true;
+      return client.assignedStaffName === selectedStaffName || 
+             client.assignedStaffId === currentUser?.id ||
+             (currentUser?.fullName && client.assignedStaffName?.toLowerCase().includes(currentUser.fullName.toLowerCase()));
+    });
+  const activeClientsCount = assignedBaseClients.filter(c => c.status === 'Active').length;
+  const forComplianceClientsCount = assignedBaseClients.filter(c => c.status === 'For Compliance').length;
 
   // Combine Master BIR & Benefits options
   const allMasterRules: CustomDeadlineRule[] = [
@@ -212,10 +232,12 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
 
           let status: ToDoItem['status'] = 'NO_ACTION';
           if (matchingPayable) {
-            if (matchingPayable.status === 'No Payment' || matchingPayable.payableAmount === 0) {
-              status = 'NO_PAYMENT';
-            } else if (matchingPayable.status === 'Paid') {
+            if (matchingPayable.status === 'Paid') {
               status = 'FILED';
+            } else if (matchingPayable.status === 'No Payment') {
+              status = 'NO_PAYMENT';
+            } else if (matchingPayable.payableAmount === 0) {
+              status = 'NO_PAYMENT';
             } else {
               status = 'PAYABLE_LOGGED';
             }
@@ -303,24 +325,28 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     const isNeverPayable = item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.formCode);
 
     if (item.existingPayable) {
-      if (item.existingPayable.payableAmount > 0 && !isNeverPayable) {
+      if (item.existingPayable.status === 'Paid') {
+        setActionChoice('FILED');
+        setPayableAmountInput(String(item.existingPayable.payableAmount || 0));
+      } else if (item.existingPayable.payableAmount > 0 && !isNeverPayable) {
         setActionChoice('PAYABLE');
         setPayableAmountInput(String(item.existingPayable.payableAmount));
       } else {
         setActionChoice('NO_PAYMENT');
         setPayableAmountInput('0');
       }
+      setActionNotes(item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment || '');
     } else {
       if (isNeverPayable) {
-        setActionChoice('NO_PAYMENT');
+        setActionChoice('FILED');
         setPayableAmountInput('0');
       } else {
         setActionChoice('PAYABLE');
         setPayableAmountInput('');
       }
+      setActionNotes('');
     }
 
-    setActionNotes('');
     setActionModalOpen(true);
   };
 
@@ -341,6 +367,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     }
 
     const monthStr = `${selectedYear}-${monthNumStr}`;
+    const cleanNotes = actionNotes.trim();
 
     if (actionChoice === 'PAYABLE') {
       const amount = Number(payableAmountInput);
@@ -358,13 +385,16 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         year: selectedYear,
         payableAmount: amount,
         status: 'Unpaid',
+        notes: cleanNotes || undefined,
+        remarks: cleanNotes || undefined,
+        comment: cleanNotes || undefined,
         createdById: currentUser?.id || 'staff',
         createdByName: currentUser?.fullName || 'Accountant',
       });
 
       addAuditLog(
         'Set Payable Action',
-        `Logged ₱${amount.toLocaleString()} payable for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}`,
+        `Logged ₱${amount.toLocaleString()} payable for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}${cleanNotes ? ` [Notes: ${cleanNotes}]` : ''}`,
         currentUser?.id || '',
         currentUser?.fullName || ''
       );
@@ -387,13 +417,16 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         year: selectedYear,
         payableAmount: negativeAmount,
         status: 'No Payment',
+        notes: cleanNotes || undefined,
+        remarks: cleanNotes || undefined,
+        comment: cleanNotes || undefined,
         createdById: currentUser?.id || 'staff',
         createdByName: currentUser?.fullName || 'Accountant',
       });
 
       addAuditLog(
         'Set Excess Input Action',
-        `Logged Excess Input ₱${negativeAmount.toLocaleString()} credit for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}`,
+        `Logged Excess Input ₱${negativeAmount.toLocaleString()} credit for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}${cleanNotes ? ` [Notes: ${cleanNotes}]` : ''}`,
         currentUser?.id || '',
         currentUser?.fullName || ''
       );
@@ -409,18 +442,21 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         year: selectedYear,
         payableAmount: 0,
         status: 'No Payment',
+        notes: cleanNotes || undefined,
+        remarks: cleanNotes || undefined,
+        comment: cleanNotes || undefined,
         createdById: currentUser?.id || 'staff',
         createdByName: currentUser?.fullName || 'Accountant',
       });
 
       addAuditLog(
-        'Set Zero Payment Action',
-        `Logged No Payment / Zero Tax filed for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}`,
+        'Set No Payment / No Need To File Action',
+        `Logged No Payment Needed / Zero Tax Filed / No Need To File for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}${cleanNotes ? ` [Reason/Comment: ${cleanNotes}]` : ''}`,
         currentUser?.id || '',
         currentUser?.fullName || ''
       );
 
-      showToast(`Logged No Payment / Zero Tax filed for ${actionClient.companyName} (${actionFormCode})!`);
+      showToast(`Logged No Payment Needed / Zero Tax Filed / No Need To File for ${actionClient.companyName} (${actionFormCode})!`);
     } else if (actionChoice === 'FILED') {
       addPayable({
         clientId: actionClient.id,
@@ -431,11 +467,21 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         year: selectedYear,
         payableAmount: Number(payableAmountInput) || 0,
         status: 'Paid',
+        notes: cleanNotes || undefined,
+        remarks: cleanNotes || undefined,
+        comment: cleanNotes || undefined,
         createdById: currentUser?.id || 'staff',
         createdByName: currentUser?.fullName || 'Accountant',
       });
 
-      showToast(`Marked ${actionFormCode} as Already Filed & Completed for ${actionClient.companyName}!`);
+      addAuditLog(
+        'Done Filing Action',
+        `Marked ( Done Filing ) for ${actionClient.companyName} (${actionFormCode}) - ${currentPeriodCode}${cleanNotes ? ` [Notes: ${cleanNotes}]` : ''}`,
+        currentUser?.id || '',
+        currentUser?.fullName || ''
+      );
+
+      showToast(`Marked ( Done Filing ) for ${actionClient.companyName} (${actionFormCode})!`);
     } else if (actionChoice === 'RESET') {
       resetPayableAssessment(actionClient.id, actionFormCode, monthStr);
       showToast(`Reset ${actionClient.companyName} (${actionFormCode}) back to Action Pending in To-Do List!`);
@@ -459,6 +505,8 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
       return;
     }
 
+    const cleanNotes = assessmentNotes.trim();
+
     addPayable({
       clientId: targetClient.id,
       clientName: targetClient.companyName,
@@ -468,21 +516,27 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
       year: Number(assessmentYear),
       payableAmount: amount,
       status: isNoPaymentChoice ? 'No Payment' : 'Unpaid',
+      notes: cleanNotes || undefined,
+      remarks: cleanNotes || undefined,
+      comment: cleanNotes || undefined,
       createdById: currentUser?.id || 'staff',
       createdByName: currentUser?.fullName || 'Accountant',
     });
 
     addAuditLog(
-      'Payable Assessment Created',
-      `Created ${assessmentCategory} ${assessmentItemName} payable of ₱${amount.toLocaleString()} for ${targetClient.companyName}`,
+      isNoPaymentChoice ? 'Zero Payment Assessment Created' : 'Payable Assessment Created',
+      isNoPaymentChoice 
+        ? `Created No Payment Needed / Zero Tax Filed / Need To File assessment for ${targetClient.companyName} (${assessmentCategory} ${assessmentItemName})${cleanNotes ? ` [Reason: ${cleanNotes}]` : ''}`
+        : `Created ${assessmentCategory} ${assessmentItemName} payable of ₱${amount.toLocaleString()} for ${targetClient.companyName}${cleanNotes ? ` [Notes: ${cleanNotes}]` : ''}`,
       currentUser?.id || '',
       currentUser?.fullName || ''
     );
 
-    showToast(`Created ${assessmentCategory} (${assessmentItemName}) Assessment for ${targetClient.companyName}!`);
+    showToast(`Created ${assessmentCategory} (${assessmentItemName}) ${isNoPaymentChoice ? 'No Payment / Zero Tax' : 'Payable'} Assessment for ${targetClient.companyName}!`);
     setShowCreateAssessmentModal(false);
     setIsNoPaymentChoice(false);
     setAssessmentPayableAmount('');
+    setAssessmentNotes('');
   };
 
   // Export PDF To-Do List or Done Filing
@@ -671,6 +725,22 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
           </button>
         </div>
 
+        {/* Client Status Filter Dropdown */}
+        <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 text-xs shrink-0 font-bold">
+          <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+          <label htmlFor="myClientsStatusFilter" className="font-bold text-slate-600 shrink-0">Clients:</label>
+          <select
+            id="myClientsStatusFilter"
+            value={clientStatusFilter}
+            onChange={e => setClientStatusFilter(e.target.value as 'ALL' | 'Active' | 'For Compliance')}
+            className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">All Clients ({assignedBaseClients.length})</option>
+            <option value="Active">Active Clients ({activeClientsCount})</option>
+            <option value="For Compliance">For Compliance ({forComplianceClientsCount})</option>
+          </select>
+        </div>
+
         {/* Category Filters */}
         <div className="flex items-center gap-1.5">
           <button
@@ -818,20 +888,32 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                               <span className="font-mono font-black text-amber-800 text-sm sm:text-base bg-amber-50 px-3 py-1 rounded-xl border border-amber-200 block shadow-2xs">
                                 ₱0.00
                               </span>
-                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded border border-amber-200 mt-0.5">
-                                Zero Payment / Filed
+                              <span className="text-[10px] font-bold text-amber-700 bg-amber-100/60 px-2 py-0.5 rounded border border-amber-200 mt-0.5 max-w-[240px] text-right">
+                                No Payment Needed / Zero Tax Filed / No Need To File
                               </span>
+                              {(item.existingPayable?.notes || item.existingPayable?.remarks || item.existingPayable?.comment) && (
+                                <span className="text-[9px] text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 mt-0.5 flex items-center gap-1 max-w-[220px] truncate" title={item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}>
+                                  <MessageSquare className="w-2.5 h-2.5 shrink-0" />
+                                  <span className="truncate">{item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}</span>
+                                </span>
+                              )}
                             </div>
                           )}
 
                           {item.status === 'FILED' && (
                             <div className="text-right flex flex-col items-end">
                               <span className="font-mono font-black text-emerald-800 text-sm sm:text-base bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 block shadow-2xs">
-                                ₱{item.existingPayable?.payableAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                ₱{item.existingPayable?.payableAmount?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                               </span>
                               <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/60 px-2 py-0.5 rounded border border-emerald-200 mt-0.5">
-                                Filed & Completed
+                                {item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.formCode) ? '( Done Filing )' : 'Filed & Completed'}
                               </span>
+                              {(item.existingPayable?.notes || item.existingPayable?.remarks || item.existingPayable?.comment) && (
+                                <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 mt-0.5 flex items-center gap-1 max-w-[220px] truncate" title={item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}>
+                                  <MessageSquare className="w-2.5 h-2.5 shrink-0" />
+                                  <span className="truncate">{item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}</span>
+                                </span>
+                              )}
                             </div>
                           )}
 
@@ -968,15 +1050,31 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                         )}
 
                         {item.status === 'NO_PAYMENT' && (
-                          <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold rounded-lg text-[10px] flex items-center gap-1">
-                            <Ban className="w-3 h-3 text-amber-600" /> No Payment / Zero Filed
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200 font-bold rounded-lg text-[10px] flex items-center gap-1">
+                              <Ban className="w-3 h-3 text-amber-600 shrink-0" /> No Payment Needed / Zero Tax Filed / No Need To File
+                            </span>
+                            {(item.existingPayable?.notes || item.existingPayable?.remarks || item.existingPayable?.comment) && (
+                              <span className="text-[9px] text-amber-900 bg-amber-100/60 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1 max-w-[220px] truncate" title={item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}>
+                                <MessageSquare className="w-2.5 h-2.5 shrink-0" />
+                                <span className="truncate">{item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}</span>
+                              </span>
+                            )}
+                          </div>
                         )}
 
                         {item.status === 'FILED' && (
-                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[10px] flex items-center gap-1">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Filed & Completed
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="px-2.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[10px] flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> {item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.formCode) ? '( Done Filing )' : 'Filed & Completed'}
+                            </span>
+                            {(item.existingPayable?.notes || item.existingPayable?.remarks || item.existingPayable?.comment) && (
+                              <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 flex items-center gap-1 max-w-[220px] truncate" title={item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}>
+                                <MessageSquare className="w-2.5 h-2.5 shrink-0" />
+                                <span className="truncate">{item.existingPayable.notes || item.existingPayable.remarks || item.existingPayable.comment}</span>
+                              </span>
+                            )}
+                          </div>
                         )}
 
                         {item.status === 'FILED' && !isSuperAdmin ? (
@@ -1069,44 +1167,99 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                           <span className="text-base">📁</span>
                           <div>
                             <p className="font-bold">Filing / Submission Only (Never Payable)</p>
-                            <p className="text-[11px] text-amber-800">This compliance requirement (e.g. SAWT, QAP, AT RELIEF) is strictly for document submission or schedule filing. It generates no payment obligation.</p>
+                            <p className="text-[11px] text-amber-800">This compliance requirement (e.g. SAWT, QAP, AT RELIEF, SLSP, 1604) is strictly for document submission or schedule filing with no tax payment obligation.</p>
                           </div>
                         </div>
 
                         {viewMode === 'DONE_FILING' ? (
-                          <div 
-                            onClick={() => setActionChoice('RESET')}
-                            className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                              actionChoice === 'RESET' 
-                                ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
-                                : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
-                            }`}
-                          >
-                            <div className="space-y-0.5">
-                              <span className="font-bold text-xs block text-amber-900">
-                                Cancel submission status / reset to action pending
-                              </span>
-                              <p className="text-[11px] text-slate-500">Removes logged status and returns item back to To-Do List.</p>
+                          <>
+                            <div 
+                              onClick={() => setActionChoice('RESET')}
+                              className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                                actionChoice === 'RESET' 
+                                  ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
+                                  : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                              }`}
+                            >
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-xs block text-amber-900">
+                                  Cancel submission status / reset to action pending
+                                </span>
+                                <p className="text-[11px] text-slate-500">Removes logged status and returns item back to To-Do List.</p>
+                              </div>
+                              {actionChoice === 'RESET' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
                             </div>
-                            {actionChoice === 'RESET' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
-                          </div>
+
+                            <div 
+                              onClick={() => setActionChoice('FILED')}
+                              className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                                actionChoice === 'FILED' 
+                                  ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
+                                  : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                              }`}
+                            >
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-xs block text-emerald-900">
+                                  1. ( Done Filing )
+                                </span>
+                                <p className="text-[11px] text-slate-500">Confirms that this schedule/attachment has been filed and submitted.</p>
+                              </div>
+                              {actionChoice === 'FILED' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
+                            </div>
+
+                            <div 
+                              onClick={() => setActionChoice('NO_PAYMENT')}
+                              className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                                actionChoice === 'NO_PAYMENT' 
+                                  ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
+                                  : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                              }`}
+                            >
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-xs block text-amber-900">
+                                  2. No Payment Needed / Zero Tax Filed / No Need To File
+                                </span>
+                                <p className="text-[11px] text-slate-500">Marks as zero filing or no need to file (e.g. Nothing to Relief / SAWT, Nil return, etc.).</p>
+                              </div>
+                              {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
+                            </div>
+                          </>
                         ) : (
-                          <div 
-                            onClick={() => setActionChoice('NO_PAYMENT')}
-                            className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
-                              actionChoice === 'NO_PAYMENT' 
-                                ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
-                                : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
-                            }`}
-                          >
-                            <div className="space-y-0.5">
-                              <span className="font-bold text-xs block text-emerald-900">
-                                Mark as Submitted / Filed (Compliance Completed)
-                              </span>
-                              <p className="text-[11px] text-slate-500">Confirms that this schedule/attachment has been filed successfully.</p>
+                          <>
+                            <div 
+                              onClick={() => setActionChoice('FILED')}
+                              className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                                actionChoice === 'FILED' 
+                                  ? 'bg-emerald-50/80 border-emerald-500 text-slate-900 ring-2 ring-emerald-200' 
+                                  : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                              }`}
+                            >
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-xs block text-emerald-900">
+                                  1. ( Done Filing )
+                                </span>
+                                <p className="text-[11px] text-slate-500">Confirms that this schedule/attachment has been filed and submitted.</p>
+                              </div>
+                              {actionChoice === 'FILED' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
                             </div>
-                            {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
-                          </div>
+
+                            <div 
+                              onClick={() => setActionChoice('NO_PAYMENT')}
+                              className={`p-3.5 rounded-xl border cursor-pointer flex items-center justify-between transition-all ${
+                                actionChoice === 'NO_PAYMENT' 
+                                  ? 'bg-amber-50/80 border-amber-500 text-slate-900 ring-2 ring-amber-200' 
+                                  : 'bg-slate-50/70 border-slate-200 text-slate-700 hover:bg-slate-100/70'
+                              }`}
+                            >
+                              <div className="space-y-0.5">
+                                <span className="font-bold text-xs block text-amber-900">
+                                  2. No Payment Needed / Zero Tax Filed / No Need To File
+                                </span>
+                                <p className="text-[11px] text-slate-500">Marks as zero filing or no need to file (e.g. Nothing to Relief / SAWT, Nil return, etc.).</p>
+                              </div>
+                              {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-amber-600 shrink-0" />}
+                            </div>
+                          </>
                         )}
                       </div>
                     );
@@ -1174,9 +1327,9 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                         >
                           <div className="space-y-0.5">
                             <span className="font-bold text-xs block text-emerald-900">
-                              {actionCategory === 'BIR' ? '3. No Payment Needed / Zero Tax Filed' : '2. No Payment Needed / Zero Tax Filed'}
+                              {actionCategory === 'BIR' ? '3. No Payment Needed / Zero Tax Filed / No Need To File' : '2. No Payment Needed / Zero Tax Filed / No Need To File'}
                             </span>
-                            <p className="text-[11px] text-slate-500">Marks this return as filed with zero payment / no tax due.</p>
+                            <p className="text-[11px] text-slate-500">Marks this return as filed with zero payment / no tax due, or no filing required for this period.</p>
                           </div>
                           {actionChoice === 'NO_PAYMENT' && <Check className="w-5 h-5 text-emerald-600 shrink-0" />}
                         </div>
@@ -1229,6 +1382,57 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                       Note: Will be saved as -₱{Number(payableAmountInput).toLocaleString()} credit.
                     </p>
                   )}
+                </div>
+              )}
+
+              {/* Comment / Reason Box (Ex. Nothing to Relief / SAWT, Nil return, etc.) */}
+              {(actionChoice === 'NO_PAYMENT' || (!isPayableObligation(actionFormCode) && actionChoice !== 'RESET')) && (
+                <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-2 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-amber-950 font-bold text-xs flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-amber-700" />
+                      Comment / Reason Box (Ex. Nothing to Relief / SAWT, Nil return, etc.):
+                    </label>
+                    <span className="text-[10px] text-amber-700 font-semibold bg-amber-100/70 px-2 py-0.5 rounded-full">
+                      Optional Note
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={2}
+                    value={actionNotes}
+                    onChange={e => setActionNotes(e.target.value)}
+                    placeholder="Ex. Nothing to Relief / SAWT, Nil return, Zero gross sales, Non-taxable period, etc."
+                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3.5 py-2 text-slate-900 text-xs shadow-2xs focus:outline-none focus:ring-2 focus:ring-amber-200 placeholder:text-slate-400 font-medium"
+                  />
+
+                  {/* Quick Suggestions / Presets */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Quick Presets:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        'Nothing to Relief / SAWT',
+                        'Zero Tax Due / Nil Return',
+                        'Excess Input Credit Carried Over',
+                        'No Transactions / Inactive Period',
+                        'Filing / Attachment Only',
+                        'Exempt / Non-Taxable'
+                      ].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setActionNotes(preset)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer ${
+                            actionNotes === preset
+                              ? 'bg-amber-600 text-white border-amber-600 font-bold'
+                              : 'bg-white hover:bg-amber-100 text-amber-900 border-amber-200'
+                          }`}
+                        >
+                          + {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1375,12 +1579,63 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                     onChange={e => setIsNoPaymentChoice(e.target.checked)}
                     className="w-4 h-4 rounded border-slate-300 text-rose-600 focus:ring-rose-500 cursor-pointer"
                   />
-                  <span>Choice: No Payment / Zero Tax for this month</span>
+                  <span>Choice: No Payment Needed / Zero Tax Filed / No Need To File for this month</span>
                 </label>
                 <p className="text-[11px] text-slate-500 pl-6 leading-relaxed">
-                  Check this if the client has zero tax due or no payment required for this specific filing period.
+                  Check this if the client has zero tax due, schedule submission only (e.g. SAWT/Relief), or no payment required for this specific filing period.
                 </p>
               </div>
+
+              {/* Comment / Reason Box for Create Assessment */}
+              {isNoPaymentChoice && (
+                <div className="bg-amber-50/70 p-3.5 rounded-xl border border-amber-200 space-y-2 animate-in fade-in duration-150">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-amber-950 font-bold text-xs flex items-center gap-1.5">
+                      <MessageSquare className="w-3.5 h-3.5 text-amber-700" />
+                      Comment / Reason Box (Ex. Nothing to Relief / SAWT, Nil return, etc.):
+                    </label>
+                    <span className="text-[10px] text-amber-700 font-semibold bg-amber-100/70 px-2 py-0.5 rounded-full">
+                      Optional Note
+                    </span>
+                  </div>
+
+                  <textarea
+                    rows={2}
+                    value={assessmentNotes}
+                    onChange={e => setAssessmentNotes(e.target.value)}
+                    placeholder="Ex. Nothing to Relief / SAWT, Nil return, Zero gross sales, Non-taxable period, etc."
+                    className="w-full bg-white border border-amber-300 focus:border-amber-500 rounded-xl px-3 py-2 text-slate-900 text-xs shadow-2xs focus:outline-none focus:ring-2 focus:ring-amber-200 placeholder:text-slate-400 font-medium"
+                  />
+
+                  {/* Quick Suggestions / Presets */}
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">Quick Presets:</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        'Nothing to Relief / SAWT',
+                        'Zero Tax Due / Nil Return',
+                        'Excess Input Credit Carried Over',
+                        'No Transactions / Inactive Period',
+                        'Filing / Attachment Only',
+                        'Exempt / Non-Taxable'
+                      ].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setAssessmentNotes(preset)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors cursor-pointer ${
+                            assessmentNotes === preset
+                              ? 'bg-amber-600 text-white border-amber-600 font-bold'
+                              : 'bg-white hover:bg-amber-100 text-amber-900 border-amber-200'
+                          }`}
+                        >
+                          + {preset}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Payable Amount Input */}
               {!isNoPaymentChoice && (

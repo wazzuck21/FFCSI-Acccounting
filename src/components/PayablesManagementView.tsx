@@ -566,7 +566,16 @@ export const PayablesManagementView: React.FC = () => {
                         )}
                       </div>
                     ) : p.status === 'No Payment' ? (
-                      <span className="italic text-slate-400">No payment required for this month</span>
+                      <div className="space-y-0.5">
+                        <span className="text-amber-800 font-bold block text-[11px]">No Payment Needed / Zero Tax Filed / No Need To File</span>
+                        {(p.notes || p.remarks || p.comment) ? (
+                          <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 block max-w-xs truncate" title={p.notes || p.remarks || p.comment}>
+                            Note: {p.notes || p.remarks || p.comment}
+                          </span>
+                        ) : (
+                          <span className="italic text-slate-400 text-[10px]">Nil return / zero tax filed</span>
+                        )}
+                      </div>
                     ) : (
                       <div className="space-y-1">
                         <span className="text-amber-700 font-bold block">Awaiting Super Admin Payment</span>

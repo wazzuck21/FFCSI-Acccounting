@@ -20,6 +20,7 @@ import {
   Check,
   X,
   User,
+  Users,
   Filter,
   Layers,
   Zap,
@@ -31,7 +32,8 @@ import {
   Lock,
   ArrowUpDown,
   Sparkles,
-  MapPin
+  MapPin,
+  MessageSquare
 } from 'lucide-react';
 
 export const ComplianceMonitoringView: React.FC = () => {
@@ -45,7 +47,7 @@ export const ComplianceMonitoringView: React.FC = () => {
   // Controls & Filters (Default to current real month and year)
   const [selectedMonth, setSelectedMonth] = useState<('Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec')>(currentMonthCode);
   const [selectedYear, setSelectedYear] = useState<number>(currentYearNum);
-  const [clientStatusTab, setClientStatusTab] = useState<'Active' | 'For Compliance'>('Active');
+  const [clientStatusTab, setClientStatusTab] = useState<'ALL' | 'Active' | 'For Compliance'>('ALL');
   const [filerTypeFilter, setFilerTypeFilter] = useState<'ALL' | 'Manual' | 'eFPS'>('ALL');
   const [deadlineSortOrder, setDeadlineSortOrder] = useState<'DateAsc' | 'ClientAsc'>('DateAsc');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
@@ -104,10 +106,17 @@ export const ComplianceMonitoringView: React.FC = () => {
     return `${mName} ${d}, ${y}`;
   };
 
-  // 1. Clients belonging to current Active vs For Compliance tab
-  const currentTabClients = clients.filter(c => 
-    clientStatusTab === 'Active' ? c.status === 'Active' : c.status === 'For Compliance'
-  );
+  // 1. Clients belonging to current Active vs For Compliance vs ALL tab
+  const allNonArchivedClients = clients.filter(c => c.status !== 'Archived');
+  const activeClientsList = clients.filter(c => c.status === 'Active');
+  const forComplianceClientsList = clients.filter(c => c.status === 'For Compliance');
+
+  const currentTabClients = clients.filter(c => {
+    if (c.status === 'Archived') return false;
+    if (clientStatusTab === 'Active') return c.status === 'Active';
+    if (clientStatusTab === 'For Compliance') return c.status === 'For Compliance';
+    return true; // 'ALL'
+  });
 
   const manualClientsCount = currentTabClients.filter(c => (c.registrationMethod || 'Manual') === 'Manual').length;
   const efpsClientsCount = currentTabClients.filter(c => c.registrationMethod === 'eFPS').length;
@@ -148,7 +157,7 @@ export const ComplianceMonitoringView: React.FC = () => {
     formattedDateStr: string; // e.g. July 10, 2026
     periodLabel: string;
     status: 'Pending' | 'For Payment' | 'Due Today' | 'Overdue' | 'Already Paid';
-    assessmentTag?: 'Assessed - For Payment' | 'Assessed - Excess Input Tax' | 'Assessed - Zero Return / No Payment' | 'Already Paid' | 'Pending' | 'Due Today' | 'Overdue';
+    assessmentTag?: 'Assessed - For Payment' | 'Assessed - Excess Input Tax' | 'Assessed - Zero Return / No Payment' | 'Done Filing' | 'Already Paid' | 'Pending' | 'Due Today' | 'Overdue';
     isUnenrolledForm?: boolean;
     assignedStaffName: string;
     isBranch?: boolean;
@@ -171,6 +180,9 @@ export const ComplianceMonitoringView: React.FC = () => {
     filingRequired?: FilingRequired;
     submissionMethod?: SubmissionMethod;
     complianceCategory?: ComplianceCategory;
+    notes?: string;
+    remarks?: string;
+    comment?: string;
   }
 
   const compiledDeadlines: CompiledClientDeadline[] = [];
@@ -225,21 +237,25 @@ export const ComplianceMonitoringView: React.FC = () => {
 
           const isTagAsPaidInPayables = matchedPayable?.status === 'Paid';
           const isPayableUnpaid = matchedPayable?.status === 'Unpaid';
-          const isNoPayment = matchedPayable?.status === 'No Payment' || (recordedAmount === 0 && matchedPayable !== undefined);
+          const isNoPayment = matchedPayable?.status === 'No Payment';
+          const isNeverPayableRule = rule.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(rule.code);
           const isExcessInput = recordedAmount !== undefined && recordedAmount !== null && recordedAmount < 0;
 
           let calculatedStatus: CompiledClientDeadline['status'] = 'Pending';
           let assessmentTag: CompiledClientDeadline['assessmentTag'] = 'Pending';
 
-          if (isTagAsPaidInPayables || (existing?.status === 'Already Paid' && !isPayableUnpaid)) {
+          if (isTagAsPaidInPayables) {
             calculatedStatus = 'Already Paid';
-            assessmentTag = 'Already Paid';
+            assessmentTag = isNeverPayableRule ? 'Done Filing' : 'Already Paid';
           } else if (isExcessInput) {
             calculatedStatus = 'Already Paid';
             assessmentTag = 'Assessed - Excess Input Tax';
           } else if (isNoPayment) {
             calculatedStatus = 'Already Paid';
             assessmentTag = 'Assessed - Zero Return / No Payment';
+          } else if (existing?.status === 'Already Paid' && !isPayableUnpaid) {
+            calculatedStatus = 'Already Paid';
+            assessmentTag = isNeverPayableRule ? 'Done Filing' : 'Already Paid';
           } else {
             const todayStr = new Date().toISOString().substring(0, 10);
             if (deadlineInfo.finalDeadline === todayStr) {
@@ -296,7 +312,10 @@ export const ComplianceMonitoringView: React.FC = () => {
             paymentBehavior: rule.paymentBehavior || getPaymentBehavior(rule.code, rule),
             filingRequired: rule.filingRequired || getFilingRequired(rule.code, rule),
             submissionMethod: rule.submissionMethod || getSubmissionMethod(rule.code, rule),
-            complianceCategory: rule.complianceCategory || getComplianceCategory(rule.code, rule)
+            complianceCategory: rule.complianceCategory || getComplianceCategory(rule.code, rule),
+            notes: matchedPayable?.notes || matchedPayable?.remarks || matchedPayable?.comment || existing?.remarks || existing?.notes,
+            remarks: matchedPayable?.remarks || matchedPayable?.notes || matchedPayable?.comment || existing?.remarks || existing?.notes,
+            comment: matchedPayable?.comment || matchedPayable?.notes || matchedPayable?.remarks || existing?.remarks || existing?.notes
           });
         }
       }
@@ -388,10 +407,6 @@ export const ComplianceMonitoringView: React.FC = () => {
   // Sorted list of due dates
   const sortedDueDates = Object.keys(groupedByDateMap).sort();
 
-  // Active Clients vs For Compliance Clients Pending Deadline Counts
-  const activeClientsList = clients.filter(c => c.status === 'Active');
-  const forComplianceClientsList = clients.filter(c => c.status === 'For Compliance');
-
   // Helper function to count pending deadlines for a given client set in current month/year
   const getPendingCountForClients = (clientList: typeof clients) => {
     let pending = 0;
@@ -443,6 +458,7 @@ export const ComplianceMonitoringView: React.FC = () => {
     return pending;
   };
 
+  const allPendingCount = React.useMemo(() => getPendingCountForClients(allNonArchivedClients), [clients, complianceItems, payables, selectedMonth, selectedYear, masterChoices]);
   const activePendingCount = React.useMemo(() => getPendingCountForClients(activeClientsList), [clients, complianceItems, payables, selectedMonth, selectedYear, masterChoices]);
   const forCompliancePendingCount = React.useMemo(() => getPendingCountForClients(forComplianceClientsList), [clients, complianceItems, payables, selectedMonth, selectedYear, masterChoices]);
 
@@ -496,75 +512,36 @@ export const ComplianceMonitoringView: React.FC = () => {
                 Incoming Deadlines for {MONTH_FULL_NAMES[selectedMonth]} {selectedYear}
               </h3>
 
-              {/* Client Status Tabs placed directly after Incoming Deadlines with pending count inside! ⭐ */}
-              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 text-xs">
-                <button
-                  type="button"
-                  onClick={() => setClientStatusTab('Active')}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                    clientStatusTab === 'Active' ? 'bg-emerald-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
+              {/* Client Status Dropdown (Default: ALL) */}
+              <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <label htmlFor="clientStatusSelect" className="font-bold text-slate-600 shrink-0">Clients:</label>
+                <select
+                  id="clientStatusSelect"
+                  value={clientStatusTab}
+                  onChange={e => setClientStatusTab(e.target.value as 'ALL' | 'Active' | 'For Compliance')}
+                  className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
                 >
-                  <span>Active Clients ({activeClientsList.length})</span>
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
-                    clientStatusTab === 'Active' ? 'bg-emerald-800 text-white' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                  }`}>
-                    {activePendingCount} Pending
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setClientStatusTab('For Compliance')}
-                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-2 ${
-                    clientStatusTab === 'For Compliance' ? 'bg-amber-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <span>For Compliance Clients ({forComplianceClientsList.length})</span>
-                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
-                    clientStatusTab === 'For Compliance' ? 'bg-amber-800 text-white' : 'bg-amber-100 text-amber-800 border border-amber-300'
-                  }`}>
-                    {forCompliancePendingCount} Pending
-                  </span>
-                </button>
+                  <option value="ALL">All ({allNonArchivedClients.length}) • {allPendingCount} Pending</option>
+                  <option value="Active">Active Clients ({activeClientsList.length}) • {activePendingCount} Pending</option>
+                  <option value="For Compliance">For Compliance ({forComplianceClientsList.length}) • {forCompliancePendingCount} Pending</option>
+                </select>
               </div>
 
-              {/* Filer Method Filter / Sort: Manual vs eFPS */}
-              <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 text-xs items-center gap-1">
-                <span className="text-[10px] font-bold text-slate-500 uppercase px-1.5 hidden sm:inline">Filer:</span>
-                <button
-                  type="button"
-                  onClick={() => setFilerTypeFilter('ALL')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer ${
-                    filerTypeFilter === 'ALL' ? 'bg-slate-800 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
+              {/* Filer Method Dropdown (Default: ALL) */}
+              <div className="flex items-center gap-1.5 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <label htmlFor="filerTypeSelect" className="font-bold text-slate-600 shrink-0">Filer:</label>
+                <select
+                  id="filerTypeSelect"
+                  value={filerTypeFilter}
+                  onChange={e => setFilerTypeFilter(e.target.value as 'ALL' | 'Manual' | 'eFPS')}
+                  className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
                 >
-                  All
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilerTypeFilter('Manual')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    filerTypeFilter === 'Manual' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <span>Manual Filer</span>
-                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${filerTypeFilter === 'Manual' ? 'bg-indigo-800 text-white' : 'bg-slate-200 text-slate-700'}`}>
-                    {manualClientsCount}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFilerTypeFilter('eFPS')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                    filerTypeFilter === 'eFPS' ? 'bg-purple-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  <span>eFPS Filer</span>
-                  <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${filerTypeFilter === 'eFPS' ? 'bg-purple-800 text-white' : 'bg-slate-200 text-slate-700'}`}>
-                    {efpsClientsCount}
-                  </span>
-                </button>
+                  <option value="ALL">All Filers</option>
+                  <option value="Manual">Manual Filer ({manualClientsCount})</option>
+                  <option value="eFPS">eFPS Filer ({efpsClientsCount})</option>
+                </select>
               </div>
             </div>
           </div>
@@ -628,47 +605,31 @@ export const ComplianceMonitoringView: React.FC = () => {
             </select>
           </div>
 
-          {/* View Mode Toggle & Sort By Selector */}
+          {/* View Mode & Sort By Selector Dropdowns */}
           <div className="flex flex-wrap items-center gap-2">
-            <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 shrink-0 text-xs">
-              <button
-                type="button"
-                onClick={() => {
-                  setViewMode('Kanban');
-                  setSelectedMonth(currentMonthCode);
+            {/* View Mode Dropdown (Default: Kanban Board) */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 px-3 rounded-xl border border-slate-200 text-xs font-bold text-slate-700">
+              <Kanban className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <label htmlFor="viewModeSelect" className="text-slate-600 shrink-0">View Layout:</label>
+              <select
+                id="viewModeSelect"
+                value={viewMode}
+                onChange={e => {
+                  const mode = e.target.value as 'Kanban' | 'GroupedByDate' | 'AllCards';
+                  setViewMode(mode);
+                  if (mode === 'Kanban') {
+                    setSelectedMonth(currentMonthCode);
+                  }
                 }}
-                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'Kanban' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
+                className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
               >
-                <Kanban className="w-3.5 h-3.5" />
-                <span>Kanban Board</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setViewMode('GroupedByDate')}
-                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'GroupedByDate' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <CalendarIcon className="w-3.5 h-3.5" />
-                <span>Grouped by Date</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setViewMode('AllCards')}
-                className={`px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  viewMode === 'AllCards' ? 'bg-indigo-600 text-white shadow-2xs' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>All Deadline Cards ({filteredDeadlines.length})</span>
-              </button>
+                <option value="Kanban">Kanban Board</option>
+                <option value="GroupedByDate">Grouped by Date</option>
+                <option value="AllCards">All Deadline Cards ({filteredDeadlines.length})</option>
+              </select>
             </div>
 
-            {/* Sort By Dropdown placed right beside All Deadline Cards */}
+            {/* Sort By Dropdown */}
             <div className="flex items-center gap-1.5 bg-slate-100 p-1 px-3 rounded-xl border border-slate-200 text-xs font-bold text-slate-700">
               <ArrowUpDown className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
               <label htmlFor="deadlineSortSelect" className="text-slate-600 shrink-0">Sort By:</label>
@@ -948,8 +909,8 @@ export const ComplianceMonitoringView: React.FC = () => {
                             ₱{Math.abs(item.payableAmount || 0).toLocaleString()} (Tax Credit)
                           </span>
                         ) : item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
-                          <span className="font-mono font-bold text-teal-700 text-xs">
-                            ₱0.00 (Zero Return)
+                          <span className="font-mono font-bold text-amber-800 text-xs">
+                            ₱0.00 (Zero / Filed)
                           </span>
                         ) : item.payableAmount !== undefined && item.payableAmount !== null && item.payableAmount > 0 ? (
                           <span className="font-mono font-extrabold text-emerald-700 text-xs">
@@ -965,17 +926,53 @@ export const ComplianceMonitoringView: React.FC = () => {
                         <span>Due: <strong className="text-slate-800 font-mono">{item.formattedDateStr}</strong></span>
                         <div className="flex items-center gap-1">
                           {item.assessmentTag === 'Assessed - Excess Input Tax' ? (
-                            <span className="text-purple-900 font-bold bg-purple-100 border border-purple-200 px-2 py-0.5 rounded text-[10px]">
-                              Excess Input Tax
-                            </span>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-purple-900 font-bold bg-purple-100 border border-purple-200 px-2 py-0.5 rounded text-[10px]">
+                                Excess Input Tax
+                              </span>
+                              {(item.notes || item.remarks || item.comment) && (
+                                <span className="text-[9px] text-purple-900 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                  <MessageSquare className="w-2.5 h-2.5 shrink-0 text-purple-700" />
+                                  <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                </span>
+                              )}
+                            </div>
                           ) : item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
-                            <span className="text-teal-900 font-bold bg-teal-100 border border-teal-200 px-2 py-0.5 rounded text-[10px]">
-                              Zero Return / No Payment
-                            </span>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-amber-900 font-bold bg-amber-100 border border-amber-200 px-2 py-0.5 rounded text-[10px] text-right">
+                                No Payment Needed / Zero Tax Filed / No Need To File
+                              </span>
+                              {(item.notes || item.remarks || item.comment) && (
+                                <span className="text-[9px] text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                  <MessageSquare className="w-2.5 h-2.5 shrink-0 text-amber-700" />
+                                  <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                </span>
+                              )}
+                            </div>
+                          ) : item.assessmentTag === 'Done Filing' || (item.status === 'Already Paid' && (item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode))) ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-emerald-800 font-bold bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded text-[10px] flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" /> ( Done Filing )
+                              </span>
+                              {(item.notes || item.remarks || item.comment) && (
+                                <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                  <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                                  <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                </span>
+                              )}
+                            </div>
                           ) : item.status === 'Already Paid' ? (
-                            <span className="text-emerald-700 font-bold bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <CheckCircle2 className="w-3 h-3" /> Paid & Settled
-                            </span>
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="text-emerald-700 font-bold bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" /> Paid & Settled
+                              </span>
+                              {(item.notes || item.remarks || item.comment) && (
+                                <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                  <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                                  <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                </span>
+                              )}
+                            </div>
                           ) : item.status === 'For Payment' ? (
                             <span className="text-indigo-800 font-semibold bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
                               For Payment
@@ -1117,20 +1114,52 @@ export const ComplianceMonitoringView: React.FC = () => {
                           </div>
 
                           <div className="flex items-center gap-1.5">
-                            <span className={`px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border ${
-                              item.status === 'Already Paid'
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                : 'bg-slate-100 text-slate-600 border-slate-200'
-                            }`}>
-                              {item.status === 'Already Paid' ? (
-                                <>
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                  <span>Paid</span>
-                                </>
+                            {item.status === 'Already Paid' ? (
+                              item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-amber-50 text-amber-800 border-amber-200">
+                                    <CheckCircle2 className="w-3 h-3 text-amber-600" />
+                                    <span>No Payment Needed / Zero Tax Filed / No Need To File</span>
+                                  </span>
+                                  {(item.notes || item.remarks || item.comment) && (
+                                    <span className="text-[9px] text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                      <MessageSquare className="w-2.5 h-2.5 shrink-0 text-amber-700" />
+                                      <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              ) : item.assessmentTag === 'Done Filing' || item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    <span>( Done Filing )</span>
+                                  </span>
+                                  {(item.notes || item.remarks || item.comment) && (
+                                    <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                      <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                                      <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                    </span>
+                                  )}
+                                </div>
                               ) : (
-                                <span>Pay in Payables</span>
-                              )}
-                            </span>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    <span>Paid & Settled</span>
+                                  </span>
+                                  {(item.notes || item.remarks || item.comment) && (
+                                    <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                                      <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                                      <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              )
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-slate-100 text-slate-600 border-slate-200">
+                                Pay in Payables
+                              </span>
+                            )}
 
                             {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
                               <button
@@ -1214,20 +1243,52 @@ export const ComplianceMonitoringView: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <span className={`px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border ${
-                    item.status === 'Already Paid'
-                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                      : 'bg-slate-100 text-slate-600 border-slate-200'
-                  }`}>
-                    {item.status === 'Already Paid' ? (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>Settled</span>
-                      </>
+                  {item.status === 'Already Paid' ? (
+                    item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-amber-50 text-amber-800 border-amber-200">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
+                          <span>No Payment Needed / Zero Tax Filed / No Need To File</span>
+                        </span>
+                        {(item.notes || item.remarks || item.comment) && (
+                          <span className="text-[9px] text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                            <MessageSquare className="w-2.5 h-2.5 shrink-0 text-amber-700" />
+                            <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                          </span>
+                        )}
+                      </div>
+                    ) : item.assessmentTag === 'Done Filing' || item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>( Done Filing )</span>
+                        </span>
+                        {(item.notes || item.remarks || item.comment) && (
+                          <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                            <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                            <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                          </span>
+                        )}
+                      </div>
                     ) : (
-                      <span>Pay in BIR/Benefits Payables</span>
-                    )}
-                  </span>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Settled</span>
+                        </span>
+                        {(item.notes || item.remarks || item.comment) && (
+                          <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                            <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                            <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                          </span>
+                        )}
+                      </div>
+                    )
+                  ) : (
+                    <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-slate-100 text-slate-600 border-slate-200">
+                      Pay in BIR/Benefits Payables
+                    </span>
+                  )}
 
                   {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
                     <button

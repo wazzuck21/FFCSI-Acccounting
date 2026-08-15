@@ -294,6 +294,9 @@ export interface PayableRecord {
   year: number;
   payableAmount: number;
   status: PayableStatus;
+  notes?: string;
+  remarks?: string;
+  comment?: string;
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -955,16 +958,18 @@ export type CompanyExpenseCategory =
 
 export interface CompanyExpense {
   id: string;
+  templateId?: string; // Links monthly instance to base recurring template
   title: string; // e.g. "Meralco Office Electricity", "PLDT Fiber Internet", "BDO Corporate Card"
   category: CompanyExpenseCategory;
   vendorProvider: string; // e.g., "Meralco", "PLDT", "Maynilad", "Globe", "BDO"
   accountNumber?: string;
   amountType: 'Fixed Monthly' | 'Manual Statement';
   amount: number;
-  dueDateType: 'Fixed Monthly Day' | 'Manual Specific Date';
+  dueDateType: 'Fixed Monthly Day' | 'Manual Specific Date' | 'Date to input in Future';
   fixedDueDay?: number; // e.g. 15 for 15th of month
   dueDate: string; // YYYY-MM-DD
   monthYear: string; // e.g., "August 2026"
+  isRecurring?: boolean;
   
   status: 'Unpaid' | 'Pending' | 'Paid' | 'Overdue';
   
