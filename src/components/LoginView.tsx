@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { FFCSILogo } from './FFCSILogo';
 import { Building2, Lock, User as UserIcon, Eye, EyeOff, ShieldCheck, ArrowRight, AlertCircle, Sparkles } from 'lucide-react';
 
 export const LoginView: React.FC = () => {
@@ -46,14 +47,7 @@ export const LoginView: React.FC = () => {
         
         {/* Brand Header */}
         <div className="text-center space-y-3">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 text-white shadow-xl shadow-indigo-600/30 border border-indigo-400/30">
-            <Building2 className="w-8 h-8" />
-          </div>
-
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-white">AFMS Portal</h1>
-            <p className="text-xs text-slate-400 font-medium mt-1">Accounting Firm Management & Security System</p>
-          </div>
+          <FFCSILogo size="xl" variant="stacked" textColor="light" className="mx-auto" />
         </div>
 
         {/* Login Form Card */}
@@ -169,7 +163,7 @@ export const LoginView: React.FC = () => {
         {/* System Footer */}
         <div className="text-center text-[11px] text-slate-500 flex items-center justify-center gap-2">
           <ShieldCheck className="w-4 h-4 text-emerald-500" />
-          <span>AFMS Encrypted Offline-First Security Portal</span>
+          <span>FFCSI Encrypted Client & Compliance Portal</span>
         </div>
 
       </div>

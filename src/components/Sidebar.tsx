@@ -1,5 +1,6 @@
 import React from 'react';
 import { useAuth } from '../context/AuthContext';
+import { FFCSILogo } from './FFCSILogo';
 import { 
   LayoutDashboard, 
   Users, 
@@ -181,12 +182,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Drawer Header */}
             <div className="p-4 flex items-center justify-between border-b border-slate-100 mb-1">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold shadow-xs">
-                  <Building2 className="w-4 h-4" />
-                </div>
+                <FFCSILogo size={32} variant="icon" />
                 <div>
-                  <h3 className="font-bold text-slate-900 text-sm">AFMS Core Navigation</h3>
-                  <p className="text-[10px] text-slate-500 font-medium">Accounting Firm Management</p>
+                  <h3 className="font-extrabold font-serif text-slate-900 text-sm">FFCSI Navigation</h3>
+                  <p className="text-[10px] text-slate-500 font-medium">Family Friends Consultancy Services Inc.</p>
                 </div>
               </div>
               <button

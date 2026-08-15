@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
+import { FFCSILogo } from './FFCSILogo';
 import { 
   Building2, 
   Wifi, 
@@ -28,10 +29,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMen
   const [showNotifications, setShowNotifications] = useState(false);
 
   return (
-    <header className="bg-white border-b border-slate-200 text-slate-800 sticky top-0 z-30 px-6 py-3 shadow-2xs">
+    <header className="bg-white border-b border-slate-200 text-slate-800 sticky top-0 z-30 px-6 py-2.5 shadow-2xs">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
         
-        {/* Brand & Sync Status */}
+        {/* Brand & Logo */}
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -43,17 +44,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMen
             <Menu className="w-5 h-5" />
           </button>
 
-          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold shadow-xs shrink-0">
-            <Building2 className="w-5 h-5" />
-          </div>
+          <FFCSILogo size={40} variant="icon" />
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-bold tracking-tight text-lg text-slate-900">AFMS</h1>
-              <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full hidden sm:inline-block">
-                Offline-First PWA
-              </span>
+              <h1 className="font-extrabold tracking-wider font-serif text-lg text-slate-900">FFCSI</h1>
             </div>
-            <p className="text-xs text-slate-500 hidden sm:block font-medium">Accounting Firm Management System</p>
+            <p className="text-xs text-slate-500 hidden sm:block font-medium">Family Friends Consultancy Services Inc.</p>
           </div>
         </div>
 
