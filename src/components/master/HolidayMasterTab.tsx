@@ -3,6 +3,8 @@ import { useData } from '../../context/DataContext';
 import { useAuth } from '../../context/AuthContext';
 import { HolidayItem } from '../../types';
 import { DEFAULT_HOLIDAYS } from '../../utils/deadlineEngine';
+import { TablePagination } from '../TablePagination';
+import { usePagination } from '../../utils/usePagination';
 import { 
   Calendar as CalendarIcon, 
   Plus, 
@@ -156,6 +158,20 @@ export const HolidayMasterTab: React.FC = () => {
     }
     return true;
   }).sort((a, b) => a.date.localeCompare(b.date));
+
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedHolidays,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredHolidays, {
+    initialPageSize: 15,
+    resetOnChange: `${selectedYear}_${scopeFilter}_${typeFilter}_${searchQuery}`,
+  });
 
   // Counts for selected year
   const yearHolidays = holidays.filter(h => (h.year || parseInt(h.date.split('-')[0], 10)) === selectedYear);
@@ -315,7 +331,7 @@ export const HolidayMasterTab: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredHolidays.map(h => (
+                paginatedHolidays.map(h => (
                   <tr key={h.id} className="hover:bg-slate-50/70 transition-colors">
                     <td className="py-2.5 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
                       {formatDatePretty(h.date)}
@@ -383,6 +399,19 @@ export const HolidayMasterTab: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {filteredHolidays.length > 0 && (
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onLoadMore={loadMore}
+            hasMoreToLoad={hasMoreToLoad}
+            itemLabel="holidays"
+          />
+        )}
       </div>
 
       {/* Add / Edit Holiday Modal */}

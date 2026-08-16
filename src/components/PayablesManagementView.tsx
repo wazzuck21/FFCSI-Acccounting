@@ -9,6 +9,8 @@ import {
 import { calculateClientDeadline, isPayableObligation } from '../utils/deadlineEngine';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   Receipt, 
   Plus, 
@@ -362,6 +364,20 @@ export const PayablesManagementView: React.FC = () => {
     });
   }, [payables, categoryFilter, statusFilter, searchQuery, sortMonth, sortYear, sortItem]);
 
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedPayables,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredPayables, {
+    initialPageSize: 15,
+    resetOnChange: `${categoryFilter}_${statusFilter}_${searchQuery}_${sortMonth}_${sortYear}_${sortItem}`,
+  });
+
   return (
     <div className="space-y-6">
       
@@ -498,7 +514,7 @@ export const PayablesManagementView: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredPayables.map((p) => (
+              {paginatedPayables.map((p) => (
                 <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
                   
                   <td className="py-3.5 px-4 font-bold text-slate-900">{p.clientName}</td>
@@ -642,6 +658,18 @@ export const PayablesManagementView: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Table Pagination */}
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          onLoadMore={loadMore}
+          hasMoreToLoad={hasMoreToLoad}
+          itemLabel="payables"
+        />
       </div>
 
       {/* Modal: Create Payable Assessment */}

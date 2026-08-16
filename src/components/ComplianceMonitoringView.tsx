@@ -8,6 +8,8 @@ import {
   MONTH_INDEX 
 } from '../data/masterTables';
 import { calculateClientDeadline, formatDeadlinePretty, isPayableObligation, getPaymentBehavior, getComplianceCategory, getSubmissionMethod, getFilingRequired } from '../utils/deadlineEngine';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   ShieldAlert, 
   CheckCircle2, 
@@ -393,6 +395,20 @@ export const ComplianceMonitoringView: React.FC = () => {
       return a.clientName.localeCompare(b.clientName);
     }
     return a.dueDate.localeCompare(b.dueDate);
+  });
+
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedDeadlines,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredDeadlines, {
+    initialPageSize: 15,
+    resetOnChange: `${selectedMonth}_${selectedYear}_${clientStatusTab}_${filerTypeFilter}_${deadlineSortOrder}_${categoryFilter}_${searchQuery}_${statusFilter}_${viewMode}`,
   });
 
   // Group compiled deadlines by Due Date
@@ -1206,122 +1222,136 @@ export const ComplianceMonitoringView: React.FC = () => {
 
       {/* VIEW MODE 2: ALL CARDS VIEW */}
       {viewMode === 'AllCards' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredDeadlines.map((item, itemIdx) => (
-            <div key={`${item.id}_${itemIdx}`} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3 relative flex flex-col justify-between">
-              
-              <div className="space-y-2">
-                <div className="flex justify-between items-start gap-2">
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                    item.category === 'BIR' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
-                  }`}>
-                    {item.category} • {item.periodLabel}
-                  </span>
-
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 ${
-                    item.status === 'Already Paid' ? 'bg-emerald-600 text-white' :
-                    item.status === 'Due Today' ? 'bg-rose-600 text-white' :
-                    'bg-slate-200 text-slate-700'
-                  }`}>
-                    {item.status}
-                  </span>
-                </div>
-
-                <div>
-                  <h4 className="font-extrabold text-slate-900 text-sm">{item.clientName}</h4>
-                  <p className="text-xs font-bold text-indigo-700 mt-0.5 flex items-center gap-1">
-                    <span className="font-mono bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">{item.ruleCode}</span>
-                    <span className="truncate">{item.ruleName}</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
-                <div>
-                  <p className="text-[10px] text-slate-500 font-medium">Statutory Due Date:</p>
-                  <p className="font-mono font-bold text-indigo-900 text-sm">{item.formattedDateStr}</p>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {item.status === 'Already Paid' ? (
-                    item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-amber-50 text-amber-800 border-amber-200">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
-                          <span>No Payment Needed / Zero Tax Filed / No Need To File</span>
-                        </span>
-                        {(item.notes || item.remarks || item.comment) && (
-                          <span className="text-[9px] text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
-                            <MessageSquare className="w-2.5 h-2.5 shrink-0 text-amber-700" />
-                            <span className="truncate">{item.notes || item.remarks || item.comment}</span>
-                          </span>
-                        )}
-                      </div>
-                    ) : item.assessmentTag === 'Done Filing' || item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>( Done Filing )</span>
-                        </span>
-                        {(item.notes || item.remarks || item.comment) && (
-                          <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
-                            <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
-                            <span className="truncate">{item.notes || item.remarks || item.comment}</span>
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Settled</span>
-                        </span>
-                        {(item.notes || item.remarks || item.comment) && (
-                          <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
-                            <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
-                            <span className="truncate">{item.notes || item.remarks || item.comment}</span>
-                          </span>
-                        )}
-                      </div>
-                    )
-                  ) : (
-                    <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-slate-100 text-slate-600 border-slate-200">
-                      Pay in BIR/Benefits Payables
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {paginatedDeadlines.map((item, itemIdx) => (
+              <div key={`${item.id}_${itemIdx}`} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3 relative flex flex-col justify-between">
+                
+                <div className="space-y-2">
+                  <div className="flex justify-between items-start gap-2">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                      item.category === 'BIR' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-blue-50 text-blue-700 border border-blue-200'
+                    }`}>
+                      {item.category} • {item.periodLabel}
                     </span>
-                  )}
 
-                  {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCancelFormChoice(item);
-                      }}
-                      className={`p-1.5 border rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
-                        item.status === 'Already Paid' && !isSuperAdmin
-                          ? 'bg-slate-100 text-slate-400 border-slate-200'
-                          : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-                      }`}
-                      title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
-                    >
-                      {item.status === 'Already Paid' && !isSuperAdmin ? (
-                        <Lock className="w-3.5 h-3.5 text-slate-400" />
-                      ) : (
-                        <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                      )}
-                    </button>
-                  )}
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0 ${
+                      item.status === 'Already Paid' ? 'bg-emerald-600 text-white' :
+                      item.status === 'Due Today' ? 'bg-rose-600 text-white' :
+                      'bg-slate-200 text-slate-700'
+                    }`}>
+                      {item.status}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 text-sm">{item.clientName}</h4>
+                    <p className="text-xs font-bold text-indigo-700 mt-0.5 flex items-center gap-1">
+                      <span className="font-mono bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100">{item.ruleCode}</span>
+                      <span className="truncate">{item.ruleName}</span>
+                    </p>
+                  </div>
                 </div>
+
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+                  <div>
+                    <p className="text-[10px] text-slate-500 font-medium">Statutory Due Date:</p>
+                    <p className="font-mono font-bold text-indigo-900 text-sm">{item.formattedDateStr}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {item.status === 'Already Paid' ? (
+                      item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-amber-50 text-amber-800 border-amber-200">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
+                            <span>No Payment Needed / Zero Tax Filed / No Need To File</span>
+                          </span>
+                          {(item.notes || item.remarks || item.comment) && (
+                            <span className="text-[9px] text-amber-900 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                              <MessageSquare className="w-2.5 h-2.5 shrink-0 text-amber-700" />
+                              <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                            </span>
+                          )}
+                        </div>
+                      ) : item.assessmentTag === 'Done Filing' || item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>( Done Filing )</span>
+                          </span>
+                          {(item.notes || item.remarks || item.comment) && (
+                            <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                              <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                              <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-emerald-50 text-emerald-800 border-emerald-200">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span>Settled</span>
+                          </span>
+                          {(item.notes || item.remarks || item.comment) && (
+                            <span className="text-[9px] text-emerald-900 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200/80 flex items-center gap-1 max-w-[200px] truncate" title={item.notes || item.remarks || item.comment}>
+                              <MessageSquare className="w-2.5 h-2.5 shrink-0 text-emerald-700" />
+                              <span className="truncate">{item.notes || item.remarks || item.comment}</span>
+                            </span>
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      <span className="px-2.5 py-1 rounded-xl font-bold text-[10px] flex items-center gap-1 border bg-slate-100 text-slate-600 border-slate-200">
+                        Pay in BIR/Benefits Payables
+                      </span>
+                    )}
+
+                    {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelFormChoice(item);
+                        }}
+                        className={`p-1.5 border rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
+                          item.status === 'Already Paid' && !isSuperAdmin
+                            ? 'bg-slate-100 text-slate-400 border-slate-200'
+                            : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                        }`}
+                        title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
+                      >
+                        {item.status === 'Already Paid' && !isSuperAdmin ? (
+                          <Lock className="w-3.5 h-3.5 text-slate-400" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
               </div>
+            ))}
 
-            </div>
-          ))}
+            {paginatedDeadlines.length === 0 && (
+              <div className="col-span-full p-12 text-center bg-white border border-slate-200 rounded-3xl text-slate-500 text-xs font-medium">
+                No compliance records match your filters for {MONTH_FULL_NAMES[selectedMonth]} {selectedYear}.
+              </div>
+            )}
+          </div>
 
-          {filteredDeadlines.length === 0 && (
-            <div className="col-span-full p-12 text-center bg-white border border-slate-200 rounded-3xl text-slate-500 text-xs font-medium">
-              No compliance records match your filters for {MONTH_FULL_NAMES[selectedMonth]} {selectedYear}.
-            </div>
-          )}
+          {/* Table Pagination */}
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onLoadMore={loadMore}
+            hasMoreToLoad={hasMoreToLoad}
+            itemLabel="compliance deadlines"
+          />
         </div>
       )}
 

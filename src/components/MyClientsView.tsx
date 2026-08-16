@@ -6,6 +6,8 @@ import { MONTHS_LIST, MONTH_FULL_NAMES, MONTH_INDEX } from '../data/masterTables
 import { calculateClientDeadline, isPayableObligation, getPaymentBehavior, getComplianceCategory, getSubmissionMethod, getFilingRequired } from '../utils/deadlineEngine';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   Briefcase, 
   Calendar, 
@@ -307,6 +309,36 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const doneFilingGroups = compileToDoGroups('DONE_FILING');
   const pendingCount = toDoGroups.reduce((acc, g) => acc + g.items.length, 0);
   const doneCount = doneFilingGroups.reduce((acc, g) => acc + g.items.length, 0);
+
+  const resetDependency = `${selectedMonth}_${selectedYear}_${selectedStaffName}_${searchQuery}_${categoryFilter}_${statusFilter}_${clientStatusFilter}_${payables.length}_${clients.length}`;
+
+  const {
+    currentPage: todoPage,
+    pageSize: todoPageSize,
+    totalItems: todoTotalItems,
+    paginatedItems: paginatedToDoGroups,
+    setCurrentPage: setTodoPage,
+    setPageSize: setTodoPageSize,
+    loadMore: loadMoreTodo,
+    hasMoreToLoad: hasMoreTodo,
+  } = usePagination(toDoGroups, {
+    initialPageSize: 15,
+    resetOnChange: resetDependency,
+  });
+
+  const {
+    currentPage: donePage,
+    pageSize: donePageSize,
+    totalItems: doneTotalItems,
+    paginatedItems: paginatedDoneGroups,
+    setCurrentPage: setDonePage,
+    setPageSize: setDonePageSize,
+    loadMore: loadMoreDone,
+    hasMoreToLoad: hasMoreDone,
+  } = usePagination(doneFilingGroups, {
+    initialPageSize: 15,
+    resetOnChange: resetDependency,
+  });
 
   // Open Set Action Modal
   const handleOpenSetAction = (item: ToDoItem) => {
@@ -784,7 +816,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               </p>
             </div>
           ) : (
-            toDoGroups.map((group, groupIdx) => (
+            paginatedToDoGroups.map((group, groupIdx) => (
               <div 
                 key={`${group.dueDateStr}_${groupIdx}`}
                 className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden text-xs"
@@ -948,6 +980,19 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
             ))
           )}
 
+          {toDoGroups.length > 0 && (
+            <TablePagination
+              currentPage={todoPage}
+              totalItems={todoTotalItems}
+              pageSize={todoPageSize}
+              onPageChange={setTodoPage}
+              onPageSizeChange={setTodoPageSize}
+              onLoadMore={loadMoreTodo}
+              hasMoreToLoad={hasMoreTodo}
+              itemLabel="deadline groups"
+            />
+          )}
+
         </div>
       )}
 
@@ -963,7 +1008,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               </p>
             </div>
           ) : (
-            doneFilingGroups.map((group, groupIdx) => (
+            paginatedDoneGroups.map((group, groupIdx) => (
               <div 
                 key={`${group.dueDateStr}_${groupIdx}`}
                 className="bg-white border border-slate-200 rounded-2xl shadow-xs overflow-hidden text-xs"
@@ -1110,6 +1155,20 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               </div>
             ))
           )}
+
+          {doneFilingGroups.length > 0 && (
+            <TablePagination
+              currentPage={donePage}
+              totalItems={doneTotalItems}
+              pageSize={donePageSize}
+              onPageChange={setDonePage}
+              onPageSizeChange={setDonePageSize}
+              onLoadMore={loadMoreDone}
+              hasMoreToLoad={hasMoreDone}
+              itemLabel="deadline groups"
+            />
+          )}
+
         </div>
       )}
 

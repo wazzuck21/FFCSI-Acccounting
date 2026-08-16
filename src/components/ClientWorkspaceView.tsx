@@ -1114,12 +1114,12 @@ export const ClientWorkspaceView: React.FC<Props> = ({
               {/* Firm Header */}
               <div className="flex justify-between items-start pb-6 border-b-2 border-slate-900">
                 <div>
-                  <h1 className="text-xl font-bold text-slate-900 tracking-tight">AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS</h1>
-                  <p className="text-[11px] text-slate-500 mt-1">Tax Advisory, Audit & Accounting Services</p>
-                  <p className="text-[11px] text-slate-500">Suite 1400, Ortigas Financial Center, Pasig City • VAT Reg. TIN 008-112-445-000</p>
+                  <h1 className="text-xl font-extrabold text-slate-900 tracking-tight font-serif">FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.</h1>
+                  <p className="text-[11px] text-slate-500 mt-1">Management Consultancy, Tax Advisory & Accounting Services</p>
+                  <p className="text-[11px] text-slate-500">Ortigas Financial Center, Pasig City • VAT Reg. TIN 008-112-445-000</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-lg font-bold text-emerald-700 tracking-wider uppercase block">STATEMENT OF ACCOUNT</span>
+                  <span className="text-lg font-bold text-rose-700 tracking-wider uppercase block">STATEMENT OF ACCOUNT</span>
                   <span className="font-mono font-bold text-slate-900 text-sm">Collection #: {selectedInvoice.collectionNumber || '1001'}</span>
                 </div>
               </div>

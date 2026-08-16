@@ -53,7 +53,7 @@ export const DashboardView: React.FC<{ onNavigate: (tab: any) => void }> = ({ on
             </span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Real-time offline-first metrics, tax compliance deadlines, and financial assessments.
+            Real-time practice metrics, tax compliance deadlines, and financial assessments.
           </p>
         </div>
 

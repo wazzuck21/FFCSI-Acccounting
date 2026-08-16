@@ -21,18 +21,18 @@ export function generateClientStatementOfAccountPDF(
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
   doc.setTextColor(15, 23, 42); // slate-900
-  doc.text('AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS', margin, y);
+  doc.text('FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.', margin, y);
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 116, 139); // slate-500
-  doc.text('Tax Advisory, Audit & Accounting Services', margin, y + 4.5);
-  doc.text('Suite 1400, Ortigas Financial Center, Pasig City • VAT Reg. TIN 008-112-445-000', margin, y + 8.5);
+  doc.text('Management Consultancy, Tax Advisory & Accounting Services', margin, y + 4.5);
+  doc.text('Ortigas Financial Center, Pasig City • VAT Reg. TIN 008-112-445-000', margin, y + 8.5);
 
   // Document Title (Right Aligned)
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
-  doc.setTextColor(4, 120, 87); // emerald-700
+  doc.setTextColor(185, 28, 28); // crimson red-700
   doc.text('STATEMENT OF ACCOUNT', pageWidth - margin, y, { align: 'right' });
 
   doc.setFontSize(8);
@@ -219,8 +219,8 @@ export function generateClientStatementOfAccountPDF(
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(71, 85, 105);
-  doc.text('Please make cheques payable to: AFMS & CO. CPAs', margin + 4, y + 9.5);
-  doc.text('Bank Transfer: BDO Unibank • Account Name: AFMS & CO. CPAs • Account No: 00412-8809-12', margin + 4, y + 14);
+  doc.text('Please make cheques payable to: FFCSI', margin + 4, y + 9.5);
+  doc.text('Bank Transfer: BDO Unibank • Account Name: FFCSI • Account No: 00412-8809-12', margin + 4, y + 14);
 
   // Signatory Box
   y += 26;
@@ -238,5 +238,5 @@ export function generateClientStatementOfAccountPDF(
   doc.text('Billing & Collection Officer', margin + 4, y + 20);
 
   const cleanName = client.companyName.replace(/[^a-zA-Z0-9]/g, '_');
-  doc.save(`AFMS_SOA_Statement_${cleanName}_${new Date().toISOString().slice(0, 10)}.pdf`);
+  doc.save(`FFCSI_SOA_Statement_${cleanName}_${new Date().toISOString().slice(0, 10)}.pdf`);
 }

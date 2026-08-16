@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { CoreCredential, CredentialAmendment } from '../types';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { credentialVault, VAULT_REQUIRE_UNLOCK } from '../lib/credentialVaultService';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   Lock, 
   Key, 
@@ -299,6 +301,20 @@ export const CoreCredentialsView: React.FC = () => {
     return matchesSearch && matchesPortal && matchesClient;
   });
 
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedCredentials,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredCredentials, {
+    initialPageSize: 15,
+    resetOnChange: `${searchQuery}_${portalFilter}_${clientFilter}`,
+  });
+
   // Locked View Gate
   if (!isUnlocked) {
     return (
@@ -461,7 +477,7 @@ export const CoreCredentialsView: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredCredentials.map(cred => {
+                paginatedCredentials.map(cred => {
                   const isPassVisible = visiblePasswords[cred.id] || false;
 
                   return (
@@ -590,6 +606,19 @@ export const CoreCredentialsView: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {filteredCredentials.length > 0 && (
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onLoadMore={loadMore}
+            hasMoreToLoad={hasMoreToLoad}
+            itemLabel="credentials"
+          />
+        )}
       </div>
 
       {/* MODAL: Add/Edit Credential */}

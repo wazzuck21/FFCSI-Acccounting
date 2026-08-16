@@ -8,6 +8,8 @@ import {
   getAvailableClientForms,
   getClientsMatchingDeadlineExtension
 } from '../../utils/deadlineEngine';
+import { TablePagination } from '../TablePagination';
+import { usePagination } from '../../utils/usePagination';
 import { 
   ShieldAlert, 
   Plus, 
@@ -316,6 +318,20 @@ export const DeadlineExtensionsTab: React.FC = () => {
     return true;
   });
 
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedExtensions,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredExtensions, {
+    initialPageSize: 15,
+    resetOnChange: `${scopeFilter}_${statusFilter}_${searchQuery}`,
+  });
+
   return (
     <div className="space-y-6">
       {/* Toast Notification */}
@@ -420,7 +436,7 @@ export const DeadlineExtensionsTab: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredExtensions.map(ext => {
+                paginatedExtensions.map(ext => {
                   const clientObj = ext.targetClientId ? clients.find(c => c.id === ext.targetClientId) : null;
                   const rdos = ext.targetRdoCodes || ext.targetRdos || (ext.targetRdo ? [ext.targetRdo] : []);
                   const forms = ext.applicableFormCodes || ext.targetFormCodes || (ext.targetFormCode ? [ext.targetFormCode] : []);
@@ -527,6 +543,19 @@ export const DeadlineExtensionsTab: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {filteredExtensions.length > 0 && (
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onLoadMore={loadMore}
+            hasMoreToLoad={hasMoreToLoad}
+            itemLabel="extension rules"
+          />
+        )}
       </div>
 
       {/* Add / Edit Dynamic Extension Modal */}

@@ -15,6 +15,8 @@ import {
   exportCollectionReportExcel 
 } from '../utils/excelExportUtils';
 import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
@@ -75,7 +77,7 @@ export const downloadBillingSummaryReportPDF = (invoices: InvoiceItem[]) => {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
   doc.setTextColor(15, 23, 42);
-  doc.text('AFMS & CO. CPAs - CLIENT BILLING & COLLECTIONS SUMMARY REPORT', 14, 16);
+  doc.text('FFCSI - CLIENT BILLING & COLLECTIONS SUMMARY REPORT', 14, 16);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
@@ -152,7 +154,7 @@ export const downloadBillingSummaryReportPDF = (invoices: InvoiceItem[]) => {
     y += 7.5;
   });
 
-  doc.save(`AFMS_Billing_Collections_Report_${new Date().toISOString().substring(0, 10)}.pdf`);
+  doc.save(`FFCSI_Billing_Collections_Report_${new Date().toISOString().substring(0, 10)}.pdf`);
 };
 
 export const downloadCollectionReceiptPDF = (inv: InvoiceItem) => {
@@ -813,6 +815,36 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     days90Plus: { count: 0, amount: 0 }
   });
 
+  // Pagination for Master Invoices Tab
+  const {
+    currentPage: invoiceCurrentPage,
+    pageSize: invoicePageSize,
+    totalItems: invoiceTotalItems,
+    paginatedItems: paginatedInvoices,
+    setCurrentPage: setInvoiceCurrentPage,
+    setPageSize: setInvoicePageSize,
+    loadMore: invoiceLoadMore,
+    hasMoreToLoad: invoiceHasMore,
+  } = usePagination(filteredInvoices, {
+    initialPageSize: 15,
+    resetOnChange: `${searchQuery}_${statusFilter}`,
+  });
+
+  // Pagination for Accounts Receivable & Aging Tab
+  const {
+    currentPage: arCurrentPage,
+    pageSize: arPageSize,
+    totalItems: arTotalItems,
+    paginatedItems: paginatedARInvoices,
+    setCurrentPage: setArCurrentPage,
+    setPageSize: setArPageSize,
+    loadMore: arLoadMore,
+    hasMoreToLoad: arHasMore,
+  } = usePagination(filteredARInvoices, {
+    initialPageSize: 15,
+    resetOnChange: `${arSearchQuery}_${arClientFilter}_${arStatusFilter}_${arAgingFilter}_${arCategoryFilter}`,
+  });
+
   return (
     <div className="space-y-6">
       
@@ -1049,14 +1081,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredInvoices.length === 0 ? (
+              {paginatedInvoices.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-8 text-center text-slate-400">
                     No billing invoices match your search query or filter.
                   </td>
                 </tr>
               ) : (
-                filteredInvoices.map(inv => {
+                paginatedInvoices.map(inv => {
                   const balance = inv.totalAmount - (inv.paidAmount || 0);
                   const isPastDue = new Date(inv.dueDate) < new Date() && balance > 0;
                   const displayStatus = isPastDue ? 'Overdue' : inv.status;
@@ -1215,6 +1247,18 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             </tbody>
           </table>
         </div>
+
+        {/* Invoices Table Pagination Controls */}
+        <TablePagination
+          currentPage={invoiceCurrentPage}
+          totalItems={invoiceTotalItems}
+          pageSize={invoicePageSize}
+          onPageChange={setInvoiceCurrentPage}
+          onPageSizeChange={setInvoicePageSize}
+          onLoadMore={invoiceLoadMore}
+          hasMoreToLoad={invoiceHasMore}
+          itemLabel="invoices"
+        />
       </div>
         </>
       )}
@@ -1595,14 +1639,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredARInvoices.length === 0 ? (
+                  {paginatedARInvoices.length === 0 ? (
                     <tr>
                       <td colSpan={10} className="py-8 text-center text-slate-400">
                         No accounts receivable invoices match your filters.
                       </td>
                     </tr>
                   ) : (
-                    filteredARInvoices.map(inv => {
+                    paginatedARInvoices.map(inv => {
                       const balance = getInvoiceBalance(inv.id);
                       const isPastDue = new Date(inv.dueDate) < new Date() && balance > 0;
                       const statusBadge = inv.collectionStatus || (balance <= 0 ? 'Paid' : isPastDue ? 'Overdue' : 'Current');
@@ -1690,6 +1734,18 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 </tbody>
               </table>
             </div>
+
+            {/* AR Table Pagination Controls */}
+            <TablePagination
+              currentPage={arCurrentPage}
+              totalItems={arTotalItems}
+              pageSize={arPageSize}
+              onPageChange={setArCurrentPage}
+              onPageSizeChange={setArPageSize}
+              onLoadMore={arLoadMore}
+              hasMoreToLoad={arHasMore}
+              itemLabel="AR records"
+            />
           </div>
         </div>
       )}
@@ -2854,12 +2910,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               {/* Firm Header */}
               <div className="flex justify-between items-start pb-6 border-b-2 border-slate-900">
                 <div>
-                  <h1 className="text-xl font-bold text-slate-900 tracking-tight">AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS</h1>
-                  <p className="text-[11px] text-slate-500 mt-1">Tax Advisory, Audit & Accounting Services</p>
-                  <p className="text-[11px] text-slate-500">Suite 1400, Ortigas Financial Center, Pasig City • VAT Reg. TIN 008-112-445-000</p>
+                  <h1 className="text-xl font-extrabold text-slate-900 tracking-tight font-serif">FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.</h1>
+                  <p className="text-[11px] text-slate-500 mt-1">Management Consultancy, Tax Advisory & Accounting Services</p>
+                  <p className="text-[11px] text-slate-500">Ortigas Financial Center, Pasig City • VAT Reg. TIN 008-112-445-000</p>
                 </div>
                 <div className="text-right">
-                  <span className="text-lg font-bold text-emerald-700 tracking-wider uppercase block">STATEMENT OF ACCOUNT</span>
+                  <span className="text-lg font-bold text-rose-700 tracking-wider uppercase block">STATEMENT OF ACCOUNT</span>
                   <span className="font-mono font-bold text-slate-900 text-sm">Collection #: {selectedInvoice.collectionNumber || '1001'}</span>
                 </div>
               </div>
@@ -2929,7 +2985,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               {/* Payment Remittance Details */}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-[11px]">
                 <p className="font-bold text-slate-900 uppercase tracking-wider text-[10px]">Payment Remittance Instructions:</p>
-                <p className="text-slate-600">Please settle checks payable to <strong>AFMS & CO. CPAs</strong> or transfer via BDO Account # <strong>1200-4451-9981</strong>.</p>
+                <p className="text-slate-600">Please settle checks payable to <strong>FFCSI</strong> or transfer via BDO Account # <strong>1200-4451-9981</strong>.</p>
                 {selectedInvoice.officialReceiptNumber && (
                   <p className="text-emerald-700 font-bold">Official Receipt Issued: {selectedInvoice.officialReceiptNumber} ({selectedInvoice.paymentMethod})</p>
                 )}

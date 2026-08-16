@@ -11,6 +11,8 @@ import {
   LeaveType 
 } from '../types';
 import { computeEmployeePayslip, calculateSSSContribution, calculatePhilHealthContribution, calculatePagIbigContribution, calculateSemiMonthlyBIRTax } from '../lib/dolePayroll';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   Banknote, 
   Plus, 
@@ -476,10 +478,70 @@ export const CompanyPayrollView: React.FC = () => {
   };
 
   // Quick summary numbers
-  const totalEmployees = employees.length;
+  const totalEmployeesCount = employees.length;
   const activeEmployees = employees.filter(e => e.status === 'Active').length;
   const totalOutstandingVale = valeRecords.filter(v => v.status === 'Active').reduce((s, v) => s + v.remainingBalance, 0);
   const pendingLeaves = leaveRecords.filter(l => l.status === 'Pending').length;
+
+  // Pagination for Payroll Runs
+  const {
+    currentPage: runsPage,
+    pageSize: runsPageSize,
+    totalItems: totalRuns,
+    paginatedItems: paginatedPayrollRuns,
+    setCurrentPage: setRunsPage,
+    setPageSize: setRunsPageSize,
+    loadMore: loadMoreRuns,
+    hasMoreToLoad: hasMoreRuns,
+  } = usePagination(payrollRuns, {
+    initialPageSize: 15,
+    resetOnChange: payrollRuns.length,
+  });
+
+  // Pagination for Employee Directory
+  const {
+    currentPage: empPage,
+    pageSize: empPageSize,
+    totalItems: totalEmployees,
+    paginatedItems: paginatedEmployees,
+    setCurrentPage: setEmpPage,
+    setPageSize: setEmpPageSize,
+    loadMore: loadMoreEmp,
+    hasMoreToLoad: hasMoreEmp,
+  } = usePagination(employees, {
+    initialPageSize: 15,
+    resetOnChange: employees.length,
+  });
+
+  // Pagination for Leaves
+  const {
+    currentPage: leavesPage,
+    pageSize: leavesPageSize,
+    totalItems: totalLeaves,
+    paginatedItems: paginatedLeaveRecords,
+    setCurrentPage: setLeavesPage,
+    setPageSize: setLeavesPageSize,
+    loadMore: loadMoreLeaves,
+    hasMoreToLoad: hasMoreLeaves,
+  } = usePagination(leaveRecords, {
+    initialPageSize: 15,
+    resetOnChange: leaveRecords.length,
+  });
+
+  // Pagination for Vale
+  const {
+    currentPage: valePage,
+    pageSize: valePageSize,
+    totalItems: totalVale,
+    paginatedItems: paginatedValeRecords,
+    setCurrentPage: setValePage,
+    setPageSize: setValePageSize,
+    loadMore: loadMoreVale,
+    hasMoreToLoad: hasMoreVale,
+  } = usePagination(valeRecords, {
+    initialPageSize: 15,
+    resetOnChange: valeRecords.length,
+  });
 
   return (
     <div className="space-y-6">
@@ -632,7 +694,7 @@ export const CompanyPayrollView: React.FC = () => {
                   <p className="text-xs text-slate-400 mt-1">Click "Create New Cutoff Batch" to compute salaries for this period.</p>
                 </div>
               ) : (
-                payrollRuns.map(run => (
+                paginatedPayrollRuns.map(run => (
                   <div key={run.id} className="p-5 hover:bg-slate-50/80 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="space-y-1">
                       <div className="flex items-center gap-3">
@@ -711,6 +773,19 @@ export const CompanyPayrollView: React.FC = () => {
                 ))
               )}
             </div>
+
+            {payrollRuns.length > 0 && (
+              <TablePagination
+                currentPage={runsPage}
+                totalItems={totalRuns}
+                pageSize={runsPageSize}
+                onPageChange={setRunsPage}
+                onPageSizeChange={setRunsPageSize}
+                onLoadMore={loadMoreRuns}
+                hasMoreToLoad={hasMoreRuns}
+                itemLabel="payroll runs"
+              />
+            )}
           </div>
 
           {/* DETAILED LEDGER VIEW WHEN A RUN IS SELECTED */}
@@ -832,7 +907,7 @@ export const CompanyPayrollView: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {employees.map(emp => (
+            {paginatedEmployees.map(emp => (
               <div key={emp.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 hover:shadow-md transition-all">
                 <div className="flex items-start justify-between">
                   <div>
@@ -917,6 +992,19 @@ export const CompanyPayrollView: React.FC = () => {
               </div>
             ))}
           </div>
+
+          {employees.length > 0 && (
+            <TablePagination
+              currentPage={empPage}
+              totalItems={totalEmployees}
+              pageSize={empPageSize}
+              onPageChange={setEmpPage}
+              onPageSizeChange={setEmpPageSize}
+              onLoadMore={loadMoreEmp}
+              hasMoreToLoad={hasMoreEmp}
+              itemLabel="employees"
+            />
+          )}
         </div>
       )}
 
@@ -943,7 +1031,7 @@ export const CompanyPayrollView: React.FC = () => {
             </div>
 
             <div className="divide-y divide-slate-100">
-              {leaveRecords.map(leave => (
+              {paginatedLeaveRecords.map(leave => (
                 <div key={leave.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-all text-xs">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
@@ -987,6 +1075,19 @@ export const CompanyPayrollView: React.FC = () => {
                 </div>
               ))}
             </div>
+
+            {leaveRecords.length > 0 && (
+              <TablePagination
+                currentPage={leavesPage}
+                totalItems={totalLeaves}
+                pageSize={leavesPageSize}
+                onPageChange={setLeavesPage}
+                onPageSizeChange={setLeavesPageSize}
+                onLoadMore={loadMoreLeaves}
+                hasMoreToLoad={hasMoreLeaves}
+                itemLabel="leave records"
+              />
+            )}
           </div>
         </div>
       )}
@@ -1008,7 +1109,7 @@ export const CompanyPayrollView: React.FC = () => {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {valeRecords.map(vale => (
+            {paginatedValeRecords.map(vale => (
               <div key={vale.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
                 <div className="flex items-start justify-between">
                   <div>
@@ -1056,6 +1157,19 @@ export const CompanyPayrollView: React.FC = () => {
               </div>
             ))}
           </div>
+
+          {valeRecords.length > 0 && (
+            <TablePagination
+              currentPage={valePage}
+              totalItems={totalVale}
+              pageSize={valePageSize}
+              onPageChange={setValePage}
+              onPageSizeChange={setValePageSize}
+              onLoadMore={loadMoreVale}
+              hasMoreToLoad={hasMoreVale}
+              itemLabel="vale records"
+            />
+          )}
         </div>
       )}
 

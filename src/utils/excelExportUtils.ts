@@ -10,7 +10,7 @@ export function exportSOAExcel(client: ClientProfile | { companyName: string; ti
 
   // Header info
   const wsData: any[][] = [
-    ['AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS'],
+    ['FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.'],
     ['STATEMENT OF ACCOUNT LEDGER'],
     [`Client Name:`, client.companyName],
     [`TIN Number:`, client.tinNumber || 'N/A'],
@@ -102,7 +102,7 @@ export function exportARAgingExcel(invoices: InvoiceItem[], payments: Payment[])
   const outstandingAR = totalInvoiced - totalCollected;
 
   const rows: any[][] = [
-    ['AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS'],
+    ['FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.'],
     ['ACCOUNTS RECEIVABLE & AGING ANALYSIS REPORT'],
     [`Generated Date:`, today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
     [''],
@@ -191,7 +191,7 @@ export function exportRevenueReportExcel(
 
   // Sheet 1: Revenue by Category
   const catRows: any[][] = [
-    ['AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS'],
+    ['FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.'],
     ['REVENUE ANALYSIS BY SERVICE CATEGORY'],
     [`Report Date:`, new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
     [''],
@@ -210,7 +210,7 @@ export function exportRevenueReportExcel(
 
   // Sheet 2: Revenue by Client
   const clientRows: any[][] = [
-    ['AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS'],
+    ['FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.'],
     ['REVENUE ANALYSIS BY CLIENT'],
     [`Report Date:`, new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
     [''],
@@ -236,7 +236,7 @@ export function exportPaymentReportExcel(payments: Payment[], invoices: InvoiceI
   const wb = XLSX.utils.book_new();
 
   const rows: any[][] = [
-    ['AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS'],
+    ['FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.'],
     ['PAYMENT TRANSACTIONS & COLLECTION RECEIPT LEDGER'],
     [`Report Date:`, new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
     [''],
@@ -276,7 +276,7 @@ export function exportCollectionReportExcel(collectionLogs: CollectionLog[], inv
   const wb = XLSX.utils.book_new();
 
   const rows: any[][] = [
-    ['AFMS & CO. CERTIFIED PUBLIC ACCOUNTANTS'],
+    ['FFCSI — FAMILY FRIENDS CONSULTANCY SERVICES INC.'],
     ['AR COLLECTION FOLLOW-UP CONTACT LOGS REPORT'],
     [`Report Date:`, new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })],
     [''],

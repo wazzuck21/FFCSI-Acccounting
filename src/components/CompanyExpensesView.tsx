@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { CompanyExpense, CompanyExpenseCategory } from '../types';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   CreditCard, 
   Plus, 
@@ -252,6 +254,20 @@ export const CompanyExpensesView: React.FC = () => {
     return sortOrder === 'asc' ? comparison : -comparison;
   });
 
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedExpenses,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(sortedExpenses, {
+    initialPageSize: 15,
+    resetOnChange: `${selectedMonth}_${selectedCategory}_${searchTerm}_${viewMode}_${sortBy}_${sortOrder}`,
+  });
+
   // Summary Metrics
   const totalMonthlyAmount = filteredExpenses.reduce((sum, e) => sum + (e.amount || 0), 0);
   const totalPaid = filteredExpenses.filter(e => e.status === 'Paid').reduce((sum, e) => sum + (e.paidDetails?.paidAmount || e.amount || 0), 0);
@@ -469,6 +485,18 @@ export const CompanyExpensesView: React.FC = () => {
             <p className="text-lg font-bold text-cyan-400 mt-0.5">{recurringCount} Active</p>
           </div>
         </div>
+
+        {/* Expenses Table Pagination */}
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          onLoadMore={loadMore}
+          hasMoreToLoad={hasMoreToLoad}
+          itemLabel="expenses"
+        />
       </div>
 
       {/* Month Selector, Category Filter, Sort By & View Controls */}
@@ -593,7 +621,7 @@ export const CompanyExpensesView: React.FC = () => {
         </div>
 
         <div className="divide-y divide-slate-100">
-          {sortedExpenses.length === 0 ? (
+          {paginatedExpenses.length === 0 ? (
             <div className="p-10 text-center text-slate-400 space-y-2">
               <CreditCard className="w-10 h-10 mx-auto text-slate-300" />
               <p className="text-sm font-semibold text-slate-600">No Operating Expenses Found for {selectedMonth}</p>
@@ -602,7 +630,7 @@ export const CompanyExpensesView: React.FC = () => {
               </p>
             </div>
           ) : (
-            sortedExpenses.map(expense => {
+            paginatedExpenses.map(expense => {
               const isRecurringItem = expense.isRecurring !== false && (
                 expense.dueDateType === 'Fixed Monthly Day' || 
                 expense.dueDateType === 'Date to input in Future' || 
@@ -739,6 +767,18 @@ export const CompanyExpensesView: React.FC = () => {
             })
           )}
         </div>
+
+        {/* Expenses Table Pagination */}
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          onLoadMore={loadMore}
+          hasMoreToLoad={hasMoreToLoad}
+          itemLabel="expenses"
+        />
       </div>
 
       {/* MODAL: ADD / EDIT COMPANY BILL / EXPENSE */}

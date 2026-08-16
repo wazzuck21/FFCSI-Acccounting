@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { DocumentItem, DocumentCategory, DocumentStatus } from '../types';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   FolderGit2, 
   FileText, 
@@ -219,6 +221,20 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavi
       return 0;
     });
   }, [accessibleDocuments, searchTerm, selectedCategory, selectedType, selectedClientId, selectedPeriod, selectedStatus, sortBy]);
+
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedDocuments,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredDocuments, {
+    initialPageSize: 15,
+    resetOnChange: `${searchTerm}_${selectedCategory}_${selectedType}_${selectedClientId}_${selectedPeriod}_${selectedStatus}_${sortBy}`,
+  });
 
   // Stats Counters
   const stats = useMemo(() => {
@@ -662,7 +678,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavi
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredDocuments.map(doc => {
+                {paginatedDocuments.map(doc => {
                   const clientObj = clients.find(c => c.id === doc.clientId);
                   const isClientArchived = clientObj?.status === 'Archived';
                   const taskObj = doc.taskId ? tasks.find(t => t.id === doc.taskId) : null;
@@ -869,6 +885,19 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavi
               </tbody>
             </table>
           </div>
+        )}
+
+        {filteredDocuments.length > 0 && (
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onLoadMore={loadMore}
+            hasMoreToLoad={hasMoreToLoad}
+            itemLabel="documents"
+          />
         )}
       </div>
 

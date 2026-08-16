@@ -4,6 +4,8 @@ import { useData } from '../context/DataContext';
 import { User, UserRole, CompanyServicePermission } from '../types';
 import { hashPassword } from '../lib/cryptoUtils';
 import { ROLE_LABELS, normalizeUserRole } from '../lib/rbac';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   UserCog, 
   Plus, 
@@ -76,6 +78,20 @@ export const UserManagementView: React.FC = () => {
     u.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.username.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedUsers,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredUsers, {
+    initialPageSize: 15,
+    resetOnChange: searchQuery,
+  });
 
   const togglePasswordVisibility = (userId: string) => {
     setVisiblePasswords(prev => ({ ...prev, [userId]: !prev[userId] }));
@@ -404,7 +420,7 @@ export const UserManagementView: React.FC = () => {
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredUsers.map(u => {
+              {paginatedUsers.map(u => {
                 const isPasswordShown = visiblePasswords[u.id];
                 const hasRestrictedCompanies = u.permissions.clientAccessList && u.permissions.clientAccessList.length > 0;
                 
@@ -509,6 +525,18 @@ export const UserManagementView: React.FC = () => {
             </tbody>
           </table>
         </div>
+
+        {/* Table Pagination */}
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          onLoadMore={loadMore}
+          hasMoreToLoad={hasMoreToLoad}
+          itemLabel="users"
+        />
       </div>
 
       {/* MODAL: Create / Edit User & Granular Restrictions */}

@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import { TaskItem, TaskStatus, TaskWorkflowStage } from '../types';
 import { MONTHS_LIST, MONTH_FULL_NAMES } from '../data/masterTables';
 import { SearchableClientSelect } from './SearchableClientSelect';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import {
   CheckSquare,
   Clock,
@@ -230,6 +232,20 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
     }
 
     return matchesSearch && matchesClient && matchesStaff && matchesStatus && matchesCategory && matchesRdo;
+  });
+
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedTasks,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredTasks, {
+    initialPageSize: 15,
+    resetOnChange: `${viewTab}_${searchQuery}_${clientFilter}_${staffFilter}_${statusFilter}_${categoryFilter}_${rdoFilter}`,
   });
 
   // RDO Numbers list for filter
@@ -480,14 +496,14 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
-                {filteredTasks.length === 0 ? (
+                {paginatedTasks.length === 0 ? (
                   <tr>
                     <td colSpan={7} className="py-8 text-center text-slate-400">
                       No tasks found matching current filters.
                     </td>
                   </tr>
                 ) : (
-                  filteredTasks.map(t => {
+                  paginatedTasks.map(t => {
                     const isDueToday = t.dueDate === todayStr;
                     const isOverdue = t.dueDate < todayStr && t.status !== 'Completed';
 
@@ -680,6 +696,18 @@ export const TaskWorkflowView: React.FC<{ onNavigateToClient?: (clientId: string
               </tbody>
             </table>
           </div>
+
+          {/* Table Pagination */}
+          <TablePagination
+            currentPage={currentPage}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setCurrentPage}
+            onPageSizeChange={setPageSize}
+            onLoadMore={loadMore}
+            hasMoreToLoad={hasMoreToLoad}
+            itemLabel="tasks"
+          />
         </div>
       )}
 

@@ -3,6 +3,8 @@ import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { ClientProfile } from '../types';
 import { ClientRegistrationModal } from './ClientRegistrationModal';
+import { TablePagination } from './TablePagination';
+import { usePagination } from '../utils/usePagination';
 import { 
   Building2, 
   Plus, 
@@ -76,6 +78,20 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
     const matchStaff = staffFilter === 'ALL' || c.assignedStaffName === staffFilter;
 
     return matchSearch && matchStatus && matchTax && matchStaff;
+  });
+
+  const {
+    currentPage,
+    pageSize,
+    totalItems,
+    paginatedItems: paginatedClients,
+    setCurrentPage,
+    setPageSize,
+    loadMore,
+    hasMoreToLoad,
+  } = usePagination(filteredClients, {
+    initialPageSize: 15,
+    resetOnChange: `${searchQuery}_${statusFilter}_${taxFilter}_${staffFilter}`,
   });
 
   const confirmArchiveClient = () => {
@@ -242,7 +258,7 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
             </thead>
 
             <tbody className="divide-y divide-slate-100">
-              {filteredClients.map((client) => {
+              {paginatedClients.map((client) => {
                 const isArchived = client.status === 'Archived';
 
                 return (
@@ -400,6 +416,18 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
             </tbody>
           </table>
         </div>
+
+        {/* Table Pagination Controls */}
+        <TablePagination
+          currentPage={currentPage}
+          totalItems={totalItems}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={setPageSize}
+          onLoadMore={loadMore}
+          hasMoreToLoad={hasMoreToLoad}
+          itemLabel="clients"
+        />
       </div>
 
       {/* Action Success Banner Notification */}
