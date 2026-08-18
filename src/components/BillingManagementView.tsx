@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog } from '../types';
+import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile } from '../types';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
@@ -59,7 +59,11 @@ import {
   BarChart3,
   ShieldCheck,
   BookOpen,
-  UserCheck
+  UserCheck,
+  ChevronDown,
+  Check,
+  Tag,
+  PlusCircle
 } from 'lucide-react';
 
 export const downloadInvoicePDF = (inv: InvoiceItem) => {
@@ -187,7 +191,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     isCrNumberUsed,
     getNextCollectionNumber,
     isCollectionNumberUsed,
-    saveCustomService
+    saveCustomService,
+    billerCatalog
   } = useData();
   const { currentUser, isSuperAdmin } = useAuth();
 
@@ -205,12 +210,35 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showCollectionModal, setShowCollectionModal] = useState(false);
 
   // Phase 4 & Phase 5 Sub-Tab Navigation ⭐
-  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'recurring' | 'ar' | 'soa' | 'reports' | 'analytics' | 'audit'>('invoices');
+  const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'ar' | 'soa' | 'reports' | 'analytics' | 'audit'>('invoices');
 
   // Phase 5: Client SOA Sub-Tab State ⭐
   const [soaSelectedClientId, setSoaSelectedClientId] = useState<string>('');
   const [soaFromDate, setSoaFromDate] = useState<string>('');
   const [soaToDate, setSoaToDate] = useState<string>('');
+
+  // Previous Billing Toggle state in SOA Generator ⭐
+  const [showPreviousBilling, setShowPreviousBilling] = useState<boolean>(false);
+
+  // Duplicate Item Already Billed Warning Modal state ⭐
+  const [duplicateWarningModal, setDuplicateWarningModal] = useState<{
+    isOpen: boolean;
+    itemName: string;
+    monthYear: string;
+    amount: number;
+    billingNumber: string;
+    pendingLine: InvoiceServiceLine;
+  } | null>(null);
+
+  // Confirm Amount Change from Previous Billing Modal state ⭐
+  const [applyPreviousAmountModal, setApplyPreviousAmountModal] = useState<{
+    isOpen: boolean;
+    itemIndex: number;
+    itemDescription: string;
+    previousMonthYear: string;
+    previousAmount: number;
+    currentAmount: number;
+  } | null>(null);
 
   // Phase 5: Financial Reports Sub-Tab State ⭐
   const [reportCategory, setReportCategory] = useState<'aging' | 'outstanding' | 'payments' | 'collections' | 'service_revenue' | 'client_revenue' | 'monthly_revenue'>('aging');
@@ -229,29 +257,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [collectionNotes, setCollectionNotes] = useState('');
   const [collectionNextFollowUp, setCollectionNextFollowUp] = useState('');
 
-  // Recurring Auto-Billing Batch Generator state ⭐
+  // Date Lists
   const monthsList = [
     'January', 'February', 'March', 'April', 'May', 'June',
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
   const yearsList = ['2024', '2025', '2026', '2027', '2028', '2029', '2030'];
-
-  const [autoMonth, setAutoMonth] = useState(() => monthsList[new Date().getMonth()]);
-  const [autoYear, setAutoYear] = useState(() => new Date().getFullYear().toString());
-  const [autoFrequency, setAutoFrequency] = useState<ServiceBillingFrequency | 'All'>('Monthly');
-  const [autoIssueDate, setAutoIssueDate] = useState(new Date().toISOString().substring(0, 10));
-  const [autoDueDate, setAutoDueDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 15);
-    return d.toISOString().substring(0, 10);
-  });
-  const [batchResult, setBatchResult] = useState<{
-    createdCount: number;
-    skippedCount: number;
-    createdInvoices: InvoiceItem[];
-    skippedDetails: string[];
-    message: string;
-  } | null>(null);
 
   // Accounts Receivable & Collection Filters ⭐
   const [arSearchQuery, setArSearchQuery] = useState('');
@@ -278,9 +289,32 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     return d.toISOString().substring(0, 10);
   });
   
-  const [services, setServices] = useState<InvoiceServiceLine[]>([
-    { description: 'Monthly Tax Compliance & Accounting Retainer Fee', amount: 35000, itemType: 'Service' }
-  ]);
+  const [services, setServices] = useState<InvoiceServiceLine[]>([]);
+
+  // Unified Service Picker Dropdown State ⭐
+  const [isServicePickerOpen, setIsServicePickerOpen] = useState(false);
+  const [serviceSearchTerm, setServiceSearchTerm] = useState('');
+  const [showCreateCustomSection, setShowCreateCustomSection] = useState(false);
+  const [customItemName, setCustomItemName] = useState('');
+  const [customItemPeriod, setCustomItemPeriod] = useState('');
+  const [customItemAmount, setCustomItemAmount] = useState<number>(0);
+  const [saveCustomForFuture, setSaveCustomForFuture] = useState(true);
+  const servicePickerRef = useRef<HTMLDivElement>(null);
+
+  // Close service picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (servicePickerRef.current && !servicePickerRef.current.contains(event.target as Node)) {
+        setIsServicePickerOpen(false);
+      }
+    };
+    if (isServicePickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isServicePickerOpen]);
 
   // Edit SOA Form state
   const [editServices, setEditServices] = useState<InvoiceServiceLine[]>([]);
@@ -296,98 +330,325 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [crError, setCrError] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
 
-  // Auto-fill Collection # when opening Create Modal
+  // Auto-fill Collection # when opening Create Modal and ensure empty defaults
   useEffect(() => {
     if (showCreateModal) {
       setCollectionNumber(getNextCollectionNumber());
       setCollectionNumError('');
+      setSelectedClientId('');
+      setServices([]);
     }
   }, [showCreateModal]);
+
+  // Clean BIR Form Description Formatter (Removes "BIR Form" prefix)
+  const getCleanBirDescription = (code: string, rawName?: string): string => {
+    const c = (code || '').trim().toUpperCase();
+    switch (c) {
+      case '0619E':
+        return '0619E (Monthly Remittance Withheld (Expanded))';
+      case '1601EQ':
+        return '1601EQ (Quarterly Remittance Withheld (Expanded))';
+      case '1601C':
+        return '1601C (Monthly Remittance Withheld - Compensation)';
+      case '2550Q':
+        return '2550Q (Quarterly Value-Added Tax Return)';
+      case '2551Q':
+        return '2551Q (Quarterly Percentage Tax Return)';
+      case '1701Q':
+        return '1701Q (Quarterly Income Tax Return - Individual)';
+      case '1702Q':
+        return '1702Q (Quarterly Income Tax Return - Corporate)';
+      case 'ITR':
+      case '1701':
+      case '1702':
+        return 'ITR (Annual Income Tax Return)';
+      case '0605':
+        return '0605 (Payment Form / Annual Registration Fee)';
+      case 'SAWT':
+        return 'SAWT (Summary Alphalist of Withholding Taxes)';
+      case 'QAP':
+        return 'QAP (Quarterly Alphabetical List of Payees)';
+      case 'SLSP':
+        return 'SLSP (Summary List of Sales and Purchases)';
+      case '1604C':
+        return '1604C (Annual Information Return - Compensation)';
+      case '1604E':
+        return '1604E (Annual Information Return - Expanded)';
+      case 'SSS':
+        return 'SSS (Social Security System Contribution)';
+      case 'SSS SALARY LOAN':
+        return 'SSS Salary Loan (SSS Salary Loan Remittance)';
+      case 'SSS CALAMITY LOAN':
+        return 'SSS Calamity Loan (SSS Calamity Loan Remittance)';
+      case 'PHILHEALTH':
+        return 'PhilHealth (Philippine Health Insurance Corp)';
+      case 'HDMF':
+        return 'HDMF (Pag-IBIG Fund Contribution)';
+      case 'HDMF MULTI-PURPOSE LOAN':
+      case 'HDMF MPL':
+        return 'HDMF Multi-Purpose Loan (Pag-IBIG MPL Remittance)';
+      case 'HDMF CALAMITY LOAN':
+        return 'HDMF Calamity Loan (Pag-IBIG Calamity Loan Remittance)';
+      default: {
+        if (rawName) {
+          const clean = rawName.replace(/^BIR Form\s+/i, '').replace(/^BIR Tax Return\s*-\s*/i, '').trim();
+          if (clean.toLowerCase() === c.toLowerCase() || clean.toLowerCase().startsWith(c.toLowerCase()) || c.toLowerCase().startsWith(clean.toLowerCase())) {
+            return clean;
+          }
+          return `${c} (${clean})`;
+        }
+        return code || c;
+      }
+    }
+  };
+
+  // Compute Period based on To-Do List Schedule (e.g. Jul-26 or July 2026, 2Q-2026, 2025)
+  const getPeriodForForm = (
+    formCode: string, 
+    billingMonth: string, 
+    billingYear: number, 
+    client?: ClientProfile,
+    existingPeriod?: string
+  ): string => {
+    const codeUpper = (formCode || '').trim().toUpperCase();
+    let currentMIdx = monthsList.indexOf(billingMonth);
+    if (currentMIdx < 0) currentMIdx = 7; // default August (index 7)
+    let currentYear = billingYear || 2026;
+
+    // 1. If explicit target period code is already formatted (e.g. "Jul-26", "Jul-2026", "2Q-2026", "2025")
+    if (existingPeriod && existingPeriod.trim()) {
+      const epTrim = existingPeriod.trim();
+      
+      // Explicit 3-letter month with 2 or 4 digit year: e.g. "Jul-26" or "Jul-2026"
+      const shortMatch = epTrim.match(/^([A-Za-z]{3})[- ](\d{2,4})$/);
+      if (shortMatch) {
+        const shortMonths: Record<string, string> = {
+          Jan: 'January', Feb: 'February', Mar: 'March', Apr: 'April', May: 'May', Jun: 'June',
+          Jul: 'July', Aug: 'August', Sep: 'September', Oct: 'October', Nov: 'November', Dec: 'December'
+        };
+        const mKey = shortMatch[1].charAt(0).toUpperCase() + shortMatch[1].slice(1).toLowerCase();
+        if (shortMonths[mKey]) {
+          const yr = shortMatch[2].length === 2 ? `20${shortMatch[2]}` : shortMatch[2];
+          return `${shortMonths[mKey]} ${yr}`;
+        }
+      }
+      
+      // Explicit Quarter e.g. "2Q-2026" or "2Q"
+      if (/^\d[Qq]/.test(epTrim)) {
+        return epTrim.replace(/\s+/g, '');
+      }
+
+      // Explicit 4-digit tax year e.g. "2025" for ITR/Annual
+      if (/^\d{4}$/.test(epTrim) && (codeUpper.includes('ITR') || codeUpper.includes('1701') || codeUpper.includes('1702') || codeUpper.includes('1604'))) {
+        return epTrim;
+      }
+
+      // If existingPeriod is stored as ISO "YYYY-MM" (which is the filing month in To-Do list), extract it as the filing context
+      if (/^\d{4}-\d{2}$/.test(epTrim)) {
+        const [y, m] = epTrim.split('-');
+        currentYear = parseInt(y, 10) || currentYear;
+        const parsedM = parseInt(m, 10) - 1;
+        if (parsedM >= 0 && parsedM <= 11) {
+          currentMIdx = parsedM;
+        }
+      }
+    }
+
+    // 2. Annual forms / ITR -> Previous Tax Year (e.g. 2025)
+    if (codeUpper === 'ITR' || (codeUpper.includes('1701') && !codeUpper.includes('1701Q')) || (codeUpper.includes('1702') && !codeUpper.includes('1702Q')) || codeUpper === '1604C' || codeUpper === '1604E') {
+      return `${currentYear - 1}`;
+    }
+
+    // 3. Quarterly forms (1601EQ, 2550Q, 2551Q, 1701Q, 1702Q, SAWT, QAP, SLSP)
+    if (['1601EQ', '2550Q', '2551Q', '1701Q', '1702Q', 'SAWT', 'QAP', 'SLSP'].some(q => codeUpper.includes(q))) {
+      if (currentMIdx <= 2) return `4Q-${currentYear - 1}`;
+      if (currentMIdx <= 5) return `1Q-${currentYear}`;
+      if (currentMIdx <= 8) return `2Q-${currentYear}`;
+      return `3Q-${currentYear}`;
+    }
+
+    // 4. Retainers Fee & General Service Charges -> Current billing period (e.g. August 2026)
+    if (codeUpper.includes('RETAINER') || codeUpper.includes('SERVICE CHARGE') || codeUpper === 'BOOKKEEPING') {
+      return `${monthsList[currentMIdx]} ${currentYear}`;
+    }
+
+    // 5. Monthly Compliance forms & Statutory Benefits & Loans (0619E, 1601C, SSS, SSS SALARY LOAN, SSS CALAMITY LOAN, HDMF, HDMF LOAN, PhilHealth, etc.)
+    // In Philippine to-do list & billing schedule, August deadline / billing covers the PREVIOUS month: July 2026 (Target Period: Jul-26)
+    let priorMIdx = currentMIdx - 1;
+    let targetYear = currentYear;
+    if (priorMIdx < 0) {
+      priorMIdx = 11;
+      targetYear = currentYear - 1;
+    }
+    const priorMonthName = monthsList[priorMIdx];
+    return `${priorMonthName} ${targetYear}`;
+  };
 
   // Currently selected client helper
   const selectedClient = clients.find(c => c.id === selectedClientId);
 
-  // Handle Client Change in Create Modal to prefill active billable ClientServices, retainer & active payables
+  // Helper to check if an item has already been invoiced for this client (for automatic exclusion)
+  const isItemAlreadyBilled = (clientId: string, desc: string, period: string): boolean => {
+    if (!clientId || !desc) return false;
+    const cleanD = desc.trim().toLowerCase();
+    const cleanP = (period || '').trim().toLowerCase();
+    return invoices.some(inv => 
+      inv.clientId === clientId && 
+      inv.status !== 'Cancelled' && 
+      inv.services.some(s => 
+        s.description.trim().toLowerCase() === cleanD && 
+        (s.monthYear || '').trim().toLowerCase() === cleanP
+      )
+    );
+  };
+
+  // Helper to check duplicate billed item matching description, month/year, and amount
+  const findAlreadyBilledInvoice = (
+    clientId: string, 
+    desc: string, 
+    period: string, 
+    amount: number
+  ): { isBilled: boolean; billingNumber?: string } => {
+    if (!clientId || !desc) return { isBilled: false };
+    const cleanD = desc.trim().toLowerCase();
+    const cleanP = (period || '').trim().toLowerCase();
+    const numAmount = Number(amount) || 0;
+
+    for (const inv of invoices) {
+      if (inv.clientId === clientId && inv.status !== 'Cancelled') {
+        const found = inv.services.find(s => 
+          s.description.trim().toLowerCase() === cleanD &&
+          (s.monthYear || '').trim().toLowerCase() === cleanP &&
+          (Number(s.amount) === numAmount || Number(s.unitPrice) === numAmount)
+        );
+        if (found) {
+          return {
+            isBilled: true,
+            billingNumber: inv.collectionNumber || inv.invoiceNumber || inv.id
+          };
+        }
+      }
+    }
+    return { isBilled: false };
+  };
+
+  // Helper to find previous billed amount and period for the same form/service ⭐
+  const getPreviousBillingInfo = (clientId: string, desc: string): { monthYear: string; amount: number; invoiceNumber: string } | null => {
+    if (!clientId || !desc) return null;
+    const cleanD = desc.trim().toLowerCase();
+    if (!cleanD) return null;
+
+    // Token extraction for compliance forms (e.g. 0619E, 1601C, 1701Q, 1702Q, 2550Q, 2551Q, SSS, PhilHealth, Pag-IBIG, Retainers)
+    const codeMatch = cleanD.match(/\b(0619e|1601c|1701q|1702q|2550q|2551q|1604c|1604e|1604f|1701|1702|1702rt|1702ex|1702mx|2000|2000ot|sss|philhealth|pag-ibig|pagibig|retainer|bookkeeping)\b/i);
+    const keyToken = codeMatch ? codeMatch[1].toLowerCase() : cleanD;
+
+    // Sort client invoices descending by issueDate / createdAt
+    const sortedInvoices = [...invoices]
+      .filter(inv => inv.clientId === clientId && inv.status !== 'Cancelled')
+      .sort((a, b) => new Date(b.issueDate || b.createdAt || 0).getTime() - new Date(a.issueDate || a.createdAt || 0).getTime());
+
+    for (const inv of sortedInvoices) {
+      for (const s of inv.services) {
+        const sClean = s.description.trim().toLowerCase();
+        const isMatch = sClean === cleanD || 
+          (codeMatch && sClean.includes(keyToken)) ||
+          (cleanD.includes('retainer') && sClean.includes('retainer')) ||
+          (cleanD.includes('bookkeeping') && sClean.includes('bookkeeping'));
+
+        if (isMatch) {
+          return {
+            monthYear: s.monthYear || inv.billingPeriod || 'N/A',
+            amount: s.amount || s.unitPrice || 0,
+            invoiceNumber: inv.collectionNumber || inv.invoiceNumber || inv.id
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  // Handle Client Change in Create Modal: Only show items if there is an actual payable or fee/amount > 0 and NOT already invoiced
   const handleClientChange = (clientId: string) => {
     setSelectedClientId(clientId);
     const client = clients.find(c => c.id === clientId);
-    if (!client) return;
+    if (!client) {
+      setServices([]);
+      return;
+    }
 
     const loadedLines: InvoiceServiceLine[] = [];
 
-    // 1. Phase 2 ClientServices Engagements (Active & Billable) ⭐
-    const activeEngagements = clientServices.filter(s => s.clientId === client.id && s.status === 'Active' && s.billable);
-    if (activeEngagements.length > 0) {
-      activeEngagements.forEach(s => {
+    // 1. Phase 2 ClientServices Engagements (Active, Billable with fee > 0)
+    const activeEngagements = clientServices.filter(s => s.clientId === client.id && s.status === 'Active' && s.billable && (s.fee || 0) > 0);
+    activeEngagements.forEach(s => {
+      const isBookkeeping = s.serviceCode === 'BOOKKEEPING' || s.serviceName.toLowerCase().includes('bookkeeping') || s.serviceName.toLowerCase().includes('monthly retainer');
+      const cleanDesc = isBookkeeping ? 'Retainers Fee' : `${s.serviceName} (${s.serviceCode})`;
+      const period = isBookkeeping ? `${selectedMonth} ${selectedYear}` : getPeriodForForm(s.serviceCode, selectedMonth, parseInt(selectedYear, 10), client);
+
+      // Only auto-include if not already billed in an existing invoice for this client & period
+      if (!isItemAlreadyBilled(client.id, cleanDesc, period)) {
         loadedLines.push({
           clientServiceId: s.id,
           serviceCode: s.serviceCode,
           serviceCategory: s.category,
-          description: `${s.serviceName} (${s.serviceCode})`,
-          monthYear: `${selectedMonth} ${selectedYear}`,
+          description: cleanDesc,
+          monthYear: period,
           unitPrice: s.fee || 0,
           quantity: 1,
           discount: 0,
           amount: s.fee || 0,
           itemType: 'Service'
         });
-      });
-    }
-
-    // 2. Fallback to Client Retainer fee if no registered active ClientService engagements exist
-    if (loadedLines.length === 0 && client.retainersFee > 0) {
-      loadedLines.push({
-        description: `Retainers Fee`,
-        monthYear: `${selectedMonth} ${selectedYear}`,
-        unitPrice: client.retainersFee,
-        quantity: 1,
-        amount: client.retainersFee,
-        itemType: 'Service'
-      });
-    }
-
-    // 3. Unpaid Payables for this client with payableAmount > 0
-    const activePayables = payables.filter(p => p.clientId === client.id && p.status === 'Unpaid' && p.payableAmount > 0);
-    activePayables.forEach(p => {
-      loadedLines.push({
-        description: `${p.category} Payable - ${p.itemName}`,
-        monthYear: p.month || `${selectedMonth} ${selectedYear}`,
-        unitPrice: p.payableAmount,
-        quantity: 1,
-        amount: p.payableAmount,
-        itemType: 'One-Time'
-      });
+      }
     });
 
-    if (loadedLines.length > 0) {
-      setServices(loadedLines);
-    } else {
-      setServices([{ description: `Retainers Fee`, monthYear: `${selectedMonth} ${selectedYear}`, unitPrice: 0, quantity: 1, amount: 0, itemType: 'Service' }]);
+    // 2. Client Retainer fee if no registered active ClientService engagements exist AND retainersFee > 0
+    if (loadedLines.length === 0 && client.retainersFee > 0) {
+      const period = `${selectedMonth} ${selectedYear}`;
+      if (!isItemAlreadyBilled(client.id, 'Retainers Fee', period)) {
+        loadedLines.push({
+          description: `Retainers Fee`,
+          monthYear: period,
+          unitPrice: client.retainersFee,
+          quantity: 1,
+          amount: client.retainersFee,
+          itemType: 'Service'
+        });
+      }
     }
+
+    // 3. Unpaid Payables for this client with payableAmount > 0 (exclude if already billed)
+    const activePayables = payables.filter(p => p.clientId === client.id && p.status === 'Unpaid' && p.payableAmount > 0);
+    activePayables.forEach(p => {
+      let cleanItemName = p.itemName;
+      if (cleanItemName.toLowerCase().startsWith('bir form ')) {
+        cleanItemName = cleanItemName.substring(9).trim();
+      }
+      const cleanDesc = getCleanBirDescription(cleanItemName, p.remarks || p.itemName);
+      const period = getPeriodForForm(cleanItemName, selectedMonth, parseInt(selectedYear, 10), client, p.month);
+
+      if (!isItemAlreadyBilled(client.id, cleanDesc, period)) {
+        loadedLines.push({
+          description: cleanDesc,
+          monthYear: period,
+          unitPrice: p.payableAmount,
+          quantity: 1,
+          amount: p.payableAmount,
+          itemType: 'One-Time'
+        });
+      }
+    });
+
+    // Do not show item if there is no payable, fee, or if already billed!
+    setServices(loadedLines);
   };
 
   // Add Custom One-Time Service Line
   const handleAddServiceLine = () => {
-    setServices(prev => [...prev, { description: '', monthYear: `${selectedMonth} ${selectedYear}`, unitPrice: 0, quantity: 1, amount: 0, itemType: 'One-Time' }]);
+    setServices(prev => [...prev, { description: '', monthYear: '', unitPrice: 0, quantity: 1, amount: 0, itemType: 'One-Time' }]);
   };
 
-  // Add BIR Return Form Service Line
-  const handleAddBirServiceLine = (code: string) => {
-    if (!code) return;
-    const rule = masterChoices.birTaxOptions.find(r => r.code.toLowerCase() === code.toLowerCase());
-    const desc = rule ? `BIR Form ${rule.code} (${rule.name})` : `BIR Tax Return - ${code}`;
-    setServices(prev => [...prev, { description: desc, monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }]);
-  };
-
-  // Add Benefits Remittance Service Line
-  const handleAddBenefitServiceLine = (code: string) => {
-    if (!code) return;
-    const rule = masterChoices.benefitsOptions.find(r => r.code.toLowerCase().includes(code.toLowerCase()) || code.toLowerCase().includes(r.code.toLowerCase()));
-    const desc = rule ? `Statutory Benefit Remittance - ${rule.name}` : `Statutory Remittance - ${code}`;
-    setServices(prev => [...prev, { description: desc, monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }]);
-  };
-
-  // Import All Registered Client Services (Active Engagements + Payables + Retainers)
+  // Import All Registered Client Services (Only with actual amounts > 0 and NOT already billed)
   const handleImportAllClientServices = () => {
     if (!selectedClient) {
       alert('Please select a client company first.');
@@ -396,58 +657,226 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
     const loadedLines: InvoiceServiceLine[] = [];
 
-    // 1. Active ClientServices
-    const activeEngagements = clientServices.filter(s => s.clientId === selectedClient.id && s.status === 'Active' && s.billable);
+    // 1. Active ClientServices with fee > 0
+    const activeEngagements = clientServices.filter(s => s.clientId === selectedClient.id && s.status === 'Active' && s.billable && (s.fee || 0) > 0);
     activeEngagements.forEach(s => {
-      loadedLines.push({
-        clientServiceId: s.id,
-        serviceCode: s.serviceCode,
-        serviceCategory: s.category,
-        description: `${s.serviceName} (${s.serviceCode})`,
-        monthYear: `${selectedMonth} ${selectedYear}`,
-        unitPrice: s.fee || 0,
-        quantity: 1,
-        amount: s.fee || 0,
-        itemType: 'Service'
-      });
+      const isBookkeeping = s.serviceCode === 'BOOKKEEPING' || s.serviceName.toLowerCase().includes('bookkeeping') || s.serviceName.toLowerCase().includes('monthly retainer');
+      const cleanDesc = isBookkeeping ? 'Retainers Fee' : `${s.serviceName} (${s.serviceCode})`;
+      const period = isBookkeeping ? `${selectedMonth} ${selectedYear}` : getPeriodForForm(s.serviceCode, selectedMonth, parseInt(selectedYear, 10), selectedClient);
+
+      if (!isItemAlreadyBilled(selectedClient.id, cleanDesc, period)) {
+        loadedLines.push({
+          clientServiceId: s.id,
+          serviceCode: s.serviceCode,
+          serviceCategory: s.category,
+          description: cleanDesc,
+          monthYear: period,
+          unitPrice: s.fee || 0,
+          quantity: 1,
+          amount: s.fee || 0,
+          itemType: 'Service'
+        });
+      }
     });
 
-    // 2. Retainer line if no ClientServices
+    // 2. Retainer line if no ClientServices and retainer > 0
     if (activeEngagements.length === 0 && selectedClient.retainersFee > 0) {
-      loadedLines.push({
-        description: `Retainers Fee`,
-        monthYear: `${selectedMonth} ${selectedYear}`,
-        unitPrice: selectedClient.retainersFee,
-        quantity: 1,
-        amount: selectedClient.retainersFee,
-        itemType: 'Service'
-      });
+      const period = `${selectedMonth} ${selectedYear}`;
+      if (!isItemAlreadyBilled(selectedClient.id, 'Retainers Fee', period)) {
+        loadedLines.push({
+          description: `Retainers Fee`,
+          monthYear: period,
+          unitPrice: selectedClient.retainersFee,
+          quantity: 1,
+          amount: selectedClient.retainersFee,
+          itemType: 'Service'
+        });
+      }
     }
 
-    // 3. Unpaid Payables
+    // 3. Unpaid Payables with amount > 0 (exclude if already billed)
     const activePayables = payables.filter(p => p.clientId === selectedClient.id && p.status === 'Unpaid' && p.payableAmount > 0);
     activePayables.forEach(p => {
-      loadedLines.push({
-        description: `${p.category} Payable - ${p.itemName}`,
-        monthYear: p.month || `${selectedMonth} ${selectedYear}`,
-        unitPrice: p.payableAmount,
-        quantity: 1,
-        amount: p.payableAmount,
-        itemType: 'One-Time'
-      });
+      let cleanItemName = p.itemName;
+      if (cleanItemName.toLowerCase().startsWith('bir form ')) {
+        cleanItemName = cleanItemName.substring(9).trim();
+      }
+      const cleanDesc = getCleanBirDescription(cleanItemName, p.remarks || p.itemName);
+      const period = getPeriodForForm(cleanItemName, selectedMonth, parseInt(selectedYear, 10), selectedClient, p.month);
+      
+      if (!isItemAlreadyBilled(selectedClient.id, cleanDesc, period)) {
+        loadedLines.push({
+          description: cleanDesc,
+          monthYear: period,
+          unitPrice: p.payableAmount,
+          quantity: 1,
+          amount: p.payableAmount,
+          itemType: 'One-Time'
+        });
+      }
     });
 
     if (loadedLines.length > 0) {
       setServices(loadedLines);
     } else {
-      alert(`No active client services or payable items found for ${selectedClient.companyName}.`);
+      alert(`No unbilled active payables or retainer fees found for ${selectedClient.companyName}.`);
     }
   };
 
-  const handleRemoveServiceLine = (index: number) => {
-    if (services.length > 1) {
-      setServices(services.filter((_, i) => i !== index));
+  // Master combined items for the searchable dropdown
+  const unifiedServiceCatalog = [
+    // BIR Section
+    { code: '0619E', name: '0619E (Monthly Remittance Withheld (Expanded))', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '1601C', name: '1601C (Monthly Remittance of Income Taxes Withheld - Compensation)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '1601EQ', name: '1601EQ (Quarterly Remittance Withheld (Expanded))', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '2550Q', name: '2550Q (Quarterly Value-Added Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '2551Q', name: '2551Q (Quarterly Percentage Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '1701Q', name: '1701Q (Quarterly Income Tax Return - Individual)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '1702Q', name: '1702Q (Quarterly Income Tax Return - Corporate)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: 'ITR', name: 'ITR (Annual Income Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '0605', name: '0605 (Payment Form / Annual Registration Fee)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: 'SAWT', name: 'SAWT (Summary Alphalist of Withholding Taxes)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: 'QAP', name: 'QAP (Quarterly Alphabetical List of Payees)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: 'SLSP', name: 'SLSP (Summary List of Sales and Purchases)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '1604C', name: '1604C (Annual Information Return - Compensation)', category: 'BIR' as const, defaultAmount: 0 },
+    { code: '1604E', name: '1604E (Annual Information Return - Expanded)', category: 'BIR' as const, defaultAmount: 0 },
+    ...(masterChoices.birTaxOptions || []).filter(b => !['0619E', '1601C', '1601EQ', '2550Q', '2551Q', '1701Q', '1702Q', 'ITR', '0605', 'SAWT', 'QAP', 'SLSP', '1604C', '1604E'].includes(b.code.toUpperCase())).map(b => ({
+      code: b.code,
+      name: getCleanBirDescription(b.code, b.name),
+      category: 'BIR' as const,
+      defaultAmount: 0
+    })),
+
+    // Benefits & Loans Section
+    { code: 'SSS', name: 'SSS (Social Security System Contribution)', category: 'Benefits' as const, defaultAmount: 0 },
+    { code: 'SSS Salary Loan', name: 'SSS Salary Loan (SSS Salary Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+    { code: 'SSS Calamity Loan', name: 'SSS Calamity Loan (SSS Calamity Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+    { code: 'PhilHealth', name: 'PhilHealth (Philippine Health Insurance Corp)', category: 'Benefits' as const, defaultAmount: 0 },
+    { code: 'HDMF', name: 'HDMF (Pag-IBIG Fund Contribution)', category: 'Benefits' as const, defaultAmount: 0 },
+    { code: 'HDMF Multi-Purpose Loan', name: 'HDMF Multi-Purpose Loan (Pag-IBIG MPL Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+    { code: 'HDMF Calamity Loan', name: 'HDMF Calamity Loan (Pag-IBIG Calamity Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+    ...(masterChoices.benefitsOptions || []).filter(b => !['SSS', 'SSS SALARY LOAN', 'SSS CALAMITY LOAN', 'PHILHEALTH', 'HDMF', 'HDMF MULTI-PURPOSE LOAN', 'HDMF CALAMITY LOAN'].some(x => b.code.toUpperCase().includes(x))).map(b => ({
+      code: b.code,
+      name: b.name,
+      category: 'Benefits' as const,
+      defaultAmount: 0
+    })),
+
+    // Others Section (Retainers Fee, Service Charge, Custom saved)
+    { code: 'RETAINERS_FEE', name: 'Retainers Fee', category: 'Others' as const, defaultAmount: selectedClient?.retainersFee || 0 },
+    { code: 'SERVICE_CHARGE', name: 'Service Charge', category: 'Others' as const, defaultAmount: 0 },
+    { code: 'BOOKKEEPING_FEE', name: 'Accounting & Bookkeeping Fee', category: 'Others' as const, defaultAmount: 0 },
+    { code: 'CONSULTATION_FEE', name: 'Consultation & Tax Advisory Fee', category: 'Others' as const, defaultAmount: 0 },
+    { code: 'BUSINESS_PERMIT', name: 'Business Permit / Mayor\'s Permit Renewal', category: 'Others' as const, defaultAmount: 0 },
+    { code: 'SEC_DTI_COMPLIANCE', name: 'SEC / DTI Annual Compliance & Registration', category: 'Others' as const, defaultAmount: 0 },
+    { code: 'LATE_FILING_ASSISTANCE', name: 'Late Filing & Penalty Assistance Charge', category: 'Others' as const, defaultAmount: 0 },
+    { code: 'DOC_PROCESSING', name: 'Document Processing & Courier Charge', category: 'Others' as const, defaultAmount: 0 },
+    ...(masterChoices.savedCustomServices || []).map(s => ({
+      code: s.description,
+      name: s.description,
+      category: 'Others' as const,
+      defaultAmount: s.defaultAmount || 0
+    }))
+  ];
+
+  // Select Item from Unified Dropdown (with Duplicate Check Warning)
+  const handleSelectUnifiedItem = (item: { code: string; name: string; category: 'BIR' | 'Benefits' | 'Others'; defaultAmount?: number }) => {
+    let cleanDesc = item.name;
+    if (item.category === 'BIR') {
+      cleanDesc = getCleanBirDescription(item.code, item.name);
+    } else if (item.code === 'RETAINERS_FEE') {
+      cleanDesc = 'Retainers Fee';
     }
+    const period = getPeriodForForm(item.code, selectedMonth, parseInt(selectedYear, 10), selectedClient);
+    const amount = item.defaultAmount || (item.code === 'RETAINERS_FEE' ? (selectedClient?.retainersFee || 0) : 0);
+
+    const pendingLine: InvoiceServiceLine = {
+      description: cleanDesc,
+      monthYear: period,
+      unitPrice: amount,
+      quantity: 1,
+      amount: amount,
+      itemType: item.code === 'RETAINERS_FEE' ? 'Service' : 'One-Time'
+    };
+
+    if (selectedClientId) {
+      const duplicateCheck = findAlreadyBilledInvoice(selectedClientId, cleanDesc, period, amount);
+      if (duplicateCheck.isBilled) {
+        setDuplicateWarningModal({
+          isOpen: true,
+          itemName: cleanDesc,
+          monthYear: period,
+          amount: amount,
+          billingNumber: duplicateCheck.billingNumber || 'N/A',
+          pendingLine
+        });
+        setIsServicePickerOpen(false);
+        setServiceSearchTerm('');
+        return;
+      }
+    }
+
+    setServices(prev => [...prev, pendingLine]);
+    setIsServicePickerOpen(false);
+    setServiceSearchTerm('');
+  };
+
+  // Create Custom Item from Unified Dropdown (with Duplicate Check Warning)
+  const handleCreateCustomItem = (nameOverride?: string) => {
+    const nameToUse = (nameOverride || customItemName || serviceSearchTerm).trim();
+    if (!nameToUse) {
+      alert('Please enter an item or service description.');
+      return;
+    }
+    const periodToUse = customItemPeriod.trim() || getPeriodForForm(nameToUse, selectedMonth, parseInt(selectedYear, 10), selectedClient);
+    const amountToUse = Number(customItemAmount) || 0;
+
+    const pendingLine: InvoiceServiceLine = {
+      description: nameToUse,
+      monthYear: periodToUse,
+      unitPrice: amountToUse,
+      quantity: 1,
+      amount: amountToUse,
+      itemType: 'One-Time'
+    };
+
+    if (selectedClientId) {
+      const duplicateCheck = findAlreadyBilledInvoice(selectedClientId, nameToUse, periodToUse, amountToUse);
+      if (duplicateCheck.isBilled) {
+        setDuplicateWarningModal({
+          isOpen: true,
+          itemName: nameToUse,
+          monthYear: periodToUse,
+          amount: amountToUse,
+          billingNumber: duplicateCheck.billingNumber || 'N/A',
+          pendingLine
+        });
+        setCustomItemName('');
+        setCustomItemPeriod('');
+        setCustomItemAmount(0);
+        setServiceSearchTerm('');
+        setShowCreateCustomSection(false);
+        setIsServicePickerOpen(false);
+        return;
+      }
+    }
+
+    setServices(prev => [...prev, pendingLine]);
+
+    if (saveCustomForFuture) {
+      saveCustomService({ description: nameToUse, defaultAmount: amountToUse });
+    }
+
+    setCustomItemName('');
+    setCustomItemPeriod('');
+    setCustomItemAmount(0);
+    setServiceSearchTerm('');
+    setShowCreateCustomSection(false);
+    setIsServicePickerOpen(false);
+  };
+
+  const handleRemoveServiceLine = (index: number) => {
+    setServices(services.filter((_, i) => i !== index));
   };
 
   const handleServiceChange = (index: number, field: 'description' | 'monthYear' | 'amount', value: any) => {
@@ -485,6 +914,11 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
     const client = clients.find(c => c.id === selectedClientId);
     if (!client) return;
+
+    if (services.length === 0) {
+      alert('Please add at least one billable item or service line to generate the SOA.');
+      return;
+    }
 
     // Auto-save any custom service descriptions for future reuse
     services.forEach(s => {
@@ -700,21 +1134,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setShowCollectionModal(false);
   };
 
-  // Run Recurring Auto-Billing Batch ⭐
-  const handleRunRecurringBatch = () => {
-    const periodStr = `${autoMonth} ${autoYear}`;
-    const result = generateRecurringInvoices(
-      periodStr,
-      autoFrequency,
-      autoIssueDate,
-      autoDueDate,
-      currentUser?.id,
-      currentUser?.fullName
-    );
-
-    setBatchResult(result);
-  };
-
   // Filtered Invoices
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -856,7 +1275,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             Client Billing, Accounts Receivable & Collections
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Automated recurring billing, Statements of Account (SOA), AR aging buckets, follow-up logs, and Official Receipts.
+            Statements of Account (SOA), AR aging buckets, follow-up logs, and Official Receipts.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -915,21 +1334,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         >
           <BookOpen className="w-4 h-4 text-emerald-700" />
           Statement of Account (SOA)
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('recurring')}
-          className={`px-4 py-2.5 rounded-xl transition-all flex items-center gap-2 shrink-0 cursor-pointer ${
-            activeSubTab === 'recurring'
-              ? 'bg-white text-slate-900 font-bold shadow-xs border border-slate-200'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-          }`}
-        >
-          <RotateCw className="w-4 h-4 text-indigo-600" />
-          Recurring Auto-Billing
-          <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold text-[10px]">
-            Auto
-          </span>
         </button>
 
         <button
@@ -1263,193 +1667,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         </>
       )}
 
-      {/* SUB-TAB 2: RECURRING AUTO-BILLING GENERATOR */}
-      {activeSubTab === 'recurring' && (
-        <div className="space-y-6">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <RotateCw className="w-5 h-5 text-indigo-600" />
-                  Automated Recurring Billing Batch Generator
-                </h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Generates draft Statements of Account (SOA) for all active client service retainers across selected billing cycles.
-                </p>
-              </div>
-              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold text-xs rounded-lg">
-                Duplicate Prevention Guard Active
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Target Billing Month</label>
-                <select
-                  value={autoMonth}
-                  onChange={e => setAutoMonth(e.target.value)}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                >
-                  {monthsList.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Target Billing Year</label>
-                <select
-                  value={autoYear}
-                  onChange={e => setAutoYear(e.target.value)}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                >
-                  {yearsList.map(y => (
-                    <option key={y} value={y}>{y}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Cycle Frequency</label>
-                <select
-                  value={autoFrequency}
-                  onChange={e => setAutoFrequency(e.target.value as ServiceBillingFrequency | 'All')}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                >
-                  <option value="All">All Active Cycles</option>
-                  <option value="Monthly">Monthly Retainers Only</option>
-                  <option value="Quarterly">Quarterly Retainers Only</option>
-                  <option value="Annual">Annual Retainers Only</option>
-                  <option value="One-Time">One-Time Engagements Only</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Default Issue Date</label>
-                <input
-                  type="date"
-                  value={autoIssueDate}
-                  onChange={e => setAutoIssueDate(e.target.value)}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-700 font-bold mb-1">Default Due Date</label>
-                <input
-                  type="date"
-                  value={autoDueDate}
-                  onChange={e => setAutoDueDate(e.target.value)}
-                  className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-mono focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <div className="text-xs text-slate-500">
-                Target Period: <strong className="text-slate-900 font-mono">{autoMonth} {autoYear}</strong> • Active Retainer Services: <strong className="text-slate-900">{clientServices.filter(s => s.status === 'Active').length}</strong>
-              </div>
-              <button
-                onClick={handleRunRecurringBatch}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-sm text-xs flex items-center gap-2 transition-all cursor-pointer"
-              >
-                <Play className="w-4 h-4 fill-white" /> Run Recurring Billing Batch
-              </button>
-            </div>
-          </div>
-
-          {/* Batch Result Banner */}
-          {batchResult && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4 text-xs">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-5 h-5 text-indigo-600" />
-                  <h4 className="font-bold text-slate-900 text-sm">Batch Billing Execution Report</h4>
-                </div>
-                <span className="text-slate-400 font-mono text-[11px]">Period: {autoMonth} {autoYear}</span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-emerald-800 font-bold">Draft Invoices Created</p>
-                    <p className="text-2xl font-mono font-bold text-emerald-700 mt-1">{batchResult.createdCount}</p>
-                    <p className="text-[11px] text-emerald-600 mt-0.5">Ready for review & dispatch</p>
-                  </div>
-                  <CheckCircle2 className="w-8 h-8 text-emerald-600/60" />
-                </div>
-
-                <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-amber-900 font-bold">Duplicate Services Skipped</p>
-                    <p className="text-2xl font-mono font-bold text-amber-700 mt-1">{batchResult.skippedCount}</p>
-                    <p className="text-[11px] text-amber-700 mt-0.5">Protected by clientId + serviceId + period</p>
-                  </div>
-                  <AlertTriangle className="w-8 h-8 text-amber-600/60" />
-                </div>
-              </div>
-
-              {batchResult.skippedDetails.length > 0 && (
-                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
-                  <p className="font-bold text-slate-800 text-xs">Skipped Services Log ({batchResult.skippedDetails.length}):</p>
-                  <div className="max-h-36 overflow-y-auto space-y-1 pr-2 font-mono text-[11px] text-slate-600">
-                    {batchResult.skippedDetails.map((det, idx) => (
-                      <div key={idx} className="bg-white p-2 rounded border border-slate-100">
-                        {det}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {batchResult.createdInvoices.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <h5 className="font-bold text-slate-900 text-xs">Newly Generated Draft Invoices:</h5>
-                  <div className="overflow-x-auto border border-slate-200 rounded-xl">
-                    <table className="w-full text-left">
-                      <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-400 uppercase text-[10px]">
-                        <tr>
-                          <th className="p-3">Collection #</th>
-                          <th className="p-3">Client</th>
-                          <th className="p-3">Period</th>
-                          <th className="p-3 text-right">Amount</th>
-                          <th className="p-3 text-center">Status</th>
-                          <th className="p-3 text-center">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {batchResult.createdInvoices.map(inv => (
-                          <tr key={inv.id} className="hover:bg-slate-50">
-                            <td className="p-3 font-mono font-bold text-slate-900">{inv.collectionNumber || inv.invoiceNumber}</td>
-                            <td className="p-3 font-semibold text-slate-800">{inv.clientName}</td>
-                            <td className="p-3 font-mono text-slate-600">{inv.billingPeriod}</td>
-                            <td className="p-3 text-right font-mono font-bold text-emerald-700">₱{inv.totalAmount.toLocaleString()}</td>
-                            <td className="p-3 text-center">
-                              <span className="px-2 py-0.5 bg-slate-100 text-slate-700 font-bold text-[10px] rounded border border-slate-200">
-                                {inv.status}
-                              </span>
-                            </td>
-                            <td className="p-3 text-center">
-                              <button
-                                onClick={() => handleViewSoa(inv)}
-                                className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold rounded-lg text-[11px] inline-flex items-center gap-1 cursor-pointer"
-                              >
-                                <Eye className="w-3.5 h-3.5" /> View SOA
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* SUB-TAB 3: ACCOUNTS RECEIVABLE & COLLECTIONS */}
+      {/* SUB-TAB: ACCOUNTS RECEIVABLE & COLLECTIONS */}
       {activeSubTab === 'ar' && (
         <div className="space-y-6">
           {/* AR Executive Cards */}
@@ -2417,8 +2635,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
       {/* MODAL 1: Generate SOA Invoice */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto space-y-4 text-xs shadow-xl text-slate-800">
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-2xl sm:max-w-3xl w-full max-h-[92vh] overflow-y-auto space-y-4 text-xs shadow-xl text-slate-800 my-auto">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-emerald-600" />
@@ -2426,7 +2644,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </h3>
               <button 
                 onClick={() => setShowCreateModal(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg"
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2511,162 +2729,374 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     <button
                       type="button"
                       onClick={handleImportAllClientServices}
-                      className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] rounded-lg flex items-center gap-1 transition-colors"
+                      className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 font-bold text-[11px] rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
                     >
-                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Auto-Load All Client BIR & Benefits
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" /> Auto-Load Active Payables
                     </button>
                   )}
                 </div>
 
-                {/* Quick Add Pickers for BIR, Benefits, Saved Services, and Custom */}
+                {/* Quick Add Pickers: Combined Searchable Dropdown with BIR Forms, Benefits, and Others */}
                 <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Add Service Line Options:</span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                  <div className="flex flex-wrap items-center gap-2" ref={servicePickerRef}>
                     
-                    {/* Add BIR Form Dropdown */}
-                    <select
-                      value=""
-                      onChange={e => {
-                        handleAddBirServiceLine(e.target.value);
-                        e.target.value = "";
-                      }}
-                      className="w-full px-2 py-1.5 bg-white border border-amber-300 text-amber-900 font-semibold rounded-lg text-[11px] focus:ring-2 focus:ring-amber-200 cursor-pointer"
-                    >
-                      <option value="">+ BIR Form...</option>
-                      {selectedClient && selectedClient.birTaxServices.length > 0 && (
-                        <optgroup label="Client Registered BIR Tax Returns">
-                          {selectedClient.birTaxServices.map(code => (
-                            <option key={code} value={code}>BIR Form {code}</option>
-                          ))}
-                        </optgroup>
+                    {/* Unified Searchable Dropdown Combobox */}
+                    <div className="relative inline-block text-left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsServicePickerOpen(!isServicePickerOpen);
+                          setShowCreateCustomSection(false);
+                        }}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>+ Add BIR Form, Benefit, or Service...</span>
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isServicePickerOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {isServicePickerOpen && (
+                        <div className="absolute left-0 top-full mt-1.5 w-80 sm:w-96 max-h-[440px] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                          {/* Search Bar */}
+                          <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                            <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                            <input
+                              type="text"
+                              autoFocus
+                              value={serviceSearchTerm}
+                              onChange={e => setServiceSearchTerm(e.target.value)}
+                              placeholder="Search BIR forms, benefits, loans, retainers, service charge..."
+                              className="w-full bg-transparent border-none text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-hidden"
+                            />
+                            {serviceSearchTerm && (
+                              <button
+                                type="button"
+                                onClick={() => setServiceSearchTerm('')}
+                                className="p-1 text-slate-400 hover:text-slate-600 rounded-md"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Quick 1-Click Create Button if search term typed */}
+                          {serviceSearchTerm.trim() && (
+                            <div className="p-2 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-semibold text-emerald-900 truncate">
+                                Add "<strong>{serviceSearchTerm.trim()}</strong>"
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCreateCustomItem(serviceSearchTerm.trim())}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-md shrink-0 shadow-2xs cursor-pointer"
+                              >
+                                + Add Line
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Grouped Service List */}
+                          <div className="overflow-y-auto flex-1 p-2 space-y-3 divide-y divide-slate-100 text-xs">
+                            
+                            {/* SECTION 1: BIR Tax Returns & Forms */}
+                            {unifiedServiceCatalog.filter(item => 
+                              item.category === 'BIR' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase()))
+                            ).length > 0 && (
+                              <div>
+                                <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-amber-800 bg-amber-50 rounded-md mb-1 flex items-center justify-between">
+                                  <span>BIR Tax Returns & Forms</span>
+                                  <span className="font-mono text-[9px] font-bold text-amber-700">
+                                    {unifiedServiceCatalog.filter(item => item.category === 'BIR' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase()))).length} items
+                                  </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  {unifiedServiceCatalog
+                                    .filter(item => item.category === 'BIR' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase())))
+                                    .map(item => (
+                                      <button
+                                        key={item.code}
+                                        type="button"
+                                        onClick={() => handleSelectUnifiedItem(item)}
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-amber-50/80 rounded-lg flex items-center justify-between group transition-colors cursor-pointer"
+                                      >
+                                        <span className="font-semibold text-slate-800 group-hover:text-amber-900 truncate text-[11px]">
+                                          {item.name}
+                                        </span>
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* SECTION 2: Statutory Benefits & Loans */}
+                            {unifiedServiceCatalog.filter(item => 
+                              item.category === 'Benefits' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase()))
+                            ).length > 0 && (
+                              <div className="pt-2">
+                                <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 bg-emerald-50 rounded-md mb-1 flex items-center justify-between">
+                                  <span>Statutory Benefits & Loans</span>
+                                  <span className="font-mono text-[9px] font-bold text-emerald-700">
+                                    {unifiedServiceCatalog.filter(item => item.category === 'Benefits' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase()))).length} items
+                                  </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  {unifiedServiceCatalog
+                                    .filter(item => item.category === 'Benefits' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase())))
+                                    .map(item => (
+                                      <button
+                                        key={item.code}
+                                        type="button"
+                                        onClick={() => handleSelectUnifiedItem(item)}
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-emerald-50/80 rounded-lg flex items-center justify-between group transition-colors cursor-pointer"
+                                      >
+                                        <span className="font-semibold text-slate-800 group-hover:text-emerald-900 truncate text-[11px]">
+                                          {item.name}
+                                        </span>
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* SECTION 3: Others (Retainers Fee, Service Charge, Bookkeeping, etc.) */}
+                            {unifiedServiceCatalog.filter(item => 
+                              item.category === 'Others' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase()))
+                            ).length > 0 && (
+                              <div className="pt-2">
+                                <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-800 bg-indigo-50 rounded-md mb-1 flex items-center justify-between">
+                                  <span>Others & Professional Fees</span>
+                                  <span className="font-mono text-[9px] font-bold text-indigo-700">
+                                    {unifiedServiceCatalog.filter(item => item.category === 'Others' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase()))).length} items
+                                  </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  {unifiedServiceCatalog
+                                    .filter(item => item.category === 'Others' && (!serviceSearchTerm.trim() || item.name.toLowerCase().includes(serviceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(serviceSearchTerm.toLowerCase())))
+                                    .map(item => (
+                                      <button
+                                        key={item.code}
+                                        type="button"
+                                        onClick={() => handleSelectUnifiedItem(item)}
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50/80 rounded-lg flex items-center justify-between group transition-colors cursor-pointer"
+                                      >
+                                        <span className="font-semibold text-slate-800 group-hover:text-indigo-900 truncate text-[11px]">
+                                          {item.name} {item.defaultAmount ? `(₱${item.defaultAmount.toLocaleString()})` : ''}
+                                        </span>
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+
+                          {/* Bottom Create Custom Item Footer Button / Form Toggle */}
+                          <div className="p-2.5 bg-slate-50 border-t border-slate-200">
+                            {!showCreateCustomSection ? (
+                              <button
+                                type="button"
+                                onClick={() => setShowCreateCustomSection(true)}
+                                className="w-full py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                              >
+                                <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>+ Create Another / Custom Item</span>
+                              </button>
+                            ) : (
+                              <div className="p-2.5 bg-white border border-slate-200 rounded-lg space-y-2 text-xs shadow-xs">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-800 text-[11px]">Create New Custom Item</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowCreateCustomSection(false)}
+                                    className="text-slate-400 hover:text-slate-600"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <div>
+                                  <input
+                                    type="text"
+                                    placeholder="Item Description (e.g. Service Charge)"
+                                    value={customItemName}
+                                    onChange={e => setCustomItemName(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <input
+                                    type="text"
+                                    placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
+                                    value={customItemPeriod}
+                                    onChange={e => setCustomItemPeriod(e.target.value)}
+                                    className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
+                                  <CurrencyInput
+                                    placeholder="Amount (₱)"
+                                    value={customItemAmount}
+                                    onChange={val => setCustomItemAmount(val)}
+                                    className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between pt-1">
+                                  <label className="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={saveCustomForFuture}
+                                      onChange={e => setSaveCustomForFuture(e.target.checked)}
+                                      className="rounded text-emerald-600 focus:ring-0"
+                                    />
+                                    Save to presets
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCreateCustomItem()}
+                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-md shadow-2xs cursor-pointer"
+                                  >
+                                    Add Line
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                        </div>
                       )}
-                      <optgroup label="All Master BIR Tax Returns">
-                        {masterChoices.birTaxOptions.map(opt => (
-                          <option key={opt.code} value={opt.code}>{opt.code} - {opt.name}</option>
-                        ))}
-                      </optgroup>
-                    </select>
+                    </div>
 
-                    {/* Add Benefits Dropdown */}
-                    <select
-                      value=""
-                      onChange={e => {
-                        handleAddBenefitServiceLine(e.target.value);
-                        e.target.value = "";
-                      }}
-                      className="w-full px-2 py-1.5 bg-white border border-emerald-300 text-emerald-900 font-semibold rounded-lg text-[11px] focus:ring-2 focus:ring-emerald-200 cursor-pointer"
-                    >
-                      <option value="">+ Benefits...</option>
-                      {selectedClient && selectedClient.benefitsServices.length > 0 && (
-                        <optgroup label="Client Registered Benefits">
-                          {selectedClient.benefitsServices.map(ben => (
-                            <option key={ben} value={ben}>{ben}</option>
-                          ))}
-                        </optgroup>
-                      )}
-                      <optgroup label="All Statutory Benefits Options">
-                        {masterChoices.benefitsOptions.map(opt => (
-                          <option key={opt.code} value={opt.code}>{opt.name}</option>
-                        ))}
-                      </optgroup>
-                    </select>
-
-                    {/* Saved Custom Services Dropdown */}
-                    <select
-                      value=""
-                      onChange={e => {
-                        if (e.target.value) {
-                          const saved = masterChoices.savedCustomServices?.find(s => s.description === e.target.value);
-                          setServices([...services, { description: e.target.value, monthYear: `${selectedMonth} ${selectedYear}`, amount: saved?.defaultAmount || 0 }]);
-                          e.target.value = "";
-                        }
-                      }}
-                      className="w-full px-2 py-1.5 bg-white border border-blue-300 text-blue-900 font-semibold rounded-lg text-[11px] focus:ring-2 focus:ring-blue-200 cursor-pointer"
-                    >
-                      <option value="">+ Saved Preset...</option>
-                      {masterChoices.savedCustomServices?.map((s, idx) => (
-                        <option key={idx} value={s.description}>
-                          {s.description} (₱{s.defaultAmount.toLocaleString()})
-                        </option>
-                      ))}
-                    </select>
-
-                    {/* Add Blank Custom Line */}
+                    {/* Blank Line Button */}
                     <button
                       type="button"
                       onClick={handleAddServiceLine}
-                      className="px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 font-bold rounded-lg text-[11px] flex items-center justify-center gap-1 transition-colors"
+                      className="px-3 py-2 bg-white border border-slate-300 hover:bg-slate-100 text-slate-800 font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
                     >
-                      <Plus className="w-3.5 h-3.5 text-slate-600" /> Blank Line
+                      <Plus className="w-3.5 h-3.5 text-slate-600" />
+                      <span>+ Blank Line</span>
                     </button>
 
                   </div>
                 </div>
 
-                {/* Service Line Inputs List with Separated Columns */}
-                <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-700 px-1 pt-1 border-t border-slate-100">
-                  <div className="col-span-5">Item / Service Description</div>
-                  <div className="col-span-4">Month and Year</div>
-                  <div className="col-span-3">Amount (PHP)</div>
+                {/* Service Line Inputs List with Separated Columns and Previous Billing Toggle */}
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 pb-1">
+                  <div className="grid grid-cols-11 gap-2 text-[11px] font-bold text-slate-700 flex-1 px-1">
+                    <div className="col-span-5">Item / Service Description</div>
+                    <div className="col-span-3">Month and Year</div>
+                    <div className="col-span-3">Amount (PHP)</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowPreviousBilling(prev => !prev)}
+                    className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer border shrink-0 ${
+                      showPreviousBilling 
+                        ? 'bg-amber-500 text-white border-amber-600 shadow-2xs' 
+                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+                    }`}
+                    title="Toggle to view the last billed period and amount for each item"
+                  >
+                    <History className={`w-3.5 h-3.5 ${showPreviousBilling ? 'text-white' : 'text-slate-500'}`} />
+                    <span>Previous Billing</span>
+                    <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase tracking-wider ${
+                      showPreviousBilling ? 'bg-amber-700 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {showPreviousBilling ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
                 </div>
 
-                <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                  {services.map((item, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50/80 p-1.5 border border-slate-200 rounded-xl">
-                      <div className="col-span-5">
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. Retainers Fee"
-                          value={item.description || ''}
-                          onChange={e => handleServiceChange(idx, 'description', e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
-                        />
-                      </div>
-                      <div className="col-span-4">
-                        <input
-                          type="text"
-                          placeholder="e.g. August 2026"
-                          value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : `${selectedMonth} ${selectedYear}`}
-                          onChange={e => handleServiceChange(idx, 'monthYear', e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
-                        />
-                      </div>
-                      <div className="col-span-3 flex items-center gap-1">
-                        <CurrencyInput
-                          value={item.amount}
-                          onChange={val => handleServiceChange(idx, 'amount', val)}
-                          placeholder="25,000"
-                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:bg-white focus:ring-2 focus:ring-emerald-100"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (item.description.trim()) {
-                              saveCustomService({ description: item.description.trim(), defaultAmount: item.amount });
-                              alert(`Saved "${item.description.trim()}" (₱${item.amount.toLocaleString()}) to custom service presets for future reuse!`);
-                            } else {
-                              alert('Please enter a service description first.');
-                            }
-                          }}
-                          title="Save as reusable custom service preset"
-                          className="p-1 text-blue-600 hover:bg-blue-50 rounded-lg shrink-0"
-                        >
-                          <BookmarkPlus className="w-3.5 h-3.5" />
-                        </button>
-                        {services.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveServiceLine(idx)}
-                            className="p-1 text-slate-400 hover:text-rose-600 shrink-0"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {services.length === 0 ? (
+                  <div className="py-6 px-4 text-center bg-slate-50 border border-dashed border-slate-200 rounded-xl text-slate-400">
+                    <Receipt className="w-5 h-5 mx-auto mb-1 text-slate-400" />
+                    <p className="font-semibold text-xs text-slate-600">No items or services added yet</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">Select a client with active payables, pick a BIR form or benefit from above, or click "+ Blank Line".</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {services.map((item, idx) => {
+                      const prevInfo = showPreviousBilling && selectedClientId ? getPreviousBillingInfo(selectedClientId, item.description) : null;
+                      return (
+                        <div key={idx} className="bg-slate-50/80 p-2 border border-slate-200 rounded-xl space-y-1.5">
+                          <div className="grid grid-cols-11 gap-2 items-center">
+                            <div className="col-span-5">
+                              <input
+                                type="text"
+                                required
+                                placeholder="e.g. Retainers Fee"
+                                value={item.description || ''}
+                                onChange={e => handleServiceChange(idx, 'description', e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <input
+                                type="text"
+                                placeholder="e.g. July 2026 or 2Q-2026"
+                                value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
+                                onChange={e => handleServiceChange(idx, 'monthYear', e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
+                              />
+                            </div>
+                            <div className="col-span-3 flex items-center gap-1.5">
+                              <CurrencyInput
+                                value={item.amount}
+                                onChange={val => handleServiceChange(idx, 'amount', val)}
+                                placeholder="1,000,000.00"
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:bg-white focus:ring-2 focus:ring-emerald-100 min-w-[120px]"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveServiceLine(idx)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg shrink-0 cursor-pointer transition-colors"
+                                title="Remove line item"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Previous Billing History Banner when Toggle is ON */}
+                          {showPreviousBilling && selectedClientId && (
+                            <div className="pt-1 border-t border-slate-200/60">
+                              {prevInfo ? (
+                                <div className="flex items-center justify-between text-[10px] text-amber-900 bg-amber-50/90 border border-amber-200/80 px-2 py-1 rounded-md">
+                                  <div className="flex items-center gap-1.5 truncate">
+                                    <History className="w-3 h-3 text-amber-600 shrink-0" />
+                                    <span>
+                                      Last Billed: <strong className="font-semibold text-slate-900">{prevInfo.monthYear}</strong> — <strong className="font-mono text-emerald-800">₱{prevInfo.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> <span className="text-slate-400 font-mono">({prevInfo.invoiceNumber})</span>
+                                    </span>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setApplyPreviousAmountModal({
+                                        isOpen: true,
+                                        itemIndex: idx,
+                                        itemDescription: item.description || 'This item',
+                                        previousMonthYear: prevInfo.monthYear,
+                                        previousAmount: prevInfo.amount,
+                                        currentAmount: item.amount
+                                      });
+                                    }}
+                                    className="ml-2 px-2 py-0.5 bg-amber-200 hover:bg-amber-300 text-amber-950 font-bold rounded text-[9px] cursor-pointer shrink-0 transition-colors flex items-center gap-1"
+                                    title="Click to apply last billed amount to this line"
+                                  >
+                                    Apply ₱{prevInfo.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 text-[10px] text-slate-400 italic px-1 py-0.5">
+                                  <History className="w-3 h-3 text-slate-300 shrink-0" />
+                                  <span>No previous billing record found for this item</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Total Calculation Summary (12% VAT removed) */}
@@ -2681,15 +3111,16 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 <button
                   type="button"
                   onClick={() => setShowCreateModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold"
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs cursor-pointer flex items-center gap-1.5"
                 >
-                  Create Statement & Send
+                  <FileText className="w-4 h-4" />
+                  Generate Invoice
                 </button>
               </div>
             </form>
@@ -3558,6 +3989,97 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Duplicate Item Already Billed Warning */}
+      {duplicateWarningModal && duplicateWarningModal.isOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-amber-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-slate-800">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl shrink-0">
+                <AlertTriangle className="w-6 h-6 text-amber-600" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="font-bold text-slate-900 text-base flex items-center gap-1.5">
+                  ⚠️ Item Already Billed
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  This item (<strong>{duplicateWarningModal.itemName}</strong> for <strong>{duplicateWarningModal.monthYear}</strong> - <strong className="font-mono text-slate-900">₱{duplicateWarningModal.amount.toLocaleString()}</strong>) has already been billed under Invoice / Billing # <strong className="font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">{duplicateWarningModal.billingNumber}</strong>.
+                </p>
+                <p className="text-xs font-semibold text-slate-800 pt-1">
+                  Do you want to allow and add this duplicate item anyway?
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDuplicateWarningModal(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancel / Do Not Add
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setServices(prev => [...prev, duplicateWarningModal.pendingLine]);
+                  setDuplicateWarningModal(null);
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                Allow and Add Duplicate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Confirm Change Payable Amount from Previous Billing */}
+      {applyPreviousAmountModal && applyPreviousAmountModal.isOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-slate-800">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-indigo-50 text-indigo-700 rounded-xl shrink-0">
+                <History className="w-6 h-6 text-indigo-600" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="font-bold text-slate-900 text-base flex items-center gap-1.5">
+                  Change Payable Amount?
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Do you want to change the payable amount for <strong>{applyPreviousAmountModal.itemDescription}</strong> to <strong className="font-mono text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-md border border-emerald-200">₱{applyPreviousAmountModal.previousAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> (from previous billing for <strong>{applyPreviousAmountModal.previousMonthYear}</strong>)?
+                </p>
+                {applyPreviousAmountModal.currentAmount > 0 && (
+                  <p className="text-[11px] text-slate-400">
+                    Current line amount: <span className="font-mono line-through">₱{applyPreviousAmountModal.currentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setApplyPreviousAmountModal(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleServiceChange(applyPreviousAmountModal.itemIndex, 'amount', applyPreviousAmountModal.previousAmount);
+                  setApplyPreviousAmountModal(null);
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Yes, Change Amount
+              </button>
+            </div>
           </div>
         </div>
       )}

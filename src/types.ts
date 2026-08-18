@@ -717,6 +717,35 @@ export interface CalculatedClientDeadline {
   baseTin?: string;
 }
 
+// Master Biller & Catalog Data Types ⭐
+export type BillerCategory = 
+  | 'BIR Tax Return' 
+  | 'Statutory Benefits / Loans' 
+  | 'Retainer Fee' 
+  | 'Service Charges' 
+  | 'Special Engagements' 
+  | 'Adjustments';
+
+export type BillerPaymentType = 'Recurring' | 'One-Time';
+export type BillerRecurringFrequency = 'Monthly' | 'Quarterly' | 'Semi-Annually' | 'Annually';
+
+export interface BillerMasterItem {
+  id: string;
+  code: string; // e.g., '0619E', '2550Q', 'SSS_CONT', 'SSS_LOAN', 'RET_FEE', 'SRV_CHG'
+  name: string; // Official form title or remittance name
+  shortName?: string; // Form Code / Short Name e.g., '0619E', '2550Q', 'SSS Cont.', 'SSS Loan'
+  category: BillerCategory;
+  paymentType: BillerPaymentType; // 'Recurring' | 'One-Time'
+  frequency?: BillerRecurringFrequency; // 'Monthly' | 'Quarterly' | 'Semi-Annually' | 'Annually'
+  defaultAmount: number; // Standard / suggested default amount in PHP
+  description?: string;
+  sourceRuleCode?: string; // Links to BIR / Benefits rule code if generated from compliance
+  active: boolean;
+  isSystemDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Master choices state
 export interface MasterChoices {
   businessNatures: string[];
@@ -725,6 +754,7 @@ export interface MasterChoices {
   banksList: string[];
   formLinkages?: FormLinkage[];
   savedCustomServices?: { description: string; defaultAmount?: number }[];
+  billerCatalog?: BillerMasterItem[];
   holidays?: HolidayItem[];
   deadlineExtensions?: DeadlineExtensionRule[];
   weekendConfig?: WeekendAdjustmentConfig;

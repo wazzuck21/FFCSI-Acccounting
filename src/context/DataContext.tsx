@@ -30,7 +30,10 @@ import {
   HolidayItem,
   DeadlineExtensionRule,
   WeekendAdjustmentConfig,
-  CalculatedClientDeadline
+  CalculatedClientDeadline,
+  BillerMasterItem,
+  BillerCategory,
+  BillerPaymentType
 } from '../types';
 import { 
   INITIAL_CLIENTS, 
@@ -54,6 +57,7 @@ import {
   DEFAULT_BUSINESS_NATURES, 
   DEFAULT_BIR_TAX_OPTIONS, 
   DEFAULT_BENEFITS_OPTIONS,
+  DEFAULT_BILLER_CATALOG,
   MONTHS_LIST,
   MONTH_FULL_NAMES,
   getRuleDeadlineForMonth
@@ -185,6 +189,14 @@ interface DataContextType {
   applyMasterDeadlineRuleToAllClients: (rule: CustomDeadlineRule, userId?: string, userName?: string) => void;
   addMasterBank: (bankName: string) => void;
   deleteMasterBank: (bankName: string) => void;
+
+  // Master Biller & Catalog Data Management ⭐
+  billerCatalog: BillerMasterItem[];
+  addBiller: (biller: Omit<BillerMasterItem, 'id' | 'createdAt' | 'updatedAt'>) => BillerMasterItem;
+  updateBiller: (id: string, updates: Partial<BillerMasterItem>) => void;
+  deleteBiller: (id: string) => void;
+  toggleBillerActive: (id: string) => void;
+  syncBillersFromRules: () => { addedCount: number; message: string };
   
   // Linked Forms & Choices ⭐
   addFormLinkage: (primaryCode: string, linkedCodes: string[], description?: string) => void;
@@ -311,6 +323,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       { description: 'Special SEC Registration & Filing Fee', defaultAmount: 15000 },
       { description: 'Annual Business Permit Renewal Processing', defaultAmount: 8500 }
     ],
+    billerCatalog: DEFAULT_BILLER_CATALOG,
     holidays: DEFAULT_HOLIDAYS,
     deadlineExtensions: DEFAULT_DEADLINE_EXTENSIONS,
     weekendConfig: DEFAULT_WEEKEND_CONFIG
@@ -404,11 +417,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
         const extraBen = (storedMaster.benefitsOptions || []).filter(o => !DEFAULT_BENEFITS_OPTIONS.some(def => def.id === o.id || def.code.toLowerCase() === def.code.toLowerCase()));
 
+        const mergedBillers = DEFAULT_BILLER_CATALOG.map(def => {
+          const custom = storedMaster.billerCatalog?.find(b => b.id === def.id || b.code.toLowerCase() === def.code.toLowerCase());
+          return custom ? { ...def, ...custom } : def;
+        });
+        const extraBillers = (storedMaster.billerCatalog || []).filter(b => !DEFAULT_BILLER_CATALOG.some(def => def.id === b.id || def.code.toLowerCase() === b.code.toLowerCase()));
+
         setMasterChoices({
           businessNatures: storedMaster.businessNatures || DEFAULT_BUSINESS_NATURES,
           birTaxOptions: [...mergedBirOptions, ...extraBir],
           benefitsOptions: [...mergedBenOptions, ...extraBen],
           banksList: storedMaster.banksList || DEFAULT_BANKS,
+          billerCatalog: [...mergedBillers, ...extraBillers],
           formLinkages: (storedMaster.formLinkages && storedMaster.formLinkages.length > 0)
             ? storedMaster.formLinkages.map((l, idx) => ({
                 id: l.id || `fl_${idx}_${Date.now()}`,
@@ -839,7 +859,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             id: `cs_auto_retainer_${client.id}`,
             clientId: client.id,
             serviceCode: 'BOOKKEEPING',
-            serviceName: 'Monthly Retainer & Accounting Bookkeeping Services',
+            serviceName: 'Retainers Fee',
             category: 'Accounting',
             status: 'Active',
             startDate: client.createdAt || '2025-01-01',
@@ -2377,6 +2397,160 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_master_choices', updated);
   };
 
+  // Master Biller & Catalog Data Management Methods ⭐
+  const addBiller = (billerData: Omit<BillerMasterItem, 'id' | 'createdAt' | 'updatedAt'>): BillerMasterItem => {
+    const nowIso = new Date().toISOString();
+    const newBiller: BillerMasterItem = {
+      ...billerData,
+      id: `biller_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    const currentList = masterChoices.billerCatalog || DEFAULT_BILLER_CATALOG;
+    const updated = [newBiller, ...currentList];
+    const newMaster = { ...masterChoices, billerCatalog: updated };
+    setMasterChoices(newMaster);
+    persistState('afms_master_choices', newMaster);
+    addAuditLog(
+      'Biller Catalog Item Added',
+      `Added biller "${newBiller.code} - ${newBiller.name}" (${newBiller.category}, ${newBiller.paymentType}${newBiller.frequency ? ` - ${newBiller.frequency}` : ''}). Default: ₱${(newBiller.defaultAmount || 0).toLocaleString()}.`,
+      'admin',
+      'System Admin'
+    );
+    return newBiller;
+  };
+
+  const updateBiller = (id: string, updates: Partial<BillerMasterItem>) => {
+    const currentList = masterChoices.billerCatalog || DEFAULT_BILLER_CATALOG;
+    let billerName = '';
+    const updated = currentList.map(b => {
+      if (b.id === id) {
+        billerName = updates.name || b.name;
+        return { ...b, ...updates, updatedAt: new Date().toISOString() };
+      }
+      return b;
+    });
+    const newMaster = { ...masterChoices, billerCatalog: updated };
+    setMasterChoices(newMaster);
+    persistState('afms_master_choices', newMaster);
+    addAuditLog(
+      'Biller Catalog Item Updated',
+      `Updated biller "${billerName || id}". Changed fields: ${Object.keys(updates).join(', ')}.`,
+      'admin',
+      'System Admin'
+    );
+  };
+
+  const deleteBiller = (id: string) => {
+    const currentList = masterChoices.billerCatalog || DEFAULT_BILLER_CATALOG;
+    const target = currentList.find(b => b.id === id);
+    const updated = currentList.filter(b => b.id !== id);
+    const newMaster = { ...masterChoices, billerCatalog: updated };
+    setMasterChoices(newMaster);
+    persistState('afms_master_choices', newMaster);
+    addAuditLog(
+      'Biller Catalog Item Removed',
+      `Removed biller "${target?.code || id} - ${target?.name || ''}" from Biller Master Catalog.`,
+      'admin',
+      'System Admin'
+    );
+  };
+
+  const toggleBillerActive = (id: string) => {
+    const currentList = masterChoices.billerCatalog || DEFAULT_BILLER_CATALOG;
+    let nowActive = false;
+    let billerName = '';
+    const updated = currentList.map(b => {
+      if (b.id === id) {
+        nowActive = !b.active;
+        billerName = b.name;
+        return { ...b, active: nowActive, updatedAt: new Date().toISOString() };
+      }
+      return b;
+    });
+    const newMaster = { ...masterChoices, billerCatalog: updated };
+    setMasterChoices(newMaster);
+    persistState('afms_master_choices', newMaster);
+    addAuditLog(
+      'Biller Status Toggled',
+      `Toggled active status of biller "${billerName}" to ${nowActive ? 'Active' : 'Inactive'}.`,
+      'admin',
+      'System Admin'
+    );
+  };
+
+  const syncBillersFromRules = (): { addedCount: number; message: string } => {
+    const currentList = masterChoices.billerCatalog || DEFAULT_BILLER_CATALOG;
+    let addedCount = 0;
+    const newBillers: BillerMasterItem[] = [];
+
+    // Check BIR Tax Options
+    masterChoices.birTaxOptions.forEach(birRule => {
+      const exists = currentList.some(b => b.code.toLowerCase() === birRule.code.toLowerCase() || (b.sourceRuleCode && b.sourceRuleCode.toLowerCase() === birRule.code.toLowerCase()));
+      if (!exists) {
+        addedCount++;
+        newBillers.push({
+          id: `biller_bir_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
+          code: birRule.code,
+          shortName: birRule.code,
+          name: `${birRule.code} ${birRule.name}`,
+          category: 'BIR Tax Return',
+          paymentType: 'Recurring',
+          frequency: (birRule.frequency === 'Quarterly' ? 'Quarterly' : birRule.frequency === 'Annually' ? 'Annually' : 'Monthly') as any,
+          defaultAmount: 0,
+          description: birRule.customDescription || `BIR Form ${birRule.code}`,
+          sourceRuleCode: birRule.code,
+          active: true,
+          isSystemDefault: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    // Check Benefits Options
+    masterChoices.benefitsOptions.forEach(benRule => {
+      const exists = currentList.some(b => b.code.toLowerCase() === benRule.code.toLowerCase() || (b.sourceRuleCode && b.sourceRuleCode.toLowerCase() === benRule.code.toLowerCase()));
+      if (!exists) {
+        addedCount++;
+        newBillers.push({
+          id: `biller_ben_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
+          code: benRule.code,
+          shortName: benRule.code,
+          name: benRule.name,
+          category: 'Statutory Benefits / Loans',
+          paymentType: 'Recurring',
+          frequency: (benRule.frequency === 'Quarterly' ? 'Quarterly' : benRule.frequency === 'Annually' ? 'Annually' : 'Monthly') as any,
+          defaultAmount: 0,
+          description: benRule.customDescription || benRule.name,
+          sourceRuleCode: benRule.code,
+          active: true,
+          isSystemDefault: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    if (addedCount > 0) {
+      const updated = [...newBillers, ...currentList];
+      const newMaster = { ...masterChoices, billerCatalog: updated };
+      setMasterChoices(newMaster);
+      persistState('afms_master_choices', newMaster);
+      addAuditLog(
+        'Biller Catalog Synced',
+        `Synced ${addedCount} new compliance item(s) from BIR & Benefits Master Rules into Biller Master Data.`,
+        'admin',
+        'System Admin'
+      );
+    }
+
+    return {
+      addedCount,
+      message: addedCount > 0 ? `Successfully synced ${addedCount} new biller(s) from Master BIR & Benefits Rules!` : 'All BIR and Benefits compliance rules are already present in the Biller Master Catalog.'
+    };
+  };
+
   const addFormLinkage = (primaryCodeOrObj: string | FormLinkage, linkedCodes?: string[], description?: string) => {
     const existing = masterChoices.formLinkages || [];
     let newRule: FormLinkage;
@@ -3069,6 +3243,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         applyMasterDeadlineRuleToAllClients,
         addMasterBank,
         deleteMasterBank,
+        billerCatalog: masterChoices.billerCatalog || DEFAULT_BILLER_CATALOG,
+        addBiller,
+        updateBiller,
+        deleteBiller,
+        toggleBillerActive,
+        syncBillersFromRules,
         addFormLinkage,
         updateFormLinkage,
         deleteFormLinkage,
