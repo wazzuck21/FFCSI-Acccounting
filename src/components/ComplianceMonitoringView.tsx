@@ -29,13 +29,14 @@ import {
   Kanban,
   Columns,
   ArrowRight,
-  RotateCcw,
+  History,
   AlertTriangle,
   Lock,
   ArrowUpDown,
   Sparkles,
   MapPin,
-  MessageSquare
+  MessageSquare,
+  FileText
 } from 'lucide-react';
 
 export const ComplianceMonitoringView: React.FC = () => {
@@ -59,40 +60,78 @@ export const ComplianceMonitoringView: React.FC = () => {
   const [showEnrolledClientsModal, setShowEnrolledClientsModal] = useState(false);
   const [enrolledSearchQuery, setEnrolledSearchQuery] = useState('');
 
-  // Revert Modal State & Toast Notifications
-  const [revertModalOpen, setRevertModalOpen] = useState(false);
-  const [itemToRevert, setItemToRevert] = useState<CompiledClientDeadline | null>(null);
+  // Modify History Modal State & Toast Notifications
+  const [historyModalItem, setHistoryModalItem] = useState<{
+    clientName: string;
+    ruleCode: string;
+    ruleName?: string;
+    category?: string;
+    periodLabel: string;
+    dueDateStr: string;
+    status: string;
+    assessmentTag?: string;
+    paymentBehavior?: string;
+    payableAmount?: number;
+    history: {
+      date: string;
+      modifiedBy: string;
+      details: string;
+      previousAmount?: number;
+      newAmount?: number;
+    }[];
+    paymentDetails?: any;
+    notes?: string;
+  } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Revert form choice / reset item back to Action Pending in To-Do list
-  const handleCancelFormChoice = (item: CompiledClientDeadline) => {
-    if (item.status === 'Already Paid' && !isSuperAdmin) {
-      setToastMessage(`Only Admin users are allowed to revert Settled & Paid items back to pending.`);
-      setTimeout(() => setToastMessage(null), 4500);
-      return;
-    }
-    setItemToRevert(item);
-    setRevertModalOpen(true);
-  };
+  // Open Modify History Modal
+  const handleOpenHistoryModal = (item: CompiledClientDeadline) => {
+    const monthNum = String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0');
+    const monthStr = `${selectedYear}-${monthNum}`;
 
-  const confirmRevertToPending = () => {
-    if (!itemToRevert) return;
-    if (itemToRevert.status === 'Already Paid' && !isSuperAdmin) {
-      setToastMessage(`Only Admin users are allowed to revert Settled & Paid items back to pending.`);
-      setTimeout(() => setToastMessage(null), 4500);
-      setRevertModalOpen(false);
-      setItemToRevert(null);
-      return;
+    const matchingPayable = payables.find(p => 
+      p.clientId === item.clientId && 
+      (p.itemName.trim().toLowerCase() === item.ruleCode.trim().toLowerCase() || 
+       p.itemName.toLowerCase().includes(item.ruleCode.toLowerCase()) || 
+       item.ruleCode.toLowerCase().includes(p.itemName.toLowerCase())) &&
+      (p.month === monthStr || p.month?.includes(selectedMonth) || p.year === selectedYear)
+    );
+
+    let histList: Array<{
+      date: string;
+      modifiedBy: string;
+      details: string;
+      previousAmount?: number;
+      newAmount?: number;
+    }> = [];
+
+    if (matchingPayable?.amendedHistory && matchingPayable.amendedHistory.length > 0) {
+      histList = [...matchingPayable.amendedHistory];
+    } else if (item.status === 'Already Paid' || item.status === 'For Payment' || item.assessmentTag) {
+      histList = [{
+        date: matchingPayable?.createdAt || new Date().toISOString().replace('T', ' ').substring(0, 19),
+        modifiedBy: matchingPayable?.createdByName || item.assignedStaffName || 'Staff',
+        details: `Assessment / Status recorded as "${item.assessmentTag || item.status}" (₱${item.payableAmount ? item.payableAmount.toLocaleString() : '0.00'})${item.notes ? ` • Notes: ${item.notes}` : ''}`,
+        previousAmount: 0,
+        newAmount: item.payableAmount || 0
+      }];
     }
-    resetPayableAssessment(itemToRevert.clientId, itemToRevert.ruleCode);
-    setRevertModalOpen(false);
-    
-    // Show toast message confirmation
-    setToastMessage(`Filing status for ${itemToRevert.clientName} (${itemToRevert.ruleCode}) has been successfully reverted to Action Pending.`);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 4500);
-    setItemToRevert(null);
+
+    setHistoryModalItem({
+      clientName: item.clientName,
+      ruleCode: item.ruleCode,
+      ruleName: item.ruleName,
+      category: item.category,
+      periodLabel: item.periodLabel,
+      dueDateStr: item.formattedDateStr || item.dueDate,
+      status: item.status,
+      assessmentTag: item.assessmentTag,
+      paymentBehavior: item.paymentBehavior,
+      payableAmount: item.payableAmount,
+      history: histList,
+      paymentDetails: matchingPayable?.paymentDetails,
+      notes: item.notes || item.remarks || item.comment || matchingPayable?.notes
+    });
   };
 
   // Helper to format YYYY-MM-DD into "July 10, 2026"
@@ -999,26 +1038,18 @@ export const ComplianceMonitoringView: React.FC = () => {
                             </span>
                           )}
 
-                          {/* Icon-only button to cancel choice */}
-                          {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
+                          {/* Modify History Button (Icon-only) ⭐ */}
+                          {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0) || item.notes) && (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleCancelFormChoice(item);
+                                handleOpenHistoryModal(item);
                               }}
-                              className={`p-1 border rounded-md transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
-                                item.status === 'Already Paid' && !isSuperAdmin
-                                  ? 'bg-slate-100 text-slate-400 border-slate-200'
-                                  : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-                              }`}
-                              title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
+                              className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
+                              title="View Modification & Assessment History"
                             >
-                              {item.status === 'Already Paid' && !isSuperAdmin ? (
-                                <Lock className="w-3.5 h-3.5 text-slate-400" />
-                              ) : (
-                                <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                              )}
+                              <History className="w-3.5 h-3.5 text-amber-600" />
                             </button>
                           )}
                         </div>
@@ -1177,25 +1208,18 @@ export const ComplianceMonitoringView: React.FC = () => {
                               </span>
                             )}
 
-                            {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
+                            {/* Modify History Button (Icon-only) ⭐ */}
+                            {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0) || item.notes) && (
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleCancelFormChoice(item);
+                                  handleOpenHistoryModal(item);
                                 }}
-                                className={`p-1 border rounded-md transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
-                                  item.status === 'Already Paid' && !isSuperAdmin
-                                    ? 'bg-slate-100 text-slate-400 border-slate-200'
-                                    : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-                                }`}
-                                title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
+                                className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
+                                title="View Modification & Assessment History"
                               >
-                                {item.status === 'Already Paid' && !isSuperAdmin ? (
-                                  <Lock className="w-3.5 h-3.5 text-slate-400" />
-                                ) : (
-                                  <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                                )}
+                                <History className="w-3.5 h-3.5 text-amber-600" />
                               </button>
                             )}
                           </div>
@@ -1307,25 +1331,18 @@ export const ComplianceMonitoringView: React.FC = () => {
                       </span>
                     )}
 
-                    {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0)) && (
+                    {/* Modify History Button (Icon-only) ⭐ */}
+                    {(item.status === 'For Payment' || item.status === 'Already Paid' || (item.payableAmount !== undefined && item.payableAmount > 0) || item.notes) && (
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleCancelFormChoice(item);
+                          handleOpenHistoryModal(item);
                         }}
-                        className={`p-1.5 border rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 ${
-                          item.status === 'Already Paid' && !isSuperAdmin
-                            ? 'bg-slate-100 text-slate-400 border-slate-200'
-                            : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-                        }`}
-                        title={item.status === 'Already Paid' && !isSuperAdmin ? "Only Admin can revert Settled & Paid items" : "Revert to pending"}
+                        className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-colors cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
+                        title="View Modification & Assessment History"
                       >
-                        {item.status === 'Already Paid' && !isSuperAdmin ? (
-                          <Lock className="w-3.5 h-3.5 text-slate-400" />
-                        ) : (
-                          <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
-                        )}
+                        <History className="w-3.5 h-3.5 text-amber-600" />
                       </button>
                     )}
                   </div>
@@ -1474,25 +1491,25 @@ export const ComplianceMonitoringView: React.FC = () => {
         </div>
       )}
 
-      {/* CUSTOM REVERT TO PENDING CONFIRMATION MODAL */}
-      {revertModalOpen && itemToRevert && (
+      {/* MODIFY & ASSESSMENT HISTORY MODAL ⭐ */}
+      {historyModalItem && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-900 space-y-4 text-xs animate-in fade-in zoom-in-95 duration-150 max-h-[90vh] overflow-y-auto">
             
             <div className="flex justify-between items-start border-b border-slate-100 pb-3">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-600 rounded-2xl shrink-0">
-                  <RotateCcw className="w-5 h-5 text-rose-600" />
+                <div className="p-2.5 bg-amber-50 border border-amber-200 text-amber-600 rounded-2xl shrink-0">
+                  <History className="w-5 h-5 text-amber-600" />
                 </div>
                 <div>
-                  <h3 className="font-extrabold text-base text-slate-900">Revert Filing Status</h3>
-                  <p className="text-xs font-bold text-rose-600 mt-0.5">Are you sure you want to revert to pending?</p>
+                  <h3 className="font-extrabold text-base text-slate-900">Modification & Assessment History</h3>
+                  <p className="text-slate-500 text-xs mt-0.5">{historyModalItem.clientName}</p>
                 </div>
               </div>
 
               <button
                 type="button"
-                onClick={() => setRevertModalOpen(false)}
+                onClick={() => setHistoryModalItem(null)}
                 className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-xl cursor-pointer transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -1502,50 +1519,108 @@ export const ComplianceMonitoringView: React.FC = () => {
             {/* Target Item Overview */}
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3.5 space-y-2 text-xs">
               <div className="flex justify-between items-center">
-                <span className="text-slate-500 font-medium">Client / Company:</span>
-                <span className="font-extrabold text-slate-900">{itemToRevert.clientName}</span>
+                <span className="text-slate-500 font-medium">Obligation / Form:</span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`font-mono font-bold px-2 py-0.5 rounded text-[11px] ${
+                    historyModalItem.category === 'BIR' ? 'bg-amber-100 text-amber-900 border border-amber-200' : 'bg-emerald-100 text-emerald-900 border border-emerald-200'
+                  }`}>
+                    {historyModalItem.ruleCode}
+                  </span>
+                  {historyModalItem.ruleName && (
+                    <span className="text-slate-600 font-medium text-[11px]">({historyModalItem.ruleName})</span>
+                  )}
+                </div>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-slate-500 font-medium">Requirement / Form:</span>
-                <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200">
-                  {itemToRevert.ruleCode}
-                </span>
+                <span className="text-slate-500 font-medium">Target Period:</span>
+                <span className="font-mono font-bold text-slate-800">{historyModalItem.periodLabel}</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-slate-500 font-medium">Target Period Code:</span>
-                <span className="font-mono font-bold text-slate-800">{itemToRevert.periodLabel}</span>
+                <span className="text-slate-500 font-medium">Due Date:</span>
+                <span className="font-medium text-slate-700">{historyModalItem.dueDateStr}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-slate-500 font-medium">Current Status:</span>
-                <span className="font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                  {itemToRevert.status}
+                <span className={`font-bold px-2 py-0.5 rounded text-[11px] ${
+                  historyModalItem.status === 'Already Paid' 
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    : historyModalItem.status === 'For Payment'
+                      ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                      : 'bg-amber-100 text-amber-900 border border-amber-200'
+                }`}>
+                  {historyModalItem.assessmentTag || historyModalItem.status}
                 </span>
               </div>
+              {historyModalItem.payableAmount !== undefined && (
+                <div className="flex justify-between items-center pt-1 border-t border-slate-200/60">
+                  <span className="text-slate-500 font-medium">Current Amount:</span>
+                  <span className="font-mono font-bold text-sm text-slate-900">
+                    {historyModalItem.payableAmount < 0 ? `-₱${Math.abs(historyModalItem.payableAmount).toLocaleString()}` : `₱${historyModalItem.payableAmount.toLocaleString()}`}
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* Warning Details */}
-            <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-xl text-[11px] text-amber-900 flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <p className="leading-relaxed">
-                Reverting will remove any recorded tax assessment, zero payment entry, or payment tag for this form, returning the item back to <strong>Action Pending</strong> in the user's To-Do list.
-              </p>
+            {/* Payment Details if available */}
+            {historyModalItem.paymentDetails && (
+              <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-xl space-y-1 text-xs">
+                <div className="flex items-center gap-1.5 text-emerald-900 font-bold">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Settlement & Official Receipt Confirmation</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px] text-emerald-800 pt-1">
+                  <div>Date Paid: <strong>{historyModalItem.paymentDetails.paidDate || '—'}</strong></div>
+                  <div>Method: <strong>{historyModalItem.paymentDetails.paymentMethod || '—'}</strong></div>
+                  {historyModalItem.paymentDetails.referenceNumber && (
+                    <div className="col-span-2">Ref / OR No: <strong className="font-mono">{historyModalItem.paymentDetails.referenceNumber}</strong></div>
+                  )}
+                  {historyModalItem.paymentDetails.taggedByName && (
+                    <div className="col-span-2">Verified By: <strong>{historyModalItem.paymentDetails.taggedByName}</strong></div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Modification Audit History Timeline */}
+            <div className="space-y-2 pt-1">
+              <h4 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                <History className="w-4 h-4 text-amber-600" />
+                <span>Modification & Audit Log Trail</span>
+              </h4>
+
+              {(!historyModalItem.history || historyModalItem.history.length === 0) ? (
+                <p className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-slate-400 italic text-center">
+                  No previous modification logs recorded for this requirement.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {historyModalItem.history.map((hist, idx) => (
+                    <div key={idx} className="p-3 bg-slate-50/90 border border-slate-200 rounded-xl space-y-1 text-xs">
+                      <div className="flex justify-between items-center text-slate-700">
+                        <span className="font-bold text-indigo-700">{hist.modifiedBy || 'Staff'}</span>
+                        <span className="text-[10px] text-slate-400 font-mono">{hist.date}</span>
+                      </div>
+                      <p className="text-slate-800 font-medium leading-relaxed">{hist.details}</p>
+                      {(hist.previousAmount !== undefined || hist.newAmount !== undefined) && (
+                        <div className="flex gap-4 text-[10px] text-slate-500 font-mono pt-1">
+                          {hist.previousAmount !== undefined && <span>Prev: ₱{Number(hist.previousAmount).toLocaleString()}</span>}
+                          {hist.newAmount !== undefined && <span>→ New: <strong className="text-slate-800">₱{Number(hist.newAmount).toLocaleString()}</strong></span>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {/* Modal Actions */}
-            <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-100">
+            {/* Close Action */}
+            <div className="flex justify-end pt-3 border-t border-slate-100">
               <button
                 type="button"
-                onClick={() => setRevertModalOpen(false)}
-                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold transition-colors cursor-pointer"
+                onClick={() => setHistoryModalItem(null)}
+                className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl transition-colors cursor-pointer"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={confirmRevertToPending}
-                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-md shadow-rose-600/20 flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <RotateCcw className="w-4 h-4" /> Yes, Revert to Pending
+                Close History
               </button>
             </div>
 

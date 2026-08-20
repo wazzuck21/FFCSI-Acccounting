@@ -11,6 +11,7 @@ import {
   LeaveType 
 } from '../types';
 import { computeEmployeePayslip, calculateSSSContribution, calculatePhilHealthContribution, calculatePagIbigContribution, calculateSemiMonthlyBIRTax } from '../lib/dolePayroll';
+import { DolePayrollSandbox } from './DolePayrollSandbox';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { 
@@ -567,6 +568,12 @@ export const CompanyPayrollView: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-3">
             <button
+              onClick={() => setActiveTab('calculator')}
+              className="px-4 py-2.5 bg-indigo-600/80 hover:bg-indigo-600 text-white text-xs font-semibold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer border border-indigo-400/40"
+            >
+              <Calculator className="w-4 h-4 text-indigo-200" /> DOLE & Tax Sandbox
+            </button>
+            <button
               onClick={handleOpenNewRunModal}
               className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-md transition-all flex items-center gap-2 cursor-pointer"
             >
@@ -660,7 +667,10 @@ export const CompanyPayrollView: React.FC = () => {
           }`}
         >
           <Calculator className="w-4 h-4" />
-          DOLE & BIR Tax Reference
+          DOLE & Tax Sandbox Calculator
+          <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[10px] rounded font-bold uppercase tracking-wider">
+            Sandbox
+          </span>
         </button>
       </div>
 
@@ -1173,82 +1183,9 @@ export const CompanyPayrollView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 5: DOLE & BIR REFERENCE CALCULATOR */}
+      {/* TAB 5: DOLE & BIR REFERENCE CALCULATOR & INTERACTIVE SANDBOX */}
       {activeTab === 'calculator' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-blue-600" />
-              Philippine DOLE Overtime Rate Rules
-            </h3>
-            <p className="text-xs text-slate-500">Official Labor Code rate multipliers for overtime and holiday work in the Philippines.</p>
-
-            <div className="space-y-2 text-xs">
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-                <div>
-                  <span className="font-bold text-slate-800">Regular Workday Overtime</span>
-                  <p className="text-[11px] text-slate-500">Beyond 8 hours on standard workday</p>
-                </div>
-                <span className="text-sm font-bold text-blue-700 font-mono">+25% (125% of Hourly Rate)</span>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-                <div>
-                  <span className="font-bold text-slate-800">Rest Day / Special Non-Working Day</span>
-                  <p className="text-[11px] text-slate-500">Work performed on scheduled rest day</p>
-                </div>
-                <span className="text-sm font-bold text-indigo-700 font-mono">+30% (130% of Hourly Rate)</span>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-                <div>
-                  <span className="font-bold text-slate-800">Regular Holiday</span>
-                  <p className="text-[11px] text-slate-500">Work performed on Regular Holiday</p>
-                </div>
-                <span className="text-sm font-bold text-purple-700 font-mono">+100% (200% Double Pay)</span>
-              </div>
-
-              <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex justify-between items-center">
-                <div>
-                  <span className="font-bold text-slate-800">Night Shift Differential (NSD)</span>
-                  <p className="text-[11px] text-slate-500">Hours worked between 10:00 PM to 6:00 AM</p>
-                </div>
-                <span className="text-sm font-bold text-emerald-700 font-mono">+10% of Hourly Rate</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-            <h3 className="font-bold text-base text-slate-900 flex items-center gap-2">
-              <Calculator className="w-5 h-5 text-emerald-600" />
-              TRAIN Law BIR Withholding Tax Table (Semi-Monthly)
-            </h3>
-            <p className="text-xs text-slate-500">Revised withholding tax brackets under Republic Act 10963 (TRAIN Law).</p>
-
-            <div className="space-y-2 text-xs font-mono">
-              <div className="p-2.5 bg-slate-50 rounded-xl flex justify-between items-center">
-                <span className="text-slate-700">₱10,417 and below</span>
-                <span className="font-bold text-emerald-600">0% (Exempt)</span>
-              </div>
-              <div className="p-2.5 bg-slate-50 rounded-xl flex justify-between items-center">
-                <span className="text-slate-700">₱10,417 - ₱16,666</span>
-                <span className="font-bold text-blue-600">15% of excess over ₱10,417</span>
-              </div>
-              <div className="p-2.5 bg-slate-50 rounded-xl flex justify-between items-center">
-                <span className="text-slate-700">₱16,667 - ₱33,332</span>
-                <span className="font-bold text-blue-600">₱937.50 + 20% over ₱16,666</span>
-              </div>
-              <div className="p-2.5 bg-slate-50 rounded-xl flex justify-between items-center">
-                <span className="text-slate-700">₱33,333 - ₱83,332</span>
-                <span className="font-bold text-blue-600">₱4,270.83 + 25% over ₱33,333</span>
-              </div>
-              <div className="p-2.5 bg-slate-50 rounded-xl flex justify-between items-center">
-                <span className="text-slate-700">₱83,333 - ₱333,332</span>
-                <span className="font-bold text-blue-600">₱16,770.83 + 30% over ₱83,333</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <DolePayrollSandbox />
       )}
 
       {/* MODAL: CREATE NEW PAYROLL RUN CUTOFF BATCH */}

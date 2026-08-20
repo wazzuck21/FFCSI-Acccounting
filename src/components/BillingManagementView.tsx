@@ -5,6 +5,8 @@ import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBill
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
+import { PeriodCoverageModal } from './PeriodCoverageModal';
+import { HardcopyReceiptModal } from './HardcopyReceiptModal';
 import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { 
@@ -17,6 +19,7 @@ import {
 import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
+import { parsePeriodToMonths, getLineCoveredMonths, getMonthlyBreakdown, checkMonthPeriodOverlap } from '../utils/periodUtils';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
@@ -48,10 +51,14 @@ import {
   Phone,
   Mail,
   Calendar,
+  CalendarRange,
   TrendingUp,
   PieChart,
   Layers,
   MessageSquare,
+  MessageSquarePlus,
+  StickyNote,
+  BookmarkCheck,
   AlertTriangle,
   RotateCw,
   Play,
@@ -204,6 +211,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSoaModal, setShowSoaModal] = useState(false);
   const [showCrModal, setShowCrModal] = useState(false);
+  const [showHardcopyModal, setShowHardcopyModal] = useState(false);
+  const [hardcopySelectedInvoice, setHardcopySelectedInvoice] = useState<InvoiceItem | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCustomizerModal, setShowCustomizerModal] = useState(false);
@@ -228,6 +237,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     amount: number;
     billingNumber: string;
     pendingLine: InvoiceServiceLine;
+    existingIndex?: number;
+    overlappingPeriod?: string;
   } | null>(null);
 
   // Confirm Amount Change from Previous Billing Modal state ⭐
@@ -238,6 +249,17 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     previousMonthYear: string;
     previousAmount: number;
     currentAmount: number;
+  } | null>(null);
+
+  // Multi-Month & Period Coverage Builder Modal State ⭐
+  const [periodCoverageModal, setPeriodCoverageModal] = useState<{
+    isOpen: boolean;
+    itemIndex: number;
+    itemDescription: string;
+    currentPeriod: string;
+    currentAmount: number;
+    defaultMonthlyRate?: number;
+    targetList?: 'create' | 'edit' | 'custom';
   } | null>(null);
 
   // Phase 5: Financial Reports Sub-Tab State ⭐
@@ -320,6 +342,39 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [editServices, setEditServices] = useState<InvoiceServiceLine[]>([]);
   const [editReason, setEditReason] = useState('');
 
+  // SOA Billing Notes Box State & Saved Presets Library ⭐
+  const [billingNotes, setBillingNotes] = useState<string>('');
+  const [showNotesBox, setShowNotesBox] = useState<boolean>(false);
+  const [editBillingNotes, setEditBillingNotes] = useState<string>('');
+  const [showEditNotesBox, setShowEditNotesBox] = useState<boolean>(false);
+  const [savedNotesPresets, setSavedNotesPresets] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('afms_saved_billing_notes');
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return [
+      'Kindly Pay To FFCSI',
+      'Please make all cheques payable to Fast Focus Corporate Services Inc.',
+      'Bank Deposit: Fast Focus Corporate Services Inc. | BDO Acct: 1234-5678-90'
+    ];
+  });
+
+  const handleSaveNotePreset = (noteText: string) => {
+    const clean = (noteText || '').trim();
+    if (!clean) return;
+    if (!savedNotesPresets.includes(clean)) {
+      const updated = [...savedNotesPresets, clean];
+      setSavedNotesPresets(updated);
+      localStorage.setItem('afms_saved_billing_notes', JSON.stringify(updated));
+    }
+  };
+
+  const handleDeleteNotePreset = (noteText: string) => {
+    const updated = savedNotesPresets.filter(n => n !== noteText);
+    setSavedNotesPresets(updated);
+    localStorage.setItem('afms_saved_billing_notes', JSON.stringify(updated));
+  };
+
   // Payment Form state
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentDate, setPaymentDate] = useState(new Date().toISOString().substring(0, 10));
@@ -337,6 +392,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       setCollectionNumError('');
       setSelectedClientId('');
       setServices([]);
+      setBillingNotes('');
+      setShowNotesBox(false);
     }
   }, [showCreateModal]);
 
@@ -491,41 +548,74 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const isItemAlreadyBilled = (clientId: string, desc: string, period: string): boolean => {
     if (!clientId || !desc) return false;
     const cleanD = desc.trim().toLowerCase();
-    const cleanP = (period || '').trim().toLowerCase();
-    return invoices.some(inv => 
-      inv.clientId === clientId && 
-      inv.status !== 'Cancelled' && 
-      inv.services.some(s => 
-        s.description.trim().toLowerCase() === cleanD && 
-        (s.monthYear || '').trim().toLowerCase() === cleanP
-      )
-    );
+    const cleanP = (period || '').trim();
+    const candidateMonths = parsePeriodToMonths(cleanP);
+
+    return invoices.some(inv => {
+      if (inv.clientId !== clientId || inv.status === 'Cancelled') return false;
+      return inv.services.some(s => {
+        const sClean = s.description.trim().toLowerCase();
+        
+        // Check if both refer to retainer / bookkeeping
+        const isBothRetainer = 
+          (cleanD.includes('retainer') || cleanD.includes('bookkeeping')) &&
+          (sClean.includes('retainer') || sClean.includes('bookkeeping'));
+
+        // Check if both refer to standard tax/benefit codes
+        const codeTokens = ['0619e', '1601c', '1601eq', '1701q', '1702q', '2550q', '2551q', '1604c', '1604e', 'sss', 'philhealth', 'hdmf', 'pag-ibig', 'pagibig'];
+        const matchedToken = codeTokens.find(token => cleanD.includes(token) && sClean.includes(token));
+
+        const isSameService = sClean === cleanD || isBothRetainer || Boolean(matchedToken);
+        if (!isSameService) return false;
+
+        // Check month overlap
+        const billedMonths = getLineCoveredMonths(s);
+        const overlap = checkMonthPeriodOverlap(cleanP, s.monthYear || '', candidateMonths, billedMonths);
+        return overlap.hasOverlap;
+      });
+    });
   };
 
-  // Helper to check duplicate billed item matching description, month/year, and amount
+  // Helper to check duplicate billed item matching description, month/year (including multi-month spans & discrete months)
   const findAlreadyBilledInvoice = (
     clientId: string, 
     desc: string, 
     period: string, 
-    amount: number
-  ): { isBilled: boolean; billingNumber?: string } => {
+    amount: number,
+    coveredMonths?: string[]
+  ): { isBilled: boolean; billingNumber?: string; overlappingInfo?: string } => {
     if (!clientId || !desc) return { isBilled: false };
     const cleanD = desc.trim().toLowerCase();
-    const cleanP = (period || '').trim().toLowerCase();
-    const numAmount = Number(amount) || 0;
+    const cleanP = (period || '').trim();
+    const candidateMonths = (coveredMonths && coveredMonths.length > 0) 
+      ? coveredMonths 
+      : parsePeriodToMonths(cleanP);
 
     for (const inv of invoices) {
       if (inv.clientId === clientId && inv.status !== 'Cancelled') {
-        const found = inv.services.find(s => 
-          s.description.trim().toLowerCase() === cleanD &&
-          (s.monthYear || '').trim().toLowerCase() === cleanP &&
-          (Number(s.amount) === numAmount || Number(s.unitPrice) === numAmount)
-        );
-        if (found) {
-          return {
-            isBilled: true,
-            billingNumber: inv.collectionNumber || inv.invoiceNumber || inv.id
-          };
+        for (const s of inv.services) {
+          const sClean = s.description.trim().toLowerCase();
+          const isBothRetainer = 
+            (cleanD.includes('retainer') || cleanD.includes('bookkeeping')) &&
+            (sClean.includes('retainer') || sClean.includes('bookkeeping'));
+
+          const codeTokens = ['0619e', '1601c', '1601eq', '1701q', '1702q', '2550q', '2551q', '1604c', '1604e', 'sss', 'philhealth', 'hdmf', 'pag-ibig', 'pagibig'];
+          const matchedToken = codeTokens.find(token => cleanD.includes(token) && sClean.includes(token));
+
+          const isSameService = sClean === cleanD || isBothRetainer || Boolean(matchedToken);
+
+          if (isSameService) {
+            const billedMonths = getLineCoveredMonths(s);
+            const overlap = checkMonthPeriodOverlap(cleanP, s.monthYear || '', candidateMonths, billedMonths);
+            
+            if (overlap.hasOverlap) {
+              return {
+                isBilled: true,
+                billingNumber: inv.collectionNumber || inv.invoiceNumber || inv.id,
+                overlappingInfo: overlap.overlappingMonths.join(', ')
+              };
+            }
+          }
         }
       }
     }
@@ -881,10 +971,33 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
   const handleServiceChange = (index: number, field: 'description' | 'monthYear' | 'amount', value: any) => {
     const updated = [...services];
-    updated[index] = {
-      ...updated[index],
-      [field]: field === 'amount' ? Number(value) || 0 : value
-    };
+    const current = updated[index] || { description: '', monthYear: '', amount: 0 };
+    if (field === 'monthYear') {
+      const parsedMonths = parsePeriodToMonths(String(value || ''));
+      const amt = Number(current.amount) || 0;
+      updated[index] = {
+        ...current,
+        monthYear: value,
+        coveredMonths: parsedMonths,
+        monthlyRate: parsedMonths.length > 0 ? amt / parsedMonths.length : amt
+      };
+    } else if (field === 'amount') {
+      const numAmt = Number(value) || 0;
+      const months = current.coveredMonths && current.coveredMonths.length > 0 
+        ? current.coveredMonths 
+        : parsePeriodToMonths(current.monthYear);
+      updated[index] = {
+        ...current,
+        amount: numAmt,
+        unitPrice: numAmt,
+        monthlyRate: months.length > 0 ? numAmt / months.length : numAmt
+      };
+    } else {
+      updated[index] = {
+        ...current,
+        [field]: value
+      };
+    }
     setServices(updated);
   };
 
@@ -939,6 +1052,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       paidAmount: 0,
       status: 'Sent',
       services,
+      billingNotes: showNotesBox && billingNotes.trim() ? billingNotes.trim() : undefined,
     });
 
     addAuditLog(
@@ -1051,6 +1165,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setSelectedInvoice(inv);
     setEditServices(inv.services.map(s => ({ ...s })));
     setEditReason('');
+    setEditBillingNotes(inv.billingNotes || '');
+    setShowEditNotesBox(Boolean(inv.billingNotes && inv.billingNotes.trim()));
     setShowEditModal(true);
   };
 
@@ -1071,7 +1187,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       {
         services: editServices,
         subtotal: newSubtotal,
-        totalAmount: newTotal
+        totalAmount: newTotal,
+        billingNotes: showEditNotesBox && editBillingNotes.trim() ? editBillingNotes.trim() : undefined
       },
       editReason.trim(),
       currentUser?.fullName || 'Assigned Staff'
@@ -1279,6 +1396,21 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => {
+              if (filteredInvoices.length > 0) {
+                setHardcopySelectedInvoice(filteredInvoices[0]);
+                setShowHardcopyModal(true);
+              } else if (invoices.length > 0) {
+                setHardcopySelectedInvoice(invoices[0]);
+                setShowHardcopyModal(true);
+              }
+            }}
+            title="Open Hardcopy Stationery Print & Calibration Tool (Parentheses Overlay)"
+            className="px-3.5 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
+          >
+            <Printer className="w-4 h-4 text-red-600" /> Hardcopy Print Form
+          </button>
           <button
             onClick={() => setShowCustomizerModal(true)}
             title="Customize Printable SOA & Invoice Layout (Drag & Drop)"
@@ -1572,23 +1704,36 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             <Download className="w-4 h-4" />
                           </button>
 
+                          {/* Print on Hardcopy Stationery (Pre-Printed Form Overlay) */}
+                          <button
+                            onClick={() => {
+                              setHardcopySelectedInvoice(inv);
+                              setShowHardcopyModal(true);
+                            }}
+                            title="Print on Pre-Printed Hardcopy Template (Data Only / Parentheses Alignment)"
+                            className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+
                           {/* Modify Transaction for Assigned Staff / Super Admin */}
                           <button
                             onClick={() => handleOpenEditModal(inv)}
                             title="Modify Transaction / SOA Items"
-                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                           >
                             <Edit className="w-4 h-4" />
                           </button>
 
-                          {/* Amended History Log */}
+                          {/* Modify History Log Button (Icon-only) ⭐ */}
                           {inv.amendedHistory && inv.amendedHistory.length > 0 && (
                             <button
+                              type="button"
                               onClick={() => handleOpenHistoryModal(inv)}
-                              title={`View Amended History (${inv.amendedHistory.length} edits)`}
-                              className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors relative"
+                              title={`View Modify History (${inv.amendedHistory.length} edits)`}
+                              className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-colors cursor-pointer shrink-0 relative flex items-center justify-center"
                             >
-                              <History className="w-4 h-4" />
+                              <History className="w-4 h-4 text-amber-600" />
                               <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] font-bold w-3.5 h-3.5 rounded-full flex items-center justify-center">
                                 {inv.amendedHistory.length}
                               </span>
@@ -1925,7 +2070,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           </td>
 
                           <td className="py-3.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
                               <button
                                 onClick={() => handleOpenCollectionModal(inv)}
                                 title="Log Collection Follow-Up Contact"
@@ -1933,6 +2078,21 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                               >
                                 <Phone className="w-3 h-3 text-amber-700" /> Log Contact
                               </button>
+
+                              {/* Modify History Log Button if Edited (Icon-only) ⭐ */}
+                              {inv.amendedHistory && inv.amendedHistory.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenHistoryModal(inv)}
+                                  title={`View Modify History (${inv.amendedHistory.length} edits)`}
+                                  className="p-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 rounded-lg transition-colors cursor-pointer shrink-0 relative flex items-center justify-center"
+                                >
+                                  <History className="w-3.5 h-3.5 text-amber-600" />
+                                  <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] font-bold w-3.5 h-3.5 rounded-full flex items-center justify-center">
+                                    {inv.amendedHistory.length}
+                                  </span>
+                                </button>
+                              )}
 
                               {balance > 0 && isSuperAdmin && (
                                 <button
@@ -2924,13 +3084,35 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                   />
                                 </div>
                                 <div className="grid grid-cols-2 gap-1.5">
-                                  <input
-                                    type="text"
-                                    placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
-                                    value={customItemPeriod}
-                                    onChange={e => setCustomItemPeriod(e.target.value)}
-                                    className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
-                                  />
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="text"
+                                      placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
+                                      value={customItemPeriod}
+                                      onChange={e => setCustomItemPeriod(e.target.value)}
+                                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const client = clients.find(c => c.id === selectedClientId);
+                                        const defaultRate = client?.monthlyRetainerFee || 0;
+                                        setPeriodCoverageModal({
+                                          isOpen: true,
+                                          itemIndex: -1,
+                                          itemDescription: customItemName || 'Custom Item',
+                                          currentPeriod: customItemPeriod || '',
+                                          currentAmount: customItemAmount || 0,
+                                          defaultMonthlyRate: defaultRate,
+                                          targetList: 'custom',
+                                        });
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
+                                      title="Open Multi-Month / Period Coverage Builder"
+                                    >
+                                      <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
+                                    </button>
+                                  </div>
                                   <CurrencyInput
                                     placeholder="Amount (₱)"
                                     value={customItemAmount}
@@ -2974,34 +3156,54 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       <span>+ Blank Line</span>
                     </button>
 
+                    {/* Add Notes Box Button ⭐ */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowNotesBox(true);
+                        if (!billingNotes) {
+                          setBillingNotes('Kindly Pay To FFCSI');
+                        }
+                      }}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border shadow-2xs ${
+                        showNotesBox 
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300' 
+                          : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-100'
+                      }`}
+                      title="Add centered plain clear Notes Box under Item / Service Description"
+                    >
+                      <MessageSquarePlus className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>+ Add Notes Box</span>
+                    </button>
+
+                    {/* Previous Billing Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowPreviousBilling(prev => !prev)}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border shadow-2xs ${
+                        showPreviousBilling 
+                          ? 'bg-amber-500 text-white border-amber-600' 
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                      title="Toggle to view the last billed period and amount for each item"
+                    >
+                      <History className={`w-3.5 h-3.5 ${showPreviousBilling ? 'text-white' : 'text-slate-500'}`} />
+                      <span>Previous Billing</span>
+                      <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wider ${
+                        showPreviousBilling ? 'bg-amber-700 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {showPreviousBilling ? 'ON' : 'OFF'}
+                      </span>
+                    </button>
+
                   </div>
                 </div>
 
-                {/* Service Line Inputs List with Separated Columns and Previous Billing Toggle */}
-                <div className="flex items-center justify-between pt-1 border-t border-slate-100 pb-1">
-                  <div className="grid grid-cols-11 gap-2 text-[11px] font-bold text-slate-700 flex-1 px-1">
-                    <div className="col-span-5">Item / Service Description</div>
-                    <div className="col-span-3">Month and Year</div>
-                    <div className="col-span-3">Amount (PHP)</div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowPreviousBilling(prev => !prev)}
-                    className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1.5 transition-all cursor-pointer border shrink-0 ${
-                      showPreviousBilling 
-                        ? 'bg-amber-500 text-white border-amber-600 shadow-2xs' 
-                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
-                    }`}
-                    title="Toggle to view the last billed period and amount for each item"
-                  >
-                    <History className={`w-3.5 h-3.5 ${showPreviousBilling ? 'text-white' : 'text-slate-500'}`} />
-                    <span>Previous Billing</span>
-                    <span className={`px-1.5 py-0.2 rounded-full text-[9px] font-bold uppercase tracking-wider ${
-                      showPreviousBilling ? 'bg-amber-700 text-white' : 'bg-slate-100 text-slate-600'
-                    }`}>
-                      {showPreviousBilling ? 'ON' : 'OFF'}
-                    </span>
-                  </button>
+                {/* Service Line Column Headers */}
+                <div className="grid grid-cols-11 gap-2 text-[11px] font-bold text-slate-700 pt-1 border-t border-slate-100 pb-1 px-1">
+                  <div className="col-span-5">Item / Service Description</div>
+                  <div className="col-span-3">Month and Year</div>
+                  <div className="col-span-3">Amount (PHP)</div>
                 </div>
 
                 {services.length === 0 ? (
@@ -3027,14 +3229,33 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
                               />
                             </div>
-                            <div className="col-span-3">
+                            <div className="col-span-3 flex items-center gap-1">
                               <input
                                 type="text"
-                                placeholder="e.g. July 2026 or 2Q-2026"
+                                placeholder="e.g. May – Jul 2026"
                                 value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
                                 onChange={e => handleServiceChange(idx, 'monthYear', e.target.value)}
-                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
+                                className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
                               />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const client = clients.find(c => c.id === selectedClientId);
+                                  const defaultRate = client?.monthlyRetainerFee || 0;
+                                  setPeriodCoverageModal({
+                                    isOpen: true,
+                                    itemIndex: idx,
+                                    itemDescription: item.description || 'Line Item',
+                                    currentPeriod: item.monthYear || '',
+                                    currentAmount: item.amount || 0,
+                                    defaultMonthlyRate: defaultRate,
+                                  });
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
+                                title="Open Multi-Month & Period Coverage Builder (Range, Discrete Months, Quarterly, Annual)"
+                              >
+                                <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
+                              </button>
                             </div>
                             <div className="col-span-3 flex items-center gap-1.5">
                               <CurrencyInput
@@ -3092,9 +3313,130 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             </div>
                           )}
 
+                          {/* Multi-Month Breakdown indicator */}
+                          {(() => {
+                            const months = getLineCoveredMonths(item);
+                            if (months.length > 1) {
+                              const perMo = (Number(item.amount) || 0) / months.length;
+                              return (
+                                <div className="flex items-center justify-between text-[10px] text-emerald-900 bg-emerald-50/80 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                                  <span className="font-semibold flex items-center gap-1">
+                                    <CalendarRange className="w-3 h-3 text-emerald-600 shrink-0" />
+                                    Covers {months.length} Months ({months.join(', ')}):
+                                  </span>
+                                  <span className="font-mono font-bold text-emerald-800">
+                                    ₱{perMo.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / month in records
+                                  </span>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
+
                         </div>
                       );
                     })}
+                  </div>
+                )}
+
+                {/* Centered Plain Clear Notes Box under Item / Service Description & Month and Year ⭐ */}
+                {showNotesBox && (
+                  <div className="bg-emerald-50/80 border border-emerald-300/80 rounded-xl p-3 space-y-2 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-950">
+                        <StickyNote className="w-4 h-4 text-emerald-600" />
+                        <span>Billing Notes / Remarks (e.g. Kindly Pay To FFCSI)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {savedNotesPresets.length > 0 && (
+                          <select
+                            aria-label="Select saved note preset"
+                            className="text-[11px] bg-white border border-emerald-200 text-slate-700 rounded-lg px-2 py-1 focus:ring-1 focus:ring-emerald-400"
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                setBillingNotes(e.target.value);
+                              }
+                            }}
+                            value=""
+                          >
+                            <option value="" disabled>Load Saved Preset...</option>
+                            {savedNotesPresets.map((preset, pIdx) => (
+                              <option key={pIdx} value={preset}>{preset}</option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowNotesBox(false);
+                            setBillingNotes('');
+                          }}
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 cursor-pointer"
+                          title="Remove Notes Box"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Plain Clear Text Box centered across Item / Service Description and Month/Year */}
+                    <div className="grid grid-cols-11 gap-2 items-center">
+                      <div className="col-span-8">
+                        <input
+                          type="text"
+                          value={billingNotes}
+                          onChange={(e) => setBillingNotes(e.target.value)}
+                          placeholder="Enter notes (e.g. Kindly Pay To FFCSI, bank account details, or specific payment remarks)..."
+                          className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg text-xs font-medium text-slate-900 focus:ring-2 focus:ring-emerald-400 placeholder:text-slate-400 shadow-2xs"
+                        />
+                      </div>
+                      <div className="col-span-3 flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (billingNotes.trim()) {
+                              handleSaveNotePreset(billingNotes.trim());
+                              alert('Note saved to presets library for future SOAs!');
+                            }
+                          }}
+                          disabled={!billingNotes.trim()}
+                          className="w-full px-2.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-lg text-[11px] flex items-center justify-center gap-1 shadow-2xs cursor-pointer transition-colors"
+                          title="Save this note to reusable presets"
+                        >
+                          <BookmarkCheck className="w-3.5 h-3.5" />
+                          <span>Save Note</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Quick Presets Chips */}
+                    {savedNotesPresets.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] text-emerald-800 font-semibold">Saved Presets:</span>
+                        {savedNotesPresets.map((preset, idx) => (
+                          <div
+                            key={idx}
+                            className="inline-flex items-center gap-1 bg-white border border-emerald-200 text-emerald-900 px-2 py-0.5 rounded-md text-[10px] shadow-2xs"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setBillingNotes(preset)}
+                              className="hover:text-emerald-700 font-medium cursor-pointer"
+                            >
+                              {preset.length > 35 ? preset.substring(0, 33) + '...' : preset}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteNotePreset(preset)}
+                              className="text-slate-300 hover:text-rose-600 cursor-pointer ml-0.5"
+                              title="Delete preset"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -3453,8 +3795,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => {
+                    setHardcopySelectedInvoice(selectedInvoice);
+                    setShowHardcopyModal(true);
+                  }}
+                  className="px-3 py-1.5 bg-red-800 hover:bg-red-700 text-white font-bold rounded-xl flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  title="Align and print only items corresponding to parentheses onto hardcopy stationery"
+                >
+                  <Sliders className="w-4 h-4" /> Print on Hardcopy (Data Only)
+                </button>
+                <button
+                  type="button"
                   onClick={() => downloadCollectionReceiptPDF(selectedInvoice)}
-                  className="px-3.5 py-1.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                  className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl flex items-center gap-1.5 shadow-2xs cursor-pointer"
                 >
                   <Download className="w-4 h-4" /> Download PDF
                 </button>
@@ -3649,7 +4002,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium"
                         />
                       </div>
-                      <div className="col-span-4">
+                      <div className="col-span-4 flex items-center gap-1">
                         <input
                           type="text"
                           placeholder="e.g. August 2026"
@@ -3661,6 +4014,26 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           }}
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium"
                         />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const client = clients.find(c => c.id === selectedInvoice?.clientId);
+                            const defaultRate = client?.monthlyRetainerFee || 0;
+                            setPeriodCoverageModal({
+                              isOpen: true,
+                              itemIndex: idx,
+                              itemDescription: s.description || 'Service Line',
+                              currentPeriod: s.monthYear || '',
+                              currentAmount: s.amount || 0,
+                              defaultMonthlyRate: defaultRate,
+                              targetList: 'edit',
+                            });
+                          }}
+                          className="p-1.5 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
+                          title="Open Multi-Month / Period Coverage Builder"
+                        >
+                          <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
+                        </button>
                       </div>
                       <div className="col-span-3 flex items-center gap-1">
                         <CurrencyInput
@@ -3685,13 +4058,120 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     </div>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEditServices([...editServices, { description: '', monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }])}
-                  className="mt-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" /> Add Item Line
-                </button>
+                <div className="flex items-center gap-3 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditServices([...editServices, { description: '', monthYear: `${selectedMonth} ${selectedYear}`, amount: 0 }])}
+                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add Item Line
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEditNotesBox(true);
+                      if (!editBillingNotes) {
+                        setEditBillingNotes('Kindly Pay To FFCSI');
+                      }
+                    }}
+                    className={`text-xs font-bold flex items-center gap-1 cursor-pointer ${
+                      showEditNotesBox ? 'text-emerald-800' : 'text-emerald-600 hover:text-emerald-800'
+                    }`}
+                  >
+                    <MessageSquarePlus className="w-3.5 h-3.5" /> + Add Notes Box
+                  </button>
+                </div>
+
+                {/* Edit Centered Plain Clear Notes Box ⭐ */}
+                {showEditNotesBox && (
+                  <div className="bg-emerald-50/80 border border-emerald-300/80 rounded-xl p-3 space-y-2 mt-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-950">
+                        <StickyNote className="w-4 h-4 text-emerald-600" />
+                        <span>Billing Notes / Remarks (e.g. Kindly Pay To FFCSI)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {savedNotesPresets.length > 0 && (
+                          <select
+                            aria-label="Select saved note preset"
+                            className="text-[11px] bg-white border border-emerald-200 text-slate-700 rounded-lg px-2 py-1 focus:ring-1 focus:ring-emerald-400"
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                setEditBillingNotes(e.target.value);
+                              }
+                            }}
+                            value=""
+                          >
+                            <option value="" disabled>Load Saved Preset...</option>
+                            {savedNotesPresets.map((preset, pIdx) => (
+                              <option key={pIdx} value={preset}>{preset}</option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowEditNotesBox(false);
+                            setEditBillingNotes('');
+                          }}
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 cursor-pointer"
+                          title="Remove Notes Box"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-11 gap-2 items-center">
+                      <div className="col-span-8">
+                        <input
+                          type="text"
+                          value={editBillingNotes}
+                          onChange={(e) => setEditBillingNotes(e.target.value)}
+                          placeholder="Enter notes (e.g. Kindly Pay To FFCSI)..."
+                          className="w-full px-3 py-2 bg-white border border-emerald-300 rounded-lg text-xs font-medium text-slate-900 focus:ring-2 focus:ring-emerald-400"
+                        />
+                      </div>
+                      <div className="col-span-3 flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editBillingNotes.trim()) {
+                              handleSaveNotePreset(editBillingNotes.trim());
+                              alert('Note saved to presets library!');
+                            }
+                          }}
+                          disabled={!editBillingNotes.trim()}
+                          className="w-full px-2.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-lg text-[11px] flex items-center justify-center gap-1 shadow-2xs cursor-pointer"
+                          title="Save this note to presets"
+                        >
+                          <BookmarkCheck className="w-3.5 h-3.5" />
+                          <span>Save Note</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {savedNotesPresets.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <span className="text-[10px] text-emerald-800 font-semibold">Saved Presets:</span>
+                        {savedNotesPresets.map((preset, idx) => (
+                          <div
+                            key={idx}
+                            className="inline-flex items-center gap-1 bg-white border border-emerald-200 text-emerald-900 px-2 py-0.5 rounded-md text-[10px] shadow-2xs"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setEditBillingNotes(preset)}
+                              className="hover:text-emerald-700 font-medium cursor-pointer"
+                            >
+                              {preset.length > 35 ? preset.substring(0, 33) + '...' : preset}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -4003,13 +4483,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </div>
               <div className="space-y-2">
                 <h3 className="font-bold text-slate-900 text-base flex items-center gap-1.5">
-                  ⚠️ Item Already Billed
+                  ⚠️ Item / Period Already Billed
                 </h3>
                 <p className="text-xs text-slate-600 leading-relaxed">
-                  This item (<strong>{duplicateWarningModal.itemName}</strong> for <strong>{duplicateWarningModal.monthYear}</strong> - <strong className="font-mono text-slate-900">₱{duplicateWarningModal.amount.toLocaleString()}</strong>) has already been billed under Invoice / Billing # <strong className="font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">{duplicateWarningModal.billingNumber}</strong>.
+                  This item (<strong>{duplicateWarningModal.itemName}</strong> for <strong>{duplicateWarningModal.monthYear}</strong> — <strong className="font-mono text-slate-900">₱{duplicateWarningModal.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>) overlaps with billing coverage <strong className="text-amber-900 font-semibold">{duplicateWarningModal.overlappingPeriod || duplicateWarningModal.monthYear}</strong> already billed under Invoice / Billing # <strong className="font-mono text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded-md border border-amber-200">{duplicateWarningModal.billingNumber}</strong>.
                 </p>
                 <p className="text-xs font-semibold text-slate-800 pt-1">
-                  Do you want to allow and add this duplicate item anyway?
+                  Do you want to proceed and allow this duplicate coverage anyway?
                 </p>
               </div>
             </div>
@@ -4025,12 +4505,20 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               <button
                 type="button"
                 onClick={() => {
-                  setServices(prev => [...prev, duplicateWarningModal.pendingLine]);
+                  if (duplicateWarningModal.existingIndex !== undefined) {
+                    const updated = [...services];
+                    if (updated[duplicateWarningModal.existingIndex]) {
+                      updated[duplicateWarningModal.existingIndex] = duplicateWarningModal.pendingLine;
+                      setServices(updated);
+                    }
+                  } else {
+                    setServices(prev => [...prev, duplicateWarningModal.pendingLine]);
+                  }
                   setDuplicateWarningModal(null);
                 }}
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
               >
-                Allow and Add Duplicate
+                Allow and Keep Duplicate
               </button>
             </div>
           </div>
@@ -4082,6 +4570,88 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL: Multi-Month & Period Coverage Builder */}
+      {periodCoverageModal && periodCoverageModal.isOpen && (
+        <PeriodCoverageModal
+          isOpen={periodCoverageModal.isOpen}
+          onClose={() => setPeriodCoverageModal(null)}
+          itemDescription={periodCoverageModal.itemDescription}
+          currentPeriod={periodCoverageModal.currentPeriod}
+          currentAmount={periodCoverageModal.currentAmount}
+          defaultMonthlyRate={periodCoverageModal.defaultMonthlyRate}
+          onApply={(periodText, newAmount, coveredMonths, monthlyRate) => {
+            if (periodCoverageModal.targetList === 'custom') {
+              setCustomItemPeriod(periodText);
+              if (newAmount !== undefined) {
+                setCustomItemAmount(newAmount);
+              }
+            } else if (periodCoverageModal.targetList === 'edit') {
+              const updated = [...editServices];
+              if (updated[periodCoverageModal.itemIndex]) {
+                updated[periodCoverageModal.itemIndex] = {
+                  ...updated[periodCoverageModal.itemIndex],
+                  monthYear: periodText,
+                  amount: newAmount !== undefined ? newAmount : updated[periodCoverageModal.itemIndex].amount,
+                  coveredMonths: coveredMonths,
+                  monthlyRate: monthlyRate
+                };
+                setEditServices(updated);
+              }
+            } else {
+              const idx = periodCoverageModal.itemIndex;
+              const updated = [...services];
+              if (updated[idx]) {
+                const finalAmt = newAmount !== undefined ? newAmount : (updated[idx].amount || 0);
+                const pendingLine: InvoiceServiceLine = {
+                  ...updated[idx],
+                  monthYear: periodText,
+                  amount: finalAmt,
+                  unitPrice: finalAmt,
+                  coveredMonths: coveredMonths,
+                  monthlyRate: monthlyRate
+                };
+
+                // Duplicate Check on Apply
+                if (selectedClientId) {
+                  const cleanDesc = pendingLine.description || periodCoverageModal.itemDescription;
+                  const duplicateCheck = findAlreadyBilledInvoice(selectedClientId, cleanDesc, periodText, finalAmt, coveredMonths);
+                  if (duplicateCheck.isBilled) {
+                    setDuplicateWarningModal({
+                      isOpen: true,
+                      itemName: cleanDesc,
+                      monthYear: periodText,
+                      amount: finalAmt,
+                      billingNumber: duplicateCheck.billingNumber || 'N/A',
+                      overlappingPeriod: duplicateCheck.overlappingInfo,
+                      pendingLine: pendingLine,
+                      existingIndex: idx
+                    });
+                    return;
+                  }
+                }
+
+                updated[idx] = pendingLine;
+                setServices(updated);
+              }
+            }
+          }}
+        />
+      )}
+
+      {/* MODAL: Hardcopy Receipt Alignment & Print Engine ⭐ */}
+      {showHardcopyModal && hardcopySelectedInvoice && (
+        <HardcopyReceiptModal
+          invoice={hardcopySelectedInvoice}
+          clientAddress={
+            clients.find(c => c.id === hardcopySelectedInvoice.clientId)?.address || 
+            (hardcopySelectedInvoice as any).clientAddress ||
+            'Gen. Aguinaldo Hi-Way Panapaan V, Bacoor City'
+          }
+          defaultPreparedBy={currentUser?.name || 'Maricris'}
+          onClose={() => setShowHardcopyModal(false)}
+        />
       )}
 
     </div>

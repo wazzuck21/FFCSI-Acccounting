@@ -267,6 +267,22 @@ export function generateCustomizedInvoicePDF(inv: InvoiceItem, config: BillingTe
           rowY += 9;
         });
 
+        // Centered Billing Notes / Remarks (e.g. Kindly Pay To FFCSI)
+        if (inv.billingNotes && inv.billingNotes.trim()) {
+          doc.setFont(font, 'bold');
+          doc.setFontSize(8.5);
+          doc.setTextColor(30, 41, 59);
+          const centerSpanX = margin + (contentWidth - 55) / 2;
+          doc.text(inv.billingNotes.trim(), centerSpanX, rowY, { align: 'center' });
+          doc.setFont(font, 'normal');
+          doc.setFontSize(9);
+          
+          doc.setDrawColor(226, 232, 240);
+          doc.setLineWidth(0.2);
+          doc.line(margin, rowY + 3, rightX, rowY + 3);
+          rowY += 9;
+        }
+
         currentY = rowY + 5;
         break;
       }
@@ -568,6 +584,16 @@ export function generateFFCSICollectionReceiptPDF(
       calculatedTotal += s.amount;
       y += 7;
     });
+
+    if (inv.billingNotes && inv.billingNotes.trim()) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      doc.setTextColor(30, 41, 59);
+      doc.text(inv.billingNotes.trim(), margin + 10, y);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      y += 7;
+    }
   } else {
     doc.text(`Professional Accounting Retainer Fee`, margin + 10, y);
     doc.text((inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 }), rightX - 8, y, { align: 'right' });

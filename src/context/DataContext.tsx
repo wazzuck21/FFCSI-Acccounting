@@ -974,33 +974,89 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Payables
   const addPayable = (data: Omit<PayableRecord, 'id' | 'createdAt'>): PayableRecord => {
-    const newPayable: PayableRecord = {
-      ...data,
-      id: `pay_${Date.now()}`,
-      createdAt: new Date().toISOString().replace('T', ' ').substring(0, 19),
-    };
-    const updated = [newPayable, ...payables];
-    setPayables(updated);
-    persistState('afms_payables', updated);
+    const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    
+    // Check if an existing payable exists for this client, item, and month/year
+    const existingIndex = payables.findIndex(p => 
+      p.clientId === data.clientId && 
+      p.itemName.trim().toLowerCase() === data.itemName.trim().toLowerCase() && 
+      (p.month === data.month || p.year === data.year)
+    );
+
+    let resultPayable: PayableRecord;
+    let updatedPayables: PayableRecord[];
+
+    if (existingIndex >= 0) {
+      const old = payables[existingIndex];
+      const historyEntry = {
+        date: nowTimestamp,
+        modifiedBy: data.createdByName || 'Staff',
+        details: `Assessment updated from "${old.status}" (₱${old.payableAmount || 0}) to "${data.status}" (₱${data.payableAmount || 0})${data.notes ? ` • Notes: ${data.notes}` : ''}`,
+        previousAmount: old.payableAmount,
+        newAmount: data.payableAmount
+      };
+
+      resultPayable = {
+        ...old,
+        ...data,
+        amendedHistory: [historyEntry, ...(old.amendedHistory || [])]
+      };
+
+      updatedPayables = [...payables];
+      updatedPayables[existingIndex] = resultPayable;
+    } else {
+      const historyEntry = {
+        date: nowTimestamp,
+        modifiedBy: data.createdByName || 'Staff',
+        details: `Initial assessment created: "${data.status}" (₱${data.payableAmount || 0})${data.notes ? ` • Notes: ${data.notes}` : ''}`,
+        previousAmount: 0,
+        newAmount: data.payableAmount
+      };
+
+      resultPayable = {
+        ...data,
+        id: `pay_${Date.now()}`,
+        createdAt: nowTimestamp,
+        amendedHistory: [historyEntry]
+      };
+
+      updatedPayables = [resultPayable, ...payables];
+    }
+
+    setPayables(updatedPayables);
+    persistState('afms_payables', updatedPayables);
 
     // Automatically sync/add to Compliance Items if status is Unpaid
     if (data.status === 'Unpaid') {
-      const newComp: ComplianceItem = {
-        id: `comp_${Date.now()}`,
-        clientId: data.clientId,
-        clientName: data.clientName,
-        title: `${data.category} ${data.itemName} (${data.month})`,
-        category: data.category,
-        dueDate: `${data.month}-15`, // default month deadline
-        status: 'Pending',
-        amountDue: data.payableAmount,
-      };
-      const updatedComp = [newComp, ...complianceItems];
-      setComplianceItems(updatedComp);
-      persistState('afms_compliance', updatedComp);
+      const existingComp = complianceItems.find(c => 
+        c.clientId === data.clientId && 
+        c.title.includes(data.itemName)
+      );
+
+      if (existingComp) {
+        const updatedComp = complianceItems.map(c => 
+          c.id === existingComp.id ? { ...c, status: 'Pending' as const, amountDue: data.payableAmount } : c
+        );
+        setComplianceItems(updatedComp);
+        persistState('afms_compliance', updatedComp);
+      } else {
+        const newComp: ComplianceItem = {
+          id: `comp_${Date.now()}`,
+          clientId: data.clientId,
+          clientName: data.clientName,
+          title: `${data.category} ${data.itemName} (${data.month})`,
+          category: data.category,
+          dueDate: `${data.month}-15`, // default month deadline
+          status: 'Pending',
+          amountDue: data.payableAmount,
+        };
+        const updatedComp = [newComp, ...complianceItems];
+        setComplianceItems(updatedComp);
+        persistState('afms_compliance', updatedComp);
+      }
     }
 
-    return newPayable;
+    return resultPayable;
   };
 
   // Tag Payable Paid by Super Admin with exact amount match verification
@@ -1018,12 +1074,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
+    const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const historyEntry = {
+      date: nowTimestamp,
+      modifiedBy: paymentInfo.taggedByName || 'Super Admin',
+      details: `Tagged as PAID & SETTLED via ${paymentInfo.paymentMethod}${paymentInfo.referenceNumber ? ` (Ref: ${paymentInfo.referenceNumber})` : ''} on ${paymentInfo.paidDate}. Amount: ₱${Number(paymentInfo.amountPaid).toLocaleString()}${paymentInfo.notes ? ` • Notes: ${paymentInfo.notes}` : ''}`,
+      previousAmount: target.payableAmount,
+      newAmount: paymentInfo.amountPaid
+    };
+
     const updatedPayables = payables.map(p => {
       if (p.id === payableId) {
         return {
           ...p,
           status: 'Paid' as const,
           paymentDetails: paymentInfo,
+          amendedHistory: [historyEntry, ...(p.amendedHistory || [])]
         };
       }
       return p;
