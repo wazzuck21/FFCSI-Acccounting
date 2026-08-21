@@ -143,7 +143,7 @@ interface DataContextType {
   deleteTask: (taskId: string, userId?: string, userName?: string) => void;
   generateRecurringComplianceTasks: (periodMonth: string, periodYear: number, userId?: string, userName?: string) => { success: boolean; createdCount: number; skippedCount: number; message: string };
   
-  addInvoice: (invoice: Omit<InvoiceItem, 'id' | 'invoiceNumber'>) => void;
+  addInvoice: (invoice: Omit<InvoiceItem, 'id' | 'invoiceNumber'>) => InvoiceItem;
   updateInvoice: (invoiceId: string, updates: Partial<InvoiceItem>, modificationDetails?: string, modifiedBy?: string) => void;
   recordInvoicePayment: (invoiceId: string, paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; referenceNumber?: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services'] }, userId?: string, userName?: string) => { success: boolean; message: string };
   cancelInvoicePayment: (paymentId: string, reason: string, userId?: string, userName?: string) => { success: boolean; message: string };
@@ -1670,7 +1670,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Invoices & Documents
-  const addInvoice = (invoiceData: Omit<InvoiceItem, 'id' | 'invoiceNumber'>) => {
+  const addInvoice = (invoiceData: Omit<InvoiceItem, 'id' | 'invoiceNumber'>): InvoiceItem => {
     const newInv: InvoiceItem = {
       ...invoiceData,
       id: `inv_${Date.now()}`,
@@ -1679,6 +1679,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = [newInv, ...invoices];
     setInvoices(updated);
     persistState('afms_invoices', updated);
+    return newInv;
   };
 
   const recordInvoicePayment = (

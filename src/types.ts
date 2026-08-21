@@ -501,6 +501,9 @@ export interface InvoiceServiceLine {
   discount?: number;
   amount: number; // Final line amount snapshot
   paymentMethod?: 'Cash' | 'Cheque Payment to FFCSI' | 'Bank Transfer' | string;
+  paymentMode?: 'Cash' | 'Cheque';
+  chequeNumber?: string;
+  chequePayee?: string;
   itemType?: 'Service' | 'One-Time' | 'Adjustment' | 'Other';
   isNote?: boolean;
 }

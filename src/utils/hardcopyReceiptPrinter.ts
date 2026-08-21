@@ -9,17 +9,24 @@ export interface HardcopyPrintConfig {
   globalOffsetX: number; // -30mm to +30mm
   globalOffsetY: number; // -30mm to +30mm
   
-  // Field positions (in mm)
+  // 1. Client Header Information (in mm)
   clientNameX: number;
   clientNameY: number;
+  clientNameFontSize?: number;
+
   clientAddressX: number;
   clientAddressY: number;
+  clientAddressFontSize?: number;
+
   crNoX: number;
   crNoY: number;
+  crNoFontSize?: number;
+
   dateX: number;
   dateY: number;
+  dateFontSize?: number;
   
-  // Table area
+  // 2. Table dynamic service lines & columns (in mm)
   tableStartY: number;
   particularsDescX: number;
   monthYearX: number;
@@ -28,16 +35,33 @@ export interface HardcopyPrintConfig {
   fontSizePt: number; // default 9.5pt
   fontFamily: 'courier' | 'helvetica' | 'times';
   fontBold: boolean;
+
+  // Notes box alignment
+  billingNotesXOffset?: number;
+  billingNotesYOffset?: number;
   
   // Adaptable multi-service configuration
   autoFitRowSpacing: boolean;
   maxTableHeightMm: number; // default 55mm
   
-  // Total & Footer
+  // 3. Total & Footer Signatories (in mm)
   totalAmountX: number;
   totalAmountY: number;
+  totalAmountFontSize?: number;
+
   preparedByX: number;
   preparedByY: number;
+  preparedByFontSize?: number;
+
+  checkNoX?: number;
+  checkNoY?: number;
+  checkDateX?: number;
+  checkDateY?: number;
+
+  receivedByX?: number;
+  receivedByY?: number;
+  paymentReceivedByX?: number;
+  paymentReceivedByY?: number;
 }
 
 export const DEFAULT_HARDCOPY_CONFIG: HardcopyPrintConfig = {
@@ -46,15 +70,22 @@ export const DEFAULT_HARDCOPY_CONFIG: HardcopyPrintConfig = {
   globalOffsetX: 0,
   globalOffsetY: 0,
   
-  // Top fields
+  // Header fields
   clientNameX: 36,     // Next to "CLIENT :"
   clientNameY: 52,
+  clientNameFontSize: 9.5,
+
   clientAddressX: 36,  // Next to "Address :"
   clientAddressY: 59,
-  crNoX: 182,          // Next to "No. :" (Right aligned)
+  clientAddressFontSize: 9.5,
+
+  crNoX: 182,          // Next to "No. :" (Right aligned / anchored)
   crNoY: 52,
-  dateX: 182,          // Next to "Date :" (Right aligned)
+  crNoFontSize: 10.5,
+
+  dateX: 182,          // Next to "Date :" (Right aligned / anchored)
   dateY: 59,
+  dateFontSize: 9.5,
   
   // Table dynamic area
   tableStartY: 82,     // First service row Y (below "Payment for the following:")
@@ -65,6 +96,8 @@ export const DEFAULT_HARDCOPY_CONFIG: HardcopyPrintConfig = {
   fontSizePt: 9.5,
   fontFamily: 'helvetica',
   fontBold: true,
+  billingNotesXOffset: 0,
+  billingNotesYOffset: 0,
   
   // Adaptability
   autoFitRowSpacing: true,
@@ -73,8 +106,21 @@ export const DEFAULT_HARDCOPY_CONFIG: HardcopyPrintConfig = {
   // Total & Preparer
   totalAmountX: 188,    // Right aligned next to "TOTAL ₱"
   totalAmountY: 142,
+  totalAmountFontSize: 10,
+
   preparedByX: 42,      // Next to "PREPARED BY :"
   preparedByY: 168,
+  preparedByFontSize: 9,
+
+  checkNoX: 28,
+  checkNoY: 156,
+  checkDateX: 28,
+  checkDateY: 161,
+
+  receivedByX: 85,
+  receivedByY: 168,
+  paymentReceivedByX: 145,
+  paymentReceivedByY: 168,
 };
 
 const STORAGE_KEY = 'afms_hardcopy_receipt_printer_config';
@@ -152,8 +198,8 @@ export function createHardcopyReceiptDoc(
   const oy = cfg.globalOffsetY || 0;
 
   // Dynamic Data Values
-  const crNo = options.overrideCrNo || inv.collectionReceiptNumber || inv.collectionNumber || inv.officialReceiptNumber || inv.invoiceNumber || '35428';
-  const cleanCrNo = crNo.replace(/\D/g, '') || crNo;
+  const crNo = options.overrideCrNo || inv.collectionReceiptNumber || inv.collectionNumber || inv.officialReceiptNumber || inv.invoiceNumber || '1001';
+  const cleanCrNo = crNo.replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim() || crNo.replace(/\D/g, '') || crNo;
   const displayDate = options.overrideDate || inv.paymentDate || inv.issueDate || new Date().toLocaleDateString('en-US');
   const preparedBy = options.preparedBy || 'Maricris';
   const clientAddress = options.clientAddress || (inv as any).clientAddress || 'Gen. Aguinaldo Hi-Way Panapaan V, Bacoor City';
@@ -171,24 +217,36 @@ export function createHardcopyReceiptDoc(
   // 1. FULL MODE: Draw Static Stationery
   // ==========================================
   if (!isDataOnly) {
-    let y = 15;
+    let y = 16;
 
-    // FFCSI Red Logo Pill
-    doc.setFillColor(185, 28, 28);
-    doc.roundedRect(margin, y, 24, 12, 3, 3, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.setTextColor(255, 255, 255);
-    doc.text('FFCSI', margin + 12, y + 8, { align: 'center' });
-
-    // Company Title (Red Serif / Italic)
+    // 1 & 2. FFCSI Logo Badge before Family Friends Consultancy Services Inc. (Centered row)
+    const badgeWidth = 18;
+    const badgeHeight = 6.5;
+    const companyName = 'Family Friends Consultancy Services Inc.';
+    
     doc.setFont('times', 'italic');
-    doc.setFontSize(18);
+    doc.setFontSize(16);
+    const textWidth = doc.getTextWidth(companyName);
+    const gap = 3;
+    const totalHeaderWidth = badgeWidth + gap + textWidth;
+    const startX = (pageWidth - totalHeaderWidth) / 2;
+
+    // Draw FFCSI red badge
+    doc.setFillColor(185, 28, 28);
+    doc.roundedRect(startX, y - 4.8, badgeWidth, badgeHeight, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    doc.setTextColor(255, 255, 255);
+    doc.text('FFCSI', startX + (badgeWidth / 2), y - 0.2, { align: 'center' });
+
+    // Draw Company Title
+    doc.setFont('times', 'italic');
+    doc.setFontSize(16);
     doc.setTextColor(185, 28, 28);
-    doc.text('Family Friends Consultancy Services Inc.', margin + 27, y + 8);
+    doc.text(companyName, startX + badgeWidth + gap, y);
 
     // Address & Contact Information
-    y += 15;
+    y += 7;
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8.5);
     doc.setTextColor(30, 41, 59);
@@ -204,12 +262,6 @@ export function createHardcopyReceiptDoc(
     doc.setFontSize(13);
     doc.setTextColor(15, 23, 42);
     doc.text('COLLECTION RECEIPT', pageWidth / 2, y, { align: 'center' });
-
-    // Top Right Number Ref
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text(cleanCrNo, rightX - 5, y - 5, { align: 'right' });
 
     // Static Client Labels & Underlines
     y += 10;
@@ -314,20 +366,23 @@ export function createHardcopyReceiptDoc(
   doc.setFont(cfg.fontFamily || 'helvetica', cfg.fontBold ? 'bold' : 'normal');
 
   // 1. ( Client Name )
-  doc.setFontSize(cfg.fontSizePt || 9.5);
+  doc.setFontSize(cfg.clientNameFontSize || cfg.fontSizePt || 9.5);
   doc.text(inv.clientName, cfg.clientNameX + ox, cfg.clientNameY + oy);
 
   // 2. ( Client Address )
   const addrParts = clientAddress.split(',');
   const addrLine1 = addrParts[0] || clientAddress;
+  doc.setFontSize(cfg.clientAddressFontSize || cfg.fontSizePt || 9.5);
   doc.text(addrLine1.trim(), cfg.clientAddressX + ox, cfg.clientAddressY + oy);
 
   // 3. No. : ( CR / SOA Number )
   doc.setTextColor(220, 38, 38); // Red ink for receipt number
+  doc.setFontSize(cfg.crNoFontSize || 10.5);
   doc.text(cleanCrNo, cfg.crNoX + ox, cfg.crNoY + oy, { align: 'left' });
 
   // 4. ( SOA Issue Date * )
   doc.setTextColor(15, 23, 42);
+  doc.setFontSize(cfg.dateFontSize || cfg.fontSizePt || 9.5);
   doc.text(displayDate, cfg.dateX + ox, cfg.dateY + oy, { align: 'left' });
 
   // 5, 6, 7. Table Dynamic Items:
@@ -376,15 +431,17 @@ export function createHardcopyReceiptDoc(
   if (inv.billingNotes && inv.billingNotes.trim()) {
     doc.setFont(cfg.fontFamily || 'helvetica', 'bold');
     doc.setFontSize(Math.max(effectiveFontSize - 0.5, 8));
-    const noteX = (cfg.particularsDescX + (cfg.monthYearX || (cfg.particularsDescX + 50))) / 2;
-    doc.text(inv.billingNotes.trim(), noteX + ox, currentY, { align: 'center' });
+    const noteBaseX = (cfg.particularsDescX + (cfg.monthYearX || (cfg.particularsDescX + 50))) / 2;
+    const notesX = noteBaseX + (cfg.billingNotesXOffset || 0);
+    const notesY = currentY + (cfg.billingNotesYOffset || 0);
+    doc.text(inv.billingNotes.trim(), notesX + ox, notesY, { align: 'center' });
     doc.setFont(cfg.fontFamily || 'helvetica', cfg.fontBold ? 'bold' : 'normal');
     doc.setFontSize(effectiveFontSize);
     currentY += effectiveRowSpacing;
   }
 
   // 8. ( Total Amount Billed: )
-  doc.setFontSize(Math.max(effectiveFontSize, 9.5));
+  doc.setFontSize(cfg.totalAmountFontSize || Math.max(effectiveFontSize, 9.5));
   doc.setFont(cfg.fontFamily || 'helvetica', 'bold');
   const totalFormatted = `PHP ${totalAmount.toLocaleString('en-US', {
     minimumFractionDigits: 2,
@@ -393,11 +450,118 @@ export function createHardcopyReceiptDoc(
   doc.text(totalFormatted, cfg.totalAmountX + ox, cfg.totalAmountY + oy, { align: 'right' });
 
   // 9. ( User name ) -> PREPARED BY :
-  doc.setFontSize(cfg.fontSizePt || 9);
+  doc.setFontSize(cfg.preparedByFontSize || cfg.fontSizePt || 9);
   doc.setFont(cfg.fontFamily || 'helvetica', cfg.fontBold ? 'bold' : 'normal');
   doc.text(preparedBy, cfg.preparedByX + ox, cfg.preparedByY + oy);
 
   return doc;
+}
+
+/**
+ * Generates an alignment test calibration grid sheet with 5mm / 10mm rulers
+ * to allow accurate ruler measurement on physical stationery.
+ */
+export function createCalibrationTestGridDoc(config?: HardcopyPrintConfig): jsPDF {
+  const cfg = config || getHardcopyPrintConfig();
+  const doc = new jsPDF({
+    orientation: cfg.orientation,
+    unit: 'mm',
+    format: cfg.paperSize === 'letter' ? [215.9, 279.4] : cfg.paperSize === 'half-letter' ? [139.7, 215.9] : 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6);
+  doc.setTextColor(148, 163, 184);
+
+  // Draw 10mm grid
+  for (let x = 10; x < pageWidth; x += 10) {
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.1);
+    doc.line(x, 0, x, pageHeight);
+    doc.text(`${x}`, x + 0.5, 4);
+  }
+
+  for (let y = 10; y < pageHeight; y += 10) {
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.1);
+    doc.line(0, y, pageWidth, y);
+    doc.text(`${y}`, 1, y - 0.5);
+  }
+
+  // Draw calibrated coordinate markers
+  const ox = cfg.globalOffsetX || 0;
+  const oy = cfg.globalOffsetY || 0;
+
+  doc.setFontSize(7);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(220, 38, 38);
+
+  const markers = [
+    { name: 'Client Name', x: cfg.clientNameX + ox, y: cfg.clientNameY + oy },
+    { name: 'Address', x: cfg.clientAddressX + ox, y: cfg.clientAddressY + oy },
+    { name: 'CR No.', x: cfg.crNoX + ox, y: cfg.crNoY + oy },
+    { name: 'Date', x: cfg.dateX + ox, y: cfg.dateY + oy },
+    { name: 'Table Start', x: cfg.particularsDescX + ox, y: cfg.tableStartY + oy },
+    { name: 'Month/Year Col', x: cfg.monthYearX + ox, y: cfg.tableStartY + oy },
+    { name: 'Amount Col', x: cfg.amountX + ox, y: cfg.tableStartY + oy },
+    { name: 'Total Amount', x: cfg.totalAmountX + ox, y: cfg.totalAmountY + oy },
+    { name: 'Prepared By', x: cfg.preparedByX + ox, y: cfg.preparedByY + oy },
+  ];
+
+  markers.forEach(m => {
+    doc.setDrawColor(220, 38, 38);
+    doc.setLineWidth(0.3);
+    // Draw crosshair
+    doc.line(m.x - 3, m.y, m.x + 3, m.y);
+    doc.line(m.x, m.y - 3, m.x, m.y + 3);
+    doc.text(`• ${m.name} (${m.x.toFixed(1)}, ${m.y.toFixed(1)})`, m.x + 2, m.y - 1.5);
+  });
+
+  return doc;
+}
+
+export function printCalibrationTestGridDirectly(config?: HardcopyPrintConfig): void {
+  const doc = createCalibrationTestGridDoc(config);
+  doc.autoPrint({ variant: 'non-conform' });
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+  
+  const printIframe = document.createElement('iframe');
+  printIframe.style.position = 'fixed';
+  printIframe.style.right = '0';
+  printIframe.style.bottom = '0';
+  printIframe.style.width = '1px';
+  printIframe.style.height = '1px';
+  printIframe.style.opacity = '0.01';
+  printIframe.style.border = '0';
+  
+  printIframe.src = blobUrl;
+  document.body.appendChild(printIframe);
+  
+  printIframe.onload = () => {
+    setTimeout(() => {
+      try {
+        if (printIframe.contentWindow) {
+          printIframe.contentWindow.focus();
+          printIframe.contentWindow.print();
+        }
+      } catch {
+        // In sandboxed/cross-origin iframes, autoPrint embedded in PDF handles printing automatically upon load
+      }
+    }, 400);
+  };
+
+  setTimeout(() => {
+    try {
+      if (document.body.contains(printIframe)) {
+        document.body.removeChild(printIframe);
+      }
+      URL.revokeObjectURL(blobUrl);
+    } catch {}
+  }, 60000);
 }
 
 /**
@@ -423,6 +587,7 @@ export function printHardcopyReceiptDirectly(
   options: GenerateReceiptPdfOptions
 ): void {
   const doc = createHardcopyReceiptDoc(inv, options);
+  doc.autoPrint({ variant: 'non-conform' });
   const blob = doc.output('blob');
   const blobUrl = URL.createObjectURL(blob);
   
@@ -430,8 +595,9 @@ export function printHardcopyReceiptDirectly(
   printIframe.style.position = 'fixed';
   printIframe.style.right = '0';
   printIframe.style.bottom = '0';
-  printIframe.style.width = '0';
-  printIframe.style.height = '0';
+  printIframe.style.width = '1px';
+  printIframe.style.height = '1px';
+  printIframe.style.opacity = '0.01';
   printIframe.style.border = '0';
   
   printIframe.src = blobUrl;
@@ -440,12 +606,22 @@ export function printHardcopyReceiptDirectly(
   printIframe.onload = () => {
     setTimeout(() => {
       try {
-        printIframe.contentWindow?.focus();
-        printIframe.contentWindow?.print();
-      } catch (e) {
-        console.error('Direct print failed, fallback to new tab:', e);
-        window.open(blobUrl, '_blank');
+        if (printIframe.contentWindow) {
+          printIframe.contentWindow.focus();
+          printIframe.contentWindow.print();
+        }
+      } catch {
+        // In sandboxed/cross-origin iframes, autoPrint embedded in PDF handles printing automatically upon load
       }
     }, 400);
   };
+
+  setTimeout(() => {
+    try {
+      if (document.body.contains(printIframe)) {
+        document.body.removeChild(printIframe);
+      }
+      URL.revokeObjectURL(blobUrl);
+    } catch {}
+  }, 60000);
 }

@@ -849,23 +849,22 @@ export const BillingTemplateCustomizerModal: React.FC<CustomizerModalProps> = ({
                 /* FFCSI Collection Receipt 1:1 Image Replica Preview */
                 <div className="space-y-4 text-slate-900 text-xs">
                   {/* Header */}
-                  <div className="text-center relative pt-1">
-                    <div className="absolute left-0 top-1 bg-red-700 text-white font-black text-xs px-2.5 py-1 rounded-md shadow-xs tracking-wider">
-                      FFCSI
+                  <div className="text-center pt-1 space-y-1">
+                    <div className="flex items-center justify-center gap-2">
+                      <div className="bg-red-700 text-white font-black text-xs px-2.5 py-0.5 rounded-md shadow-xs tracking-widest uppercase shrink-0">
+                        FFCSI
+                      </div>
+                      <h1 className="text-lg font-serif italic font-extrabold text-red-700">
+                        Family Friends Consultancy Services Inc.
+                      </h1>
                     </div>
-                    <h1 className="text-lg font-serif italic font-extrabold text-red-700">
-                      Family Friends Consultancy Services Inc.
-                    </h1>
-                    <p className="text-[10px] text-slate-700 mt-1"># 50-M Aguilar Street, Brgy. Bungad, Quezon City</p>
+                    <p className="text-[10px] text-slate-700"># 50-M Aguilar Street, Brgy. Bungad, Quezon City</p>
                     <p className="text-[10px] text-slate-700">Tel. No.: (632) 8713-1412</p>
                     <p className="text-[10px] text-slate-700">Email Add: ffcsi2019.acctg@gmail.com; ffcsi2018@gmail.com</p>
 
                     <div className="mt-3 font-extrabold text-sm tracking-widest uppercase border-t border-b border-slate-800 py-0.5 inline-block px-6">
                       COLLECTION RECEIPT
                     </div>
-                    <span className="absolute right-0 top-11 text-xs font-bold text-slate-900">
-                      35428
-                    </span>
                   </div>
 
                   {/* Client Details Underline Lines */}
@@ -876,7 +875,7 @@ export const BillingTemplateCustomizerModal: React.FC<CustomizerModalProps> = ({
                     </div>
                     <div className="col-span-4 text-right flex items-center justify-end gap-1">
                       <span>No.</span>
-                      <span className="text-red-600 font-extrabold">: {previewInvoice.collectionReceiptNumber || previewInvoice.invoiceNumber || '35428'}</span>
+                      <span className="text-red-600 font-extrabold font-mono">: {(previewInvoice.collectionReceiptNumber || previewInvoice.officialReceiptNumber || previewInvoice.invoiceNumber || '1001').replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim()}</span>
                     </div>
 
                     <div className="col-span-8 flex items-baseline gap-1.5">

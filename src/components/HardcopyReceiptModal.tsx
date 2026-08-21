@@ -16,17 +16,28 @@ import {
   Maximize2,
   Info,
   CheckCircle2,
-  FileText
+  FileText,
+  Target,
+  Grid,
+  ChevronDown,
+  ChevronUp,
+  Search,
+  Sparkles,
+  HelpCircle,
+  Copy,
+  Check
 } from 'lucide-react';
 import { InvoiceItem, InvoiceServiceLine } from '../types';
 import { 
   HardcopyPrintConfig, 
+  DEFAULT_HARDCOPY_CONFIG,
   getHardcopyPrintConfig, 
   saveHardcopyPrintConfig, 
   resetHardcopyPrintConfig,
   printHardcopyReceiptDirectly,
   downloadHardcopyReceiptPDF,
-  createHardcopyReceiptDoc
+  createHardcopyReceiptDoc,
+  printCalibrationTestGridDirectly
 } from '../utils/hardcopyReceiptPrinter';
 
 interface HardcopyReceiptModalProps {
@@ -35,6 +46,8 @@ interface HardcopyReceiptModalProps {
   defaultPreparedBy?: string;
   onClose: () => void;
 }
+
+type CalibrationCategory = 'all' | 'header' | 'table' | 'footer';
 
 export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
   invoice,
@@ -46,6 +59,10 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
   const [config, setConfig] = useState<HardcopyPrintConfig>(getHardcopyPrintConfig());
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState<'preview' | 'services' | 'calibration'>('preview');
+  const [calibCategory, setCalibCategory] = useState<CalibrationCategory>('all');
+  const [calibSearch, setCalibSearch] = useState('');
+  const [highlightedField, setHighlightedField] = useState<string | null>(null);
+  const [copiedConfig, setCopiedConfig] = useState(false);
 
   // Preview display mode
   const [previewMode, setPreviewMode] = useState<'overlay' | 'data-only' | 'full'>('overlay');
@@ -53,9 +70,10 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
   // Editable dynamic fields
   const [clientName, setClientName] = useState(invoice.clientName);
   const [address, setAddress] = useState(clientAddress);
-  const [crNumber, setCrNumber] = useState(
-    invoice.collectionReceiptNumber || invoice.officialReceiptNumber || invoice.collectionNumber || invoice.invoiceNumber || '35428'
-  );
+  const [crNumber, setCrNumber] = useState(() => {
+    const raw = invoice.collectionReceiptNumber || invoice.officialReceiptNumber || invoice.collectionNumber || invoice.invoiceNumber || '1001';
+    return raw.replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim() || raw;
+  });
   const [issueDate, setIssueDate] = useState(invoice.paymentDate || invoice.issueDate || new Date().toISOString().substring(0, 10));
   const [preparedBy, setPreparedBy] = useState(defaultPreparedBy);
   const [billingNotes, setBillingNotes] = useState(invoice.billingNotes || '');
@@ -130,10 +148,30 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
   };
 
   const handleResetCalibration = () => {
-    if (confirm('Reset printer alignment and coordinates to factory defaults?')) {
+    if (confirm('Reset all printer micro-alignment coordinates to factory defaults?')) {
       const def = resetHardcopyPrintConfig();
       setConfig(def);
     }
+  };
+
+  const handleResetSingleField = (keys: (keyof HardcopyPrintConfig)[]) => {
+    const updated = { ...config };
+    keys.forEach(k => {
+      (updated as any)[k] = DEFAULT_HARDCOPY_CONFIG[k];
+    });
+    setConfig(updated);
+  };
+
+  const handleNudge = (key: keyof HardcopyPrintConfig, delta: number) => {
+    const current = Number(config[key] ?? DEFAULT_HARDCOPY_CONFIG[key] ?? 0);
+    const updatedVal = Number((current + delta).toFixed(1));
+    setConfig({ ...config, [key]: updatedVal });
+  };
+
+  const handleCopyConfigJson = () => {
+    navigator.clipboard.writeText(JSON.stringify(config, null, 2));
+    setCopiedConfig(true);
+    setTimeout(() => setCopiedConfig(false), 2000);
   };
 
   // Print handlers
@@ -173,6 +211,98 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
     const computed = maxAvailable / serviceCount;
     return Math.min(config.rowSpacingMm, Math.max(computed, 4.5));
   }, [config.autoFitRowSpacing, config.rowSpacingMm, config.maxTableHeightMm, serviceCount]);
+
+  // Micro-adjustment component helper for coordinates
+  const renderCoordinateControl = (
+    label: string,
+    key: keyof HardcopyPrintConfig,
+    min: number,
+    max: number,
+    step: number = 0.5,
+    unit: string = 'mm',
+    defaultVal?: number
+  ) => {
+    const val = Number(config[key] ?? defaultVal ?? 0);
+    const def = defaultVal ?? (DEFAULT_HARDCOPY_CONFIG[key] as number) ?? 0;
+    const isModified = Math.abs(val - def) > 0.01;
+
+    return (
+      <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-3 space-y-2 text-xs">
+        <div className="flex items-center justify-between">
+          <label className="font-bold text-slate-800 flex items-center gap-1.5">
+            <span>{label}</span>
+            {isModified && (
+              <span className="px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-800 text-[9px] font-mono">
+                {val > def ? `+${(val - def).toFixed(1)}` : (val - def).toFixed(1)}{unit}
+              </span>
+            )}
+          </label>
+          <div className="flex items-center gap-1.5">
+            <span className="font-mono font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-slate-200 text-[11px]">
+              {val.toFixed(1)} {unit}
+            </span>
+            {isModified && (
+              <button
+                type="button"
+                onClick={() => handleResetSingleField([key])}
+                className="text-[10px] text-slate-400 hover:text-indigo-600 font-bold px-1 py-0.5 rounded hover:bg-slate-200"
+                title={`Reset to default (${def}${unit})`}
+              >
+                Reset
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Stepper buttons + range slider */}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => handleNudge(key, -1)}
+            className="px-2 py-1 bg-white hover:bg-slate-200 border border-slate-200 rounded font-mono font-bold text-[10px] text-slate-700 cursor-pointer"
+            title="Step -1.0 mm"
+          >
+            -1
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNudge(key, -0.1)}
+            className="px-1.5 py-1 bg-white hover:bg-slate-200 border border-slate-200 rounded font-mono font-bold text-[10px] text-slate-700 cursor-pointer"
+            title="Micro step -0.1 mm"
+          >
+            -0.1
+          </button>
+
+          <input
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={val}
+            onChange={(e) => setConfig({ ...config, [key]: parseFloat(e.target.value) || 0 })}
+            className="flex-1 accent-indigo-600 cursor-pointer"
+          />
+
+          <button
+            type="button"
+            onClick={() => handleNudge(key, +0.1)}
+            className="px-1.5 py-1 bg-white hover:bg-slate-200 border border-slate-200 rounded font-mono font-bold text-[10px] text-slate-700 cursor-pointer"
+            title="Micro step +0.1 mm"
+          >
+            +0.1
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNudge(key, +1)}
+            className="px-2 py-1 bg-white hover:bg-slate-200 border border-slate-200 rounded font-mono font-bold text-[10px] text-slate-700 cursor-pointer"
+            title="Step +1.0 mm"
+          >
+            +1
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
@@ -328,14 +458,16 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
                 >
                   {/* Top Static Branding (Hidden in Data-Only preview) */}
                   {previewMode !== 'data-only' && (
-                    <div className="text-center relative pt-1 mb-5">
-                      <div className="absolute left-0 top-1 bg-red-700 text-white font-black text-xs px-2.5 py-1 rounded-md shadow-xs tracking-wider">
-                        FFCSI
+                    <div className="text-center pt-1 mb-5 space-y-1">
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="bg-red-700 text-white font-black text-xs px-2.5 py-0.5 rounded-md shadow-xs tracking-widest uppercase shrink-0">
+                          FFCSI
+                        </div>
+                        <h1 className="text-xl font-serif italic font-extrabold text-red-700">
+                          Family Friends Consultancy Services Inc.
+                        </h1>
                       </div>
-                      <h1 className="text-xl font-serif italic font-extrabold text-red-700">
-                        Family Friends Consultancy Services Inc.
-                      </h1>
-                      <p className="text-[11px] text-slate-700 mt-1"># 50-M Aguilar Street, Brgy. Bungad, Quezon City</p>
+                      <p className="text-[11px] text-slate-700"># 50-M Aguilar Street, Brgy. Bungad, Quezon City</p>
                       <p className="text-[11px] text-slate-700">Tel. No.: (632) 8713-1412</p>
                       <p className="text-[11px] text-slate-700">Email Add: ffcsi2019.acctg@gmail.com; ffcsi2018@gmail.com</p>
 
@@ -366,7 +498,10 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
                             ? 'text-red-700 bg-red-50/80 ring-1 ring-red-300 rounded px-1.5' 
                             : 'text-red-600'
                         }`}>
-                          {previewMode === 'overlay' ? `( ${crNumber} )` : crNumber}
+                          {(() => {
+                            const clean = crNumber.replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim();
+                            return previewMode === 'overlay' ? `( ${clean} )` : clean;
+                          })()}
                         </span>
                       </div>
                     </div>
@@ -776,100 +911,293 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
             </div>
           )}
 
-          {/* TAB 3: PRINTER ALIGNMENT & CALIBRATION (X / Y OFFSET) */}
+          {/* TAB 3: PRINTER ALIGNMENT & PER-FIELD DYNAMIC CALIBRATION (MILLIMETERS) */}
           {activeTab === 'calibration' && (
-            <div className="space-y-5 text-xs">
-              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3">
-                <Sliders className="w-5 h-5 text-indigo-700 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-bold text-indigo-900 text-sm">Printer Micro-Alignment Calibration (Millimeters)</h4>
-                  <p className="text-indigo-700 text-xs mt-0.5">
-                    Physical printers have slight feeder variations. Adjust these global and coordinate offsets so every printed value lands cleanly on your hardcopy underlines.
-                  </p>
+            <div className="space-y-6 text-xs">
+              
+              {/* Calibration Header & Info */}
+              <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-indigo-600 text-white rounded-xl shadow-xs mt-0.5">
+                    <Sliders className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-bold text-indigo-950 text-sm">Dynamic Printer Micro-Alignment Calibration (Millimeters)</h4>
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-mono text-[10px] font-extrabold">
+                        0.1 mm Precision
+                      </span>
+                    </div>
+                    <p className="text-indigo-800 text-xs mt-0.5">
+                      Adjust global shifts or fine-tune exact (X, Y) coordinates for each individual data field (Client Name, Address, C.R. No, Date, Columns, Total, etc.) to perfectly fit your pre-printed form.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => printCalibrationTestGridDirectly(config)}
+                    className="px-3.5 py-2 bg-white hover:bg-indigo-100/80 border border-indigo-300 text-indigo-900 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                    title="Print a 10mm coordinate grid test sheet to measure physical feeder offsets"
+                  >
+                    <Grid className="w-4 h-4 text-indigo-600" />
+                    <span>Print 10mm Test Grid</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleCopyConfigJson}
+                    className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                    title="Copy calibration JSON configuration profile to clipboard"
+                  >
+                    {copiedConfig ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-600" />
+                        <span className="text-emerald-700">Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-4 h-4 text-slate-500" />
+                        <span>Export Profile</span>
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
 
-              {/* Global Offsets Box */}
+              {/* 1. Global Offset Section */}
               <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
-                <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                  <Move className="w-4 h-4 text-indigo-600" />
-                  Global Alignment Shift (All Elements)
-                </h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                    <Move className="w-4 h-4 text-indigo-600" />
+                    Global Alignment Shift (All Form Elements)
+                  </h4>
+                  <span className="text-[11px] text-slate-500">
+                    Moves the entire document at once
+                  </span>
+                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                  {/* Global X */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="font-bold text-slate-700">Horizontal Shift (X Offset):</label>
-                      <span className="font-mono font-bold text-indigo-600">
-                        {config.globalOffsetX > 0 ? `+${config.globalOffsetX}` : config.globalOffsetX} mm
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setConfig({ ...config, globalOffsetX: Number((config.globalOffsetX - 1).toFixed(1)) })}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg font-mono font-bold cursor-pointer"
-                      >
-                        -1mm
-                      </button>
-                      <input
-                        type="range"
-                        min={-25}
-                        max={25}
-                        step={0.5}
-                        value={config.globalOffsetX}
-                        onChange={(e) => setConfig({ ...config, globalOffsetX: parseFloat(e.target.value) })}
-                        className="flex-1 accent-indigo-600"
-                      />
-                      <button
-                        onClick={() => setConfig({ ...config, globalOffsetX: Number((config.globalOffsetX + 1).toFixed(1)) })}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg font-mono font-bold cursor-pointer"
-                      >
-                        +1mm
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-slate-400">Negative shifts Left, Positive shifts Right</p>
-                  </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {renderCoordinateControl('Global Horizontal Shift (X Offset)', 'globalOffsetX', -30, 30, 0.5, 'mm', 0)}
+                  {renderCoordinateControl('Global Vertical Shift (Y Offset)', 'globalOffsetY', -30, 30, 0.5, 'mm', 0)}
+                </div>
+              </div>
 
-                  {/* Global Y */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                      <label className="font-bold text-slate-700">Vertical Shift (Y Offset):</label>
-                      <span className="font-mono font-bold text-indigo-600">
-                        {config.globalOffsetY > 0 ? `+${config.globalOffsetY}` : config.globalOffsetY} mm
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setConfig({ ...config, globalOffsetY: Number((config.globalOffsetY - 1).toFixed(1)) })}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg font-mono font-bold cursor-pointer"
-                      >
-                        -1mm
-                      </button>
-                      <input
-                        type="range"
-                        min={-25}
-                        max={25}
-                        step={0.5}
-                        value={config.globalOffsetY}
-                        onChange={(e) => setConfig({ ...config, globalOffsetY: parseFloat(e.target.value) })}
-                        className="flex-1 accent-indigo-600"
-                      />
-                      <button
-                        onClick={() => setConfig({ ...config, globalOffsetY: Number((config.globalOffsetY + 1).toFixed(1)) })}
-                        className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 rounded-lg font-mono font-bold cursor-pointer"
-                      >
-                        +1mm
-                      </button>
-                    </div>
-                    <p className="text-[10px] text-slate-400">Negative shifts Up, Positive shifts Down</p>
+              {/* 2. Category Filter & Search for Per-Field Dynamic Calibration */}
+              <div className="bg-slate-100 p-2.5 rounded-2xl border border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5">
+                  {[
+                    { id: 'all', label: 'All Dynamic Info' },
+                    { id: 'header', label: '1. Client & Header' },
+                    { id: 'table', label: '2. Table Columns & Spacing' },
+                    { id: 'footer', label: '3. Total, Notes & Signatory' },
+                  ].map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setCalibCategory(cat.id as any)}
+                      className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                        calibCategory === cat.id
+                          ? 'bg-white text-indigo-900 shadow-2xs border border-slate-200'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      placeholder="Search info field..."
+                      value={calibSearch}
+                      onChange={(e) => setCalibSearch(e.target.value)}
+                      className="pl-8 pr-3 py-1 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:ring-1 focus:ring-indigo-400 w-44"
+                    />
                   </div>
                 </div>
               </div>
+
+              {/* SECTION A: Client & Header Fields */}
+              {(calibCategory === 'all' || calibCategory === 'header') && (!calibSearch || 'client name address date cr no'.includes(calibSearch.toLowerCase())) && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <Target className="w-4 h-4 text-red-600" />
+                      Client & Header Information Coordinates
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => handleResetSingleField(['clientNameX', 'clientNameY', 'clientAddressX', 'clientAddressY', 'crNoX', 'crNoY', 'dateX', 'dateY'])}
+                      className="text-[11px] text-slate-400 hover:text-rose-600 font-bold"
+                    >
+                      Reset Header Group
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Client Name */}
+                    {(!calibSearch || 'client name'.includes(calibSearch.toLowerCase())) && (
+                      <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 text-xs">CLIENT NAME ( Next to "CLIENT :" )</span>
+                          <span className="font-mono text-[10px] text-slate-500 font-bold">Default: X:36mm, Y:52mm</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {renderCoordinateControl('Client Name — X (Horizontal)', 'clientNameX', 0, 200, 0.5, 'mm', 36)}
+                          {renderCoordinateControl('Client Name — Y (Vertical)', 'clientNameY', 0, 200, 0.5, 'mm', 52)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Client Address */}
+                    {(!calibSearch || 'client address'.includes(calibSearch.toLowerCase())) && (
+                      <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 text-xs">CLIENT ADDRESS ( Next to "Address :" )</span>
+                          <span className="font-mono text-[10px] text-slate-500 font-bold">Default: X:36mm, Y:59mm</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {renderCoordinateControl('Client Address — X (Horizontal)', 'clientAddressX', 0, 200, 0.5, 'mm', 36)}
+                          {renderCoordinateControl('Client Address — Y (Vertical)', 'clientAddressY', 0, 200, 0.5, 'mm', 59)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* C.R. / Official Receipt No. */}
+                    {(!calibSearch || 'cr number no receipt'.includes(calibSearch.toLowerCase())) && (
+                      <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 text-xs">RECEIPT NUMBER ( Next to "No. :" )</span>
+                          <span className="font-mono text-[10px] text-slate-500 font-bold">Default: X:182mm, Y:52mm</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {renderCoordinateControl('Receipt No. — X Position', 'crNoX', 50, 210, 0.5, 'mm', 182)}
+                          {renderCoordinateControl('Receipt No. — Y Position', 'crNoY', 0, 200, 0.5, 'mm', 52)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Issue Date */}
+                    {(!calibSearch || 'date issue'.includes(calibSearch.toLowerCase())) && (
+                      <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-slate-900 text-xs">PAYMENT / ISSUE DATE ( Next to "Date :" )</span>
+                          <span className="font-mono text-[10px] text-slate-500 font-bold">Default: X:182mm, Y:59mm</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {renderCoordinateControl('Issue Date — X Position', 'dateX', 50, 210, 0.5, 'mm', 182)}
+                          {renderCoordinateControl('Issue Date — Y Position', 'dateY', 0, 200, 0.5, 'mm', 59)}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION B: Table Columns, Start Y & Spacing */}
+              {(calibCategory === 'all' || calibCategory === 'table') && (!calibSearch || 'table particulars month year amount spacing font'.includes(calibSearch.toLowerCase())) && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-emerald-600" />
+                      Table Columns & Service Line Item Coordinates
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => handleResetSingleField(['tableStartY', 'particularsDescX', 'monthYearX', 'amountX', 'rowSpacingMm', 'fontSizePt'])}
+                      className="text-[11px] text-slate-400 hover:text-rose-600 font-bold"
+                    >
+                      Reset Table Group
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {/* Table Start Top Y */}
+                    {renderCoordinateControl('Table First Row Start — Top Y', 'tableStartY', 40, 150, 0.5, 'mm', 82)}
+
+                    {/* Particulars Description Column X */}
+                    {renderCoordinateControl('Particulars / Description — Column X', 'particularsDescX', 10, 100, 0.5, 'mm', 20)}
+
+                    {/* Month & Year Column X */}
+                    {renderCoordinateControl('Month and Year — Column X', 'monthYearX', 50, 160, 0.5, 'mm', 110)}
+
+                    {/* Amount Column X */}
+                    {renderCoordinateControl('Amount (PHP) — Right Anchor X', 'amountX', 120, 210, 0.5, 'mm', 188)}
+
+                    {/* Row Spacing */}
+                    {renderCoordinateControl('Row Spacing Height', 'rowSpacingMm', 4, 15, 0.5, 'mm', 7)}
+
+                    {/* Table Font Size */}
+                    {renderCoordinateControl('Table Font Size', 'fontSizePt', 6, 14, 0.5, 'pt', 9.5)}
+                  </div>
+                </div>
+              )}
+
+              {/* SECTION C: Total, Remarks Notes & Signatory */}
+              {(calibCategory === 'all' || calibCategory === 'footer') && (!calibSearch || 'total amount notes remarks prepared signatory'.includes(calibSearch.toLowerCase())) && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-indigo-600" />
+                      Total Amount, Billing Notes & Signatories
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => handleResetSingleField(['totalAmountX', 'totalAmountY', 'preparedByX', 'preparedByY', 'billingNotesXOffset', 'billingNotesYOffset'])}
+                      className="text-[11px] text-slate-400 hover:text-rose-600 font-bold"
+                    >
+                      Reset Totals Group
+                    </button>
+                  </div>
+
+                  <div className="space-y-4">
+                    {/* Total Amount */}
+                    <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 text-xs">TOTAL AMOUNT ( Next to "TOTAL ₱" )</span>
+                        <span className="font-mono text-[10px] text-slate-500 font-bold">Default: X:188mm, Y:142mm</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {renderCoordinateControl('Total Amount — Right Anchor X', 'totalAmountX', 120, 210, 0.5, 'mm', 188)}
+                        {renderCoordinateControl('Total Amount — Baseline Y', 'totalAmountY', 100, 220, 0.5, 'mm', 142)}
+                      </div>
+                    </div>
+
+                    {/* Prepared By Signatory */}
+                    <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 text-xs">PREPARED BY ( Next to "PREPARED BY :" )</span>
+                        <span className="font-mono text-[10px] text-slate-500 font-bold">Default: X:42mm, Y:168mm</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {renderCoordinateControl('Prepared By — X Position', 'preparedByX', 10, 100, 0.5, 'mm', 42)}
+                        {renderCoordinateControl('Prepared By — Y Position', 'preparedByY', 120, 250, 0.5, 'mm', 168)}
+                      </div>
+                    </div>
+
+                    {/* Notes Box Micro Offset */}
+                    <div className="p-3 bg-slate-50/50 rounded-xl border border-slate-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-slate-900 text-xs">RECEIPT NOTES / REMARKS (e.g. Kindly Pay To FFCSI)</span>
+                        <span className="font-mono text-[10px] text-slate-500 font-bold">Fine-tune note offset in table space</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {renderCoordinateControl('Notes Horizontal Micro Offset (X)', 'billingNotesXOffset', -40, 40, 0.5, 'mm', 0)}
+                        {renderCoordinateControl('Notes Vertical Micro Offset (Y)', 'billingNotesYOffset', -20, 20, 0.5, 'mm', 0)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Paper Format Selection */}
               <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
-                <h4 className="font-bold text-slate-900 text-sm">Paper Dimensions</h4>
+                <h4 className="font-bold text-slate-900 text-sm">Paper Stationery Format</h4>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {[
                     { id: 'a4', label: 'A4 (210 × 297 mm)', desc: 'Standard CPA Form Format' },
@@ -894,25 +1222,27 @@ export const HardcopyReceiptModal: React.FC<HardcopyReceiptModalProps> = ({
               </div>
 
               {/* Save & Reset Actions */}
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
                 <button
+                  type="button"
                   onClick={handleResetCalibration}
                   className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold flex items-center gap-1.5 cursor-pointer"
                 >
-                  <RotateCcw className="w-4 h-4" /> Reset Factory Defaults
+                  <RotateCcw className="w-4 h-4" /> Reset All Factory Defaults
                 </button>
 
                 <div className="flex items-center gap-2">
                   {savedSuccess && (
-                    <span className="text-emerald-700 font-bold flex items-center gap-1">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Saved as Default!
+                    <span className="text-emerald-700 font-bold flex items-center gap-1 animate-pulse">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Saved as Default Calibration!
                     </span>
                   )}
                   <button
+                    type="button"
                     onClick={handleSaveCalibration}
                     className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-sm cursor-pointer"
                   >
-                    <Save className="w-4 h-4" /> Save Default Calibration
+                    <Save className="w-4 h-4" /> Save Default Calibration Profile
                   </button>
                 </div>
               </div>

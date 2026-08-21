@@ -450,30 +450,42 @@ export function generateFFCSICollectionReceiptPDF(
   const rightX = pageWidth - margin; // 196mm
   const contentWidth = pageWidth - (margin * 2); // 182mm
 
-  const crNo = inv.collectionReceiptNumber || inv.collectionNumber || inv.officialReceiptNumber || inv.invoiceNumber || '35428';
-  const cleanCrNo = crNo.replace(/\D/g, '') || crNo;
+  const crNo = inv.collectionReceiptNumber || inv.collectionNumber || inv.officialReceiptNumber || inv.invoiceNumber || '1001';
+  const cleanCrNo = crNo.replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim() || crNo.replace(/\D/g, '') || crNo;
   const displayDate = inv.paymentDate || inv.issueDate || '05/08/2026';
   const preparedBy = customOptions?.preparedBy || 'Maricris';
   const clientAddress = customOptions?.clientAddress || (inv as any).clientAddress || 'Gen. Aguinaldo Hi-Way Panapaan V, Bacoor City';
 
-  let y = 15;
+  let y = 16;
 
-  // 1. Red FFCSI Logo Pill Badge on top-left
-  doc.setFillColor(185, 28, 28); // Red-700
-  doc.roundedRect(margin, y, 24, 12, 3, 3, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(10);
-  doc.setTextColor(255, 255, 255);
-  doc.text('FFCSI', margin + 12, y + 8, { align: 'center' });
-
-  // 2. Company Name: Family Friends Consultancy Services Inc. (Script/Serif Red Title)
+  // 1 & 2. FFCSI Logo Badge before Family Friends Consultancy Services Inc. (Centered row)
+  const badgeWidth = 18;
+  const badgeHeight = 6.5;
+  const companyName = 'Family Friends Consultancy Services Inc.';
+  
   doc.setFont('times', 'italic');
-  doc.setFontSize(18);
+  doc.setFontSize(16);
+  const textWidth = doc.getTextWidth(companyName);
+  const gap = 3;
+  const totalHeaderWidth = badgeWidth + gap + textWidth;
+  const startX = (pageWidth - totalHeaderWidth) / 2;
+
+  // Draw FFCSI red badge
+  doc.setFillColor(185, 28, 28); // Red-700
+  doc.roundedRect(startX, y - 4.8, badgeWidth, badgeHeight, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FFCSI', startX + (badgeWidth / 2), y - 0.2, { align: 'center' });
+
+  // Draw Company Name
+  doc.setFont('times', 'italic');
+  doc.setFontSize(16);
   doc.setTextColor(185, 28, 28); // Red-700
-  doc.text('Family Friends Consultancy Services Inc.', margin + 27, y + 8);
+  doc.text(companyName, startX + badgeWidth + gap, y);
 
   // Address & Contacts below header
-  y += 15;
+  y += 7;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
   doc.setTextColor(30, 41, 59);
@@ -489,12 +501,6 @@ export function generateFFCSICollectionReceiptPDF(
   doc.setFontSize(13);
   doc.setTextColor(15, 23, 42);
   doc.text('COLLECTION RECEIPT', pageWidth / 2, y, { align: 'center' });
-
-  // Top Right Reference Number
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(15, 23, 42);
-  doc.text(cleanCrNo, rightX - 5, y - 5, { align: 'right' });
 
   // 4. Client Info Fields (Underlined layout like original image)
   y += 10;
@@ -636,12 +642,24 @@ export function generateFFCSICollectionReceiptPDF(
   doc.setFontSize(8.5);
   
   // Left Column: CHECK, DATE, PREPARED BY
+  const detectedCheck = customOptions?.checkNo || (
+    inv.services?.filter(s => s.paymentMode === 'Cheque' || s.chequeNumber).map(s => `${s.chequeNumber || 'Cheque'}${s.chequePayee ? ` (${s.chequePayee})` : ''}`).join(', ')
+  ) || (inv.paymentMethod && inv.paymentMethod.includes('Cheque') ? inv.paymentMethod : '') || '';
+
   doc.setFont('helvetica', 'bold');
   doc.text('CHECK   :', margin + 2, y);
+  if (detectedCheck) {
+    doc.setFontSize(7.5);
+    doc.text(detectedCheck.substring(0, 24), margin + 20, y);
+    doc.setFontSize(8.5);
+  }
   doc.line(margin + 20, y + 0.5, margin + 55, y + 0.5);
 
   y += 5;
   doc.text('DATE      :', margin + 2, y);
+  doc.setFontSize(7.5);
+  doc.text(displayDate, margin + 20, y);
+  doc.setFontSize(8.5);
   doc.line(margin + 20, y + 0.5, margin + 55, y + 0.5);
 
   y += 5;

@@ -499,8 +499,8 @@ export const INITIAL_INVOICES: InvoiceItem[] = [
     services: [
       { description: 'Monthly Tax Compliance Retainer (August 2026)', amount: 45000 }
     ],
-    officialReceiptNumber: 'C.R.# 1001',
-    collectionReceiptNumber: 'C.R.# 1001',
+    officialReceiptNumber: '1001',
+    collectionReceiptNumber: '1001',
     paymentDate: '2026-08-02',
     paymentMethod: 'Bank Transfer (BDO)'
   },
