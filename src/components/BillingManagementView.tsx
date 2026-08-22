@@ -7,7 +7,7 @@ import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
 import { PeriodCoverageModal } from './PeriodCoverageModal';
 import { HardcopyReceiptModal } from './HardcopyReceiptModal';
-import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
+import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, generatePaymentCollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
 import { printHardcopyReceiptDirectly, getHardcopyPrintConfig } from '../utils/hardcopyReceiptPrinter';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { 
@@ -76,10 +76,32 @@ import {
 
 interface CrItemPaymentConfig {
   mode: 'Cash' | 'Cheque';
+  amount: number;
+  bank: string;
+  customBank: string;
   chequeNo: string;
   payee: string;
   customPayee: string;
+  isPaid: boolean;
 }
+
+const PH_BANKS = [
+  'BDO (Banco de Oro)',
+  'BPI (Bank of the Philippine Islands)',
+  'Metrobank',
+  'UnionBank',
+  'RCBC',
+  'Security Bank',
+  'Landbank',
+  'PNB',
+  'Chinabank',
+  'EastWest Bank',
+  'AUB',
+  'PSBank',
+  'Robinsons Bank',
+  'Maybank',
+  'Other Bank'
+];
 
 export const downloadInvoicePDF = (inv: InvoiceItem) => {
   generateCustomizedInvoicePDF(inv);
@@ -181,6 +203,11 @@ export const downloadCollectionReceiptPDF = (inv: InvoiceItem) => {
   generateFFCSICollectionReceiptPDF(inv, { preparedBy: cfg.signatoryName || 'Maricris' });
 };
 
+export const downloadPaymentCollectionReceiptPDF = (inv: InvoiceItem) => {
+  const cfg = getBillingTemplateConfig();
+  generatePaymentCollectionReceiptPDF(inv, { preparedBy: cfg.signatoryName || 'Maricris' });
+};
+
 export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: string) => void }> = ({ onNavigateToClient }) => {
   const { 
     invoices, 
@@ -192,7 +219,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     masterChoices, 
     addInvoice, 
     updateInvoice,
-    recordInvoicePayment, 
+    recordInvoicePayment,
+    editInvoicePayment, 
     cancelInvoicePayment,
     getInvoicePayments,
     getInvoiceBalance,
@@ -215,6 +243,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
+  // CR Format View State: 'default' (2-column FFCSI) vs 'payment' (3-column PARTICULARS | AMOUNT | Payment info)
+  const [crViewFormat, setCrViewFormat] = useState<'default' | 'payment'>('default');
+
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
@@ -226,6 +257,38 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCustomizerModal, setShowCustomizerModal] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
+
+  // Ask First Before Creating Invoice Confirmation Modal ⭐
+  const [confirmGenerateModal, setConfirmGenerateModal] = useState<{
+    isOpen: boolean;
+    clientName: string;
+    collectionNumber: string;
+    totalAmount: number;
+    servicesCount: number;
+    issueDate: string;
+    dueDate: string;
+    billingPeriod: string;
+    pendingData?: {
+      client: any;
+      cleanColl: string;
+      issueDate: string;
+      dueDate: string;
+      subtotal: number;
+      totalAmount: number;
+      services: InvoiceServiceLine[];
+      billingNotes?: string;
+      billingPeriod: string;
+    };
+  }>({
+    isOpen: false,
+    clientName: '',
+    collectionNumber: '',
+    totalAmount: 0,
+    servicesCount: 0,
+    issueDate: '',
+    dueDate: '',
+    billingPeriod: ''
+  });
 
   // Phase 4 & Phase 5 Sub-Tab Navigation ⭐
   const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'ar' | 'soa' | 'reports' | 'analytics' | 'audit'>('invoices');
@@ -1021,7 +1084,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const vatAmount = 0;
   const totalAmount = subtotal;
 
-  // Submit Create Invoice
+  // Submit Create Invoice -> Prompts Confirmation Dialog First
   const handleCreateInvoice = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId) {
@@ -1048,8 +1111,37 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       return;
     }
 
+    // Open confirmation dialog before finalizing creation
+    setConfirmGenerateModal({
+      isOpen: true,
+      clientName: client.companyName,
+      collectionNumber: cleanColl,
+      totalAmount,
+      servicesCount: services.length,
+      issueDate,
+      dueDate,
+      billingPeriod,
+      pendingData: {
+        client,
+        cleanColl,
+        issueDate,
+        dueDate,
+        subtotal,
+        totalAmount,
+        services: [...services],
+        billingNotes: showNotesBox && billingNotes.trim() ? billingNotes.trim() : undefined,
+        billingPeriod
+      }
+    });
+  };
+
+  // Finalize Invoice Creation after User Confirms "Proceed"
+  const handleConfirmCreateInvoice = () => {
+    if (!confirmGenerateModal.pendingData) return;
+    const { client, cleanColl, issueDate, dueDate, subtotal, totalAmount, services: confirmedServices, billingNotes: confirmedNotes, billingPeriod: confirmedPeriod } = confirmGenerateModal.pendingData;
+
     // Auto-save any custom service descriptions for future reuse
-    services.forEach(s => {
+    confirmedServices.forEach(s => {
       if (s.description && s.description.trim()) {
         saveCustomService({ description: s.description.trim(), defaultAmount: s.amount });
       }
@@ -1066,32 +1158,65 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       totalAmount,
       paidAmount: 0,
       status: 'Sent',
-      services,
-      billingNotes: showNotesBox && billingNotes.trim() ? billingNotes.trim() : undefined,
+      services: confirmedServices,
+      billingNotes: confirmedNotes,
     });
 
     addAuditLog(
       'Invoice Generated',
-      `Generated Statement of Account (Collection # ${cleanColl}) for ${client.companyName} amounting to ₱${totalAmount.toLocaleString()} (${billingPeriod}).`,
+      `Generated Statement of Account (Collection # ${cleanColl}) for ${client.companyName} amounting to ₱${totalAmount.toLocaleString()} (${confirmedPeriod}).`,
       currentUser?.id || 'system',
       currentUser?.fullName || 'System Admin'
     );
 
+    setConfirmGenerateModal({
+      isOpen: false,
+      clientName: '',
+      collectionNumber: '',
+      totalAmount: 0,
+      servicesCount: 0,
+      issueDate: '',
+      dueDate: '',
+      billingPeriod: ''
+    });
+
     setShowCreateModal(false);
     setSelectedInvoice(createdInv);
     setIsCrPaymentMode(false);
+    setCrViewFormat('default');
     setShowCrModal(true);
   };
 
   // Helper to update per-item payment configurations
-  const handleUpdateItemPayment = (serviceIdx: number, updates: Partial<{ mode: 'Cash' | 'Cheque'; chequeNo: string; payee: string; customPayee: string }>) => {
-    setCrItemPaymentConfigs(prev => ({
-      ...prev,
-      [serviceIdx]: {
-        ...(prev[serviceIdx] || { mode: 'Cash', chequeNo: '', payee: 'FFCSI', customPayee: '' }),
+  const handleUpdateItemPayment = (serviceIdx: number, updates: Partial<CrItemPaymentConfig>) => {
+    setCrItemPaymentConfigs(prev => {
+      const current = prev[serviceIdx] || {
+        mode: 'Cash',
+        amount: selectedInvoice?.services[serviceIdx]?.amount || 0,
+        bank: 'BDO (Banco de Oro)',
+        customBank: '',
+        chequeNo: '',
+        payee: 'FFCSI',
+        customPayee: '',
+        isPaid: false
+      };
+      const updated = {
+        ...current,
         ...updates
+      };
+      const newConfigs = {
+        ...prev,
+        [serviceIdx]: updated
+      };
+
+      // Automatically recalculate overall payment total from all configured item amounts
+      const totalFromConfigs = (Object.values(newConfigs) as CrItemPaymentConfig[]).reduce((sum: number, c: CrItemPaymentConfig) => sum + (Number(c.amount) || 0), 0);
+      if (totalFromConfigs > 0) {
+        setPaymentAmount(totalFromConfigs);
       }
-    }));
+
+      return newConfigs;
+    });
   };
 
   // Open Payment Remittance in Official Collection Receipt (FFCSI Format) - Super Admin Only
@@ -1102,37 +1227,53 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     }
     setSelectedInvoice(inv);
     const balance = getInvoiceBalance(inv.id);
-    setPaymentAmount(balance > 0 ? balance : inv.totalAmount);
-    setPaymentDate(new Date().toISOString().substring(0, 10));
-    setPaymentMethod('Cash');
+    const isAlreadyPaid = (inv.paidAmount || 0) > 0 || inv.status === 'Paid';
+    setPaymentAmount(isAlreadyPaid ? (inv.paidAmount || inv.totalAmount) : (balance > 0 ? balance : inv.totalAmount));
+    setPaymentDate(inv.paymentDate || new Date().toISOString().substring(0, 10));
+    setPaymentMethod(inv.paymentMethod || 'Cash');
     setPaymentRefNum('');
-    setPaymentNotes('');
+    setPaymentNotes(inv.billingNotes || '');
 
-    // Auto-generate 4-digit unique Collection Receipt Number
-    const next4Digit = getNextCrNumber();
-    setOrNumber(next4Digit);
+    // C.R. Number: use existing 4-digit if available, otherwise get next 4-digit
+    const existingCr = inv.collectionReceiptNumber || inv.officialReceiptNumber;
+    const cleanDigits = existingCr ? existingCr.replace(/\D/g, '') : '';
+    if (cleanDigits && cleanDigits.length === 4) {
+      setOrNumber(cleanDigits);
+    } else {
+      const next4Digit = getNextCrNumber();
+      setOrNumber(next4Digit);
+    }
     setCrError('');
 
     // Initialize per-item payment configurations
-    const initialConfigs: {
-      [serviceIdx: number]: {
-        mode: 'Cash' | 'Cheque';
-        chequeNo: string;
-        payee: string;
-        customPayee: string;
-      };
-    } = {};
+    const initialConfigs: Record<number, CrItemPaymentConfig> = {};
 
     inv.services.forEach((s, idx) => {
       const isCheque = s.paymentMode === 'Cheque' || (s.paymentMethod && s.paymentMethod.toLowerCase().includes('cheque'));
       const detectedPayee = s.chequePayee || 'FFCSI';
-      const isCustom = !['FFCSI', 'BIR', 'City Hall', 'SEC', 'SSS'].includes(detectedPayee);
+      const isCustomPayee = !['FFCSI', 'BIR', 'City Hall', 'SEC', 'SSS'].includes(detectedPayee);
+
+      let bank = 'BDO (Banco de Oro)';
+      let chequeNo = s.chequeNumber || '';
+      let customBank = '';
+      if (s.chequeNumber) {
+        const parts = s.chequeNumber.split(' ');
+        const matched = PH_BANKS.find(b => b.startsWith(parts[0]));
+        if (matched) {
+          bank = matched;
+          chequeNo = parts.slice(1).join(' ').replace(/^#/, '');
+        }
+      }
 
       initialConfigs[idx] = {
         mode: isCheque ? 'Cheque' : 'Cash',
-        chequeNo: s.chequeNumber || '',
-        payee: isCustom ? 'Other' : detectedPayee,
-        customPayee: isCustom ? detectedPayee : ''
+        amount: s.amount || 0,
+        bank: bank,
+        customBank: customBank,
+        chequeNo: chequeNo,
+        payee: isCustomPayee ? 'Other' : detectedPayee,
+        customPayee: isCustomPayee ? detectedPayee : '',
+        isPaid: isAlreadyPaid
       };
     });
     setCrItemPaymentConfigs(initialConfigs);
@@ -1146,10 +1287,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (isCrPaymentMode) {
       const configEntries = Object.values(crItemPaymentConfigs) as CrItemPaymentConfig[];
       const cheques = configEntries
-        .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque')
+        .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && (c.isPaid || c.chequeNo))
         .map((c: CrItemPaymentConfig) => {
+          const bankName = c.bank === 'Other Bank' ? (c.customBank || 'Cheque') : c.bank.split(' ')[0];
           const p = c.payee === 'Other' ? (c.customPayee || 'Other') : c.payee;
-          return `${c.chequeNo ? `${c.chequeNo}` : 'Cheque'}${p ? ` (${p})` : ''}`;
+          const num = c.chequeNo ? `#${c.chequeNo}` : '';
+          return `${bankName} ${num} (${p})`.trim();
         });
       if (cheques.length > 0) {
         return cheques.join(', ');
@@ -1176,21 +1319,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       return;
     }
 
-    const currentBalance = getInvoiceBalance(selectedInvoice.id);
-    if (paymentAmount > currentBalance) {
-      if (!confirm(`Warning: Payment amount (₱${paymentAmount.toLocaleString()}) exceeds remaining invoice balance (₱${currentBalance.toLocaleString()}). Proceed with overpayment recording?`)) {
-        return;
-      }
-    }
+    const isEditingExistingPayment = (selectedInvoice.paidAmount || 0) > 0 || (selectedInvoice.payments && selectedInvoice.payments.length > 0) || !!selectedInvoice.collectionReceiptNumber;
 
     // 4-Digit Unique C.R. # Enforcement
-    const cleanDigits = orNumber.trim().replace(/\D/g, '');
+    const cleanDigits = (orNumber || '1001').trim().replace(/\D/g, '');
     if (!cleanDigits || cleanDigits.length !== 4) {
       setCrError('Collection Receipt Number MUST be exactly 4 digits (e.g., 1001, 1002).');
       return;
     }
 
-    if (isCrNumberUsed(cleanDigits) || isCrNumberUsed(orNumber)) {
+    const previousCrDigits = (selectedInvoice.collectionReceiptNumber || selectedInvoice.officialReceiptNumber || '').replace(/\D/g, '');
+    const isSameCr = cleanDigits === previousCrDigits;
+
+    if (!isSameCr && (isCrNumberUsed(cleanDigits) || isCrNumberUsed(orNumber))) {
       setCrError(`❌ C.R. # ${cleanDigits} has ALREADY been generated/used! Duplicate Collection Receipt numbers cannot be reused once assigned. Next available 4-digit C.R. # is ${getNextCrNumber()}.`);
       return;
     }
@@ -1198,16 +1339,28 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     const finalCr = cleanDigits;
 
     const updatedServices = selectedInvoice.services.map((s, idx) => {
-      const cfg: CrItemPaymentConfig = crItemPaymentConfigs[idx] || { mode: 'Cash', chequeNo: '', payee: 'FFCSI', customPayee: '' };
+      const cfg: CrItemPaymentConfig = crItemPaymentConfigs[idx] || {
+        mode: 'Cash',
+        amount: s.amount,
+        bank: 'BDO (Banco de Oro)',
+        customBank: '',
+        chequeNo: '',
+        payee: 'FFCSI',
+        customPayee: '',
+        isPaid: true
+      };
+      const finalBank = cfg.bank === 'Other Bank' ? (cfg.customBank || 'Bank') : cfg.bank.split(' ')[0];
       const finalPayee = cfg.payee === 'Other' ? (cfg.customPayee || 'Other') : cfg.payee;
+      const finalChequeStr = `${finalBank} ${cfg.chequeNo}`.trim();
       const methodLabel = cfg.mode === 'Cheque' 
-        ? `Cheque (${cfg.chequeNo || 'No #'}) to ${finalPayee || 'FFCSI'}`
-        : 'Cash';
+        ? `Cheque (${finalChequeStr || 'No #'}) to ${finalPayee || 'FFCSI'}`
+        : 'Cash Payment';
 
       return {
         ...s,
+        amount: Number(cfg.amount) > 0 ? Number(cfg.amount) : s.amount,
         paymentMode: cfg.mode,
-        chequeNumber: cfg.mode === 'Cheque' ? cfg.chequeNo : undefined,
+        chequeNumber: cfg.mode === 'Cheque' ? finalChequeStr : undefined,
         chequePayee: cfg.mode === 'Cheque' ? finalPayee : undefined,
         paymentMethod: methodLabel
       };
@@ -1219,53 +1372,96 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : 'Cash Collection';
 
     const chequeRefs = configsList
-      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && c.chequeNo)
-      .map((c: CrItemPaymentConfig) => `${c.chequeNo} (${c.payee === 'Other' ? c.customPayee : c.payee})`)
+      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && (c.isPaid || c.chequeNo))
+      .map((c: CrItemPaymentConfig) => {
+        const b = c.bank === 'Other Bank' ? (c.customBank || 'Cheque') : c.bank.split(' ')[0];
+        const p = c.payee === 'Other' ? c.customPayee : c.payee;
+        return `${b} #${c.chequeNo} (${p})`;
+      })
       .join(', ');
 
-    const res = recordInvoicePayment(
-      selectedInvoice.id,
-      {
-        amount: Number(paymentAmount),
-        paymentDate,
-        paymentMethod: overallMethod,
-        referenceNumber: chequeRefs || paymentRefNum,
-        officialReceiptNumber: finalCr,
-        collectionReceiptNumber: finalCr,
-        notes: paymentNotes,
-        updatedServices
-      },
-      currentUser?.id,
-      currentUser?.fullName
-    );
+    const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const auditDetails = isEditingExistingPayment
+      ? `Payment Remittance Info Edited: C.R. #${finalCr}, Amount: ₱${Number(paymentAmount).toLocaleString()}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${paymentNotes ? ` • Notes: ${paymentNotes}` : ''}`
+      : `Initial Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(paymentAmount).toLocaleString()}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}`;
 
-    if (res.success) {
-      addAuditLog(
-        'Financial Payment Recorded',
-        `Recorded payment remittance of ₱${paymentAmount.toLocaleString()} with Official Collection Receipt # ${finalCr} for ${selectedInvoice.clientName}.`,
+    const amendmentRecord = {
+      date: nowTimestamp,
+      modifiedBy: currentUser?.fullName || 'Super Admin',
+      details: auditDetails,
+      previousTotal: selectedInvoice.paidAmount || 0,
+      newTotal: Number(paymentAmount)
+    };
+
+    const updatedAmendedHistory = [amendmentRecord, ...(selectedInvoice.amendedHistory || [])];
+    const isFullyPaid = Number(paymentAmount) >= selectedInvoice.totalAmount;
+    const newStatus = isFullyPaid ? 'Paid' : (Number(paymentAmount) > 0 ? 'Partially Paid' : selectedInvoice.status);
+
+    const updatedTargetInv: InvoiceItem = {
+      ...selectedInvoice,
+      paidAmount: Number(paymentAmount),
+      status: newStatus,
+      collectionReceiptNumber: finalCr,
+      officialReceiptNumber: finalCr,
+      paymentDate,
+      paymentMethod: overallMethod,
+      billingNotes: paymentNotes || selectedInvoice.billingNotes,
+      services: updatedServices,
+      amendedHistory: updatedAmendedHistory
+    };
+
+    if (isEditingExistingPayment) {
+      editInvoicePayment(
+        selectedInvoice.id,
+        {
+          amount: Number(paymentAmount),
+          paymentDate,
+          paymentMethod: overallMethod,
+          referenceNumber: chequeRefs || paymentRefNum,
+          officialReceiptNumber: finalCr,
+          collectionReceiptNumber: finalCr,
+          notes: paymentNotes,
+          updatedServices,
+          amendedHistory: updatedAmendedHistory
+        },
         currentUser?.id || 'system',
         currentUser?.fullName || 'Super Admin'
       );
-
-      const updatedPaidAmount = (selectedInvoice.paidAmount || 0) + Number(paymentAmount);
-      const isFullyPaid = updatedPaidAmount >= selectedInvoice.totalAmount;
-      const updatedTargetInv: InvoiceItem = {
-        ...selectedInvoice,
-        paidAmount: updatedPaidAmount,
-        status: isFullyPaid ? 'Paid' : 'Partially Paid',
-        collectionReceiptNumber: finalCr,
-        officialReceiptNumber: finalCr,
-        paymentDate,
-        paymentMethod: overallMethod,
-        services: updatedServices
-      };
-
-      setSelectedInvoice(updatedTargetInv);
-      setIsCrPaymentMode(false);
-      alert(`Payment remittance successfully recorded!\nOfficial Collection Receipt #${finalCr} has been issued for ${selectedInvoice.clientName}.`);
     } else {
-      alert(res.message);
+      recordInvoicePayment(
+        selectedInvoice.id,
+        {
+          amount: Number(paymentAmount),
+          paymentDate,
+          paymentMethod: overallMethod,
+          referenceNumber: chequeRefs || paymentRefNum,
+          officialReceiptNumber: finalCr,
+          collectionReceiptNumber: finalCr,
+          notes: paymentNotes,
+          updatedServices
+        },
+        currentUser?.id,
+        currentUser?.fullName
+      );
+      updateInvoice(selectedInvoice.id, {
+        amendedHistory: updatedAmendedHistory
+      });
     }
+
+    addAuditLog(
+      isEditingExistingPayment ? 'Financial Payment Amended' : 'Financial Payment Recorded',
+      `${auditDetails} for Invoice ${selectedInvoice.invoiceNumber} (${selectedInvoice.clientName}).`,
+      currentUser?.id || 'system',
+      currentUser?.fullName || 'Super Admin'
+    );
+
+    setSelectedInvoice(updatedTargetInv);
+    setIsCrPaymentMode(false);
+    alert(
+      isEditingExistingPayment
+        ? `Payment remittance info updated successfully!\nAny edits have been logged in the Invoice Payment Ledger & History Audit.`
+        : `Payment remittance successfully recorded!\nOfficial Collection Receipt #${finalCr} has been issued for ${selectedInvoice.clientName}.`
+    );
   };
 
   // Open SOA / Collection Receipt Modal (Default to FFCSI Format)
@@ -1843,17 +2039,18 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             )
                           )}
 
-                          {(inv.collectionReceiptNumber || inv.officialReceiptNumber) && (
+                          {(inv.status === 'Paid' || (inv.paidAmount || 0) > 0 || inv.collectionReceiptNumber || inv.officialReceiptNumber) && (
                             <button
                               onClick={() => {
                                 setSelectedInvoice(inv);
+                                setIsCrPaymentMode(false);
                                 setShowCrModal(true);
                               }}
-                              title={`View Collection Receipt (${inv.collectionReceiptNumber || inv.officialReceiptNumber})`}
-                              className="px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-colors shrink-0"
+                              title={`View Receipt (${inv.collectionReceiptNumber || inv.officialReceiptNumber || 'Paid'})`}
+                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
                             >
-                              <Receipt className="w-3.5 h-3.5" />
-                              {inv.collectionReceiptNumber || inv.officialReceiptNumber}
+                              <Receipt className="w-3.5 h-3.5 text-emerald-700" />
+                              View Receipt
                             </button>
                           )}
 
@@ -2188,6 +2385,20 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                   className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
                                 >
                                   <CreditCard className="w-3 h-3" /> Pay
+                                </button>
+                              )}
+
+                              {(inv.status === 'Paid' || (inv.paidAmount || 0) > 0 || inv.collectionReceiptNumber || inv.officialReceiptNumber) && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedInvoice(inv);
+                                    setIsCrPaymentMode(false);
+                                    setShowCrModal(true);
+                                  }}
+                                  title="View Receipt (FFCSI Format)"
+                                  className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
+                                >
+                                  <Receipt className="w-3 h-3 text-emerald-700" /> View Receipt
                                 </button>
                               )}
                             </div>
@@ -3563,6 +3774,68 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         </div>
       )}
 
+      {/* CONFIRMATION MODAL: Ask First Before Creating Invoice ⭐ */}
+      {confirmGenerateModal.isOpen && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full shadow-2xl text-slate-800 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-2.5 bg-emerald-50 text-emerald-700 rounded-xl shrink-0 border border-emerald-200">
+                <FileText className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">
+                  Generate Statement of Account (SOA)
+                </h3>
+                <p className="text-slate-700 text-xs leading-relaxed">
+                  Generating Collection # <strong className="text-slate-900 font-mono">({confirmGenerateModal.collectionNumber} (Unique Serial No.))</strong> For <strong className="text-slate-900">{confirmGenerateModal.clientName}</strong>
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs space-y-2">
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Client:</span>
+                <span className="font-bold text-slate-900 text-right">{confirmGenerateModal.clientName}</span>
+              </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Collection Serial #:</span>
+                <span className="font-mono font-bold text-emerald-700">#{confirmGenerateModal.collectionNumber}</span>
+              </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Billing Dates:</span>
+                <span className="text-slate-700">Issue: {confirmGenerateModal.issueDate} • Due: {confirmGenerateModal.dueDate}</span>
+              </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Billable Items:</span>
+                <span className="font-semibold text-slate-800">{confirmGenerateModal.servicesCount} item{confirmGenerateModal.servicesCount > 1 ? 's' : ''}</span>
+              </div>
+              <div className="flex justify-between items-center pt-1 font-bold">
+                <span className="text-slate-900">Total Amount:</span>
+                <span className="font-mono text-emerald-700 text-base">₱{confirmGenerateModal.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmGenerateModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCreateInvoice}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Proceed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
 
       {/* MODAL 3: Printable SOA Statement Preview */}
@@ -3774,83 +4047,134 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       {showCrModal && selectedInvoice && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className={`bg-white border border-slate-200 rounded-2xl ${isCrPaymentMode ? 'max-w-4xl' : 'max-w-2xl'} w-full p-6 text-xs shadow-2xl text-slate-800 space-y-4 max-h-[92vh] overflow-y-auto transition-all`}>
+            {/* Header: Clean Title & Close */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
                 <Receipt className="w-5 h-5 text-red-600 shrink-0" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-slate-900 text-base">Official Collection Receipt (FFCSI Format)</h3>
-                    {isCrPaymentMode ? (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">
-                        Payment Remittance Mode
-                      </span>
-                    ) : (
-                      <span className="text-[10px] bg-slate-100 text-slate-700 font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">
-                        Receipt Preview
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-slate-500 text-[11px]">
-                    {isCrPaymentMode 
-                      ? 'Configure itemized Cash or Cheque remittance, specify Cheque & Cheque No., and choose whether Paid to FFCSI, BIR, City Hall, etc.' 
-                      : 'Replicated 1:1 Printable Official Collection Receipt Document'}
-                  </p>
-                </div>
+                <h3 className="font-bold text-slate-900 text-base">Official Collection Receipt (FFCSI Format)</h3>
+                {isCrPaymentMode && (
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">
+                    Payment Remittance Mode
+                  </span>
+                )}
               </div>
-              <div className="flex items-center gap-2">
-                {isCrPaymentMode ? (
+              <button 
+                onClick={() => setShowCrModal(false)} 
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 2-Column Action Bar for Controls (Default Receipt, Payment, Edit, Download PDF, Print) ⭐ */}
+            {!isCrPaymentMode ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                {/* Column 1: Format Switchers (Default Receipt | Payment) */}
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsCrPaymentMode(false)}
-                    className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                    onClick={() => {
+                      setCrViewFormat('default');
+                      setIsCrPaymentMode(false);
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs ${
+                      crViewFormat === 'default' && !isCrPaymentMode
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                    title="Default Official Collection Receipt (2-Column Format: PARTICULARS | AMOUNT)"
                   >
-                    <Eye className="w-4 h-4" /> View Preview
+                    <Receipt className="w-3.5 h-3.5" />
+                    <span>Default Receipt</span>
                   </button>
-                ) : (
-                  <>
-                    {isSuperAdmin && (selectedInvoice.totalAmount - (selectedInvoice.paidAmount || 0)) > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => handleOpenPayment(selectedInvoice)}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                      >
-                        <CreditCard className="w-4 h-4" /> Record Payment Remittance
-                      </button>
-                    )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCrViewFormat('payment');
+                      setIsCrPaymentMode(false);
+                    }}
+                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs ${
+                      crViewFormat === 'payment' && !isCrPaymentMode
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                    }`}
+                    title="Payment Receipt: 3-Column PARTICULARS | AMOUNT | Payment info format"
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    <span>Payment</span>
+                  </button>
+                </div>
+
+                {/* Column 2: Action Buttons (Edit | Download PDF | Print) */}
+                <div className="flex items-center gap-2">
+                  {isSuperAdmin && (
                     <button
                       type="button"
-                      onClick={() => downloadCollectionReceiptPDF(selectedInvoice)}
-                      className="px-3 py-1.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                      onClick={() => handleOpenPayment(selectedInvoice)}
+                      className="flex-1 py-2 px-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl flex items-center justify-center gap-1 text-xs shadow-2xs cursor-pointer transition-colors"
+                      title="Edit payment remittance details, cheque info, and records"
                     >
-                      <Download className="w-4 h-4" /> Download PDF
+                      <Edit className="w-3.5 h-3.5" />
+                      <span>Edit</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        printHardcopyReceiptDirectly(selectedInvoice, {
-                          mode: 'data-only',
-                          config: getHardcopyPrintConfig()
-                        });
-                      }}
-                      className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-2xs"
-                      title="Print on Hardcopy Stationery (Data Only)"
-                    >
-                      <Printer className="w-4 h-4" /> Print
-                    </button>
-                  </>
-                )}
-                <button onClick={() => setShowCrModal(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
-                  <X className="w-5 h-5" />
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (crViewFormat === 'payment') {
+                        downloadPaymentCollectionReceiptPDF(selectedInvoice);
+                      } else {
+                        downloadCollectionReceiptPDF(selectedInvoice);
+                      }
+                    }}
+                    className="flex-1 py-2 px-2.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl flex items-center justify-center gap-1 text-xs shadow-2xs cursor-pointer transition-colors"
+                    title={crViewFormat === 'payment' ? 'Download Payment Receipt PDF (3-Column)' : 'Download Collection Receipt PDF'}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download PDF</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      printHardcopyReceiptDirectly(selectedInvoice, {
+                        mode: 'data-only',
+                        config: getHardcopyPrintConfig()
+                      });
+                    }}
+                    className="flex-1 py-2 px-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center justify-center gap-1 text-xs cursor-pointer shadow-2xs transition-colors"
+                    title="Print on Hardcopy Stationery (Data Only)"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span>Print</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
+                  <CreditCard className="w-4 h-4 text-emerald-700" />
+                  Payment Remittance Mode
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsCrPaymentMode(false)}
+                  className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs text-xs"
+                >
+                  <Eye className="w-3.5 h-3.5" /> Close Remittance Editor
                 </button>
               </div>
-            </div>
+            )}
 
             {/* In Payment Mode: Quick Notice */}
             {isCrPaymentMode && (
               <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-start gap-2.5 shadow-xs">
                 <CreditCard className="w-4 h-4 text-emerald-700 mt-0.5 shrink-0" />
                 <div>
-                  <span className="font-bold">Payment Remittance Settings:</span> For each item in the table below, choose whether payment is via <strong>Cash</strong> or <strong>Cheque</strong>. If Cheque is selected, enter the <strong>Cheque & Cheque No.</strong> and designate the payee (<strong>FFCSI</strong>, <strong>BIR</strong>, <strong>City Hall</strong>, etc.).
+                  <span className="font-bold">Payment Remittance Settings:</span> For each item below, set the amount and choose <strong>💵 Cash</strong> or <strong>📝 Cheque</strong> (select Bank, Cheque Number & Payee), then click <strong className="text-emerald-800">Paid</strong> to confirm the line item.
                 </div>
               </div>
             )}
@@ -3887,48 +4211,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 </div>
                 <div className="col-span-4 text-right flex items-center justify-end gap-1.5">
                   <span className="text-slate-800 shrink-0">No. :</span>
-                  {isCrPaymentMode ? (
-                    <div className="inline-flex items-center gap-1">
-                      <input
-                        type="text"
-                        required
-                        maxLength={10}
-                        placeholder="e.g. 1001"
-                        value={orNumber}
-                        onChange={e => {
-                          const val = e.target.value;
-                          setOrNumber(val);
-                          const clean = val.replace(/\D/g, '');
-                          if (clean && isCrNumberUsed(clean)) {
-                            setCrError(`❌ C.R. # ${clean} already used! Next: ${getNextCrNumber()}`);
-                          } else if (clean && clean.length !== 4) {
-                            setCrError('C.R. # must be 4 digits (e.g. 1001).');
-                          } else {
-                            setCrError('');
-                          }
-                        }}
-                        className={`w-24 px-2 py-0.5 font-mono font-black text-red-600 rounded border text-xs text-center focus:ring-1 focus:ring-red-500 ${
-                          crError ? 'border-rose-400 bg-rose-50' : 'border-slate-300 bg-white'
-                        }`}
-                      />
-                      <span className="text-[10px] bg-amber-50 text-amber-800 font-bold px-1.5 py-0.5 rounded border border-amber-200">
-                        4-Digits
-                      </span>
-                    </div>
-                  ) : (
-                    <span className="text-red-600 font-extrabold font-mono">
-                      {(selectedInvoice.collectionReceiptNumber || selectedInvoice.officialReceiptNumber || selectedInvoice.collectionNumber || selectedInvoice.invoiceNumber || '1001').replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim()}
-                    </span>
-                  )}
+                  <span className="text-red-600 font-extrabold font-mono text-sm tracking-wider">
+                    {(isCrPaymentMode ? (orNumber || '1001') : (selectedInvoice.collectionReceiptNumber || selectedInvoice.officialReceiptNumber || selectedInvoice.collectionNumber || selectedInvoice.invoiceNumber || '1001')).replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim()}
+                  </span>
                 </div>
-
-                {isCrPaymentMode && crError && (
-                  <div className="col-span-12 text-right">
-                    <p className="text-[11px] text-rose-600 font-bold flex items-center justify-end gap-1">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0" /> {crError}
-                    </p>
-                  </div>
-                )}
 
                 <div className="col-span-8 flex items-baseline gap-1.5">
                   <span className="shrink-0 text-slate-800">Address :</span>
@@ -3956,16 +4242,23 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               {/* Particulars & Amount Table Frame */}
               <div className="border-2 border-slate-900 text-xs mt-3">
                 {isCrPaymentMode ? (
-                  // Payment Remittance Mode Table Header
+                  // Payment Remittance Mode Table Header (PARTICULARS | AMOUNT | PAYMENT SETTINGS)
                   <div className="grid grid-cols-12 border-b-2 border-slate-900 font-extrabold bg-slate-100 py-2 px-2 text-center text-xs">
                     <div className="col-span-4 border-r-2 border-slate-900 text-slate-900">PARTICULARS</div>
-                    <div className="col-span-5 border-r-2 border-slate-900 text-slate-900 flex items-center justify-center gap-1">
+                    <div className="col-span-2 border-r-2 border-slate-900 text-slate-900">AMOUNT</div>
+                    <div className="col-span-6 text-slate-900 flex items-center justify-center gap-1">
                       <span>PAYMENT SETTINGS (CASH / CHEQUE & PAYEE)</span>
                     </div>
-                    <div className="col-span-3 text-slate-900">AMOUNT</div>
+                  </div>
+                ) : crViewFormat === 'payment' ? (
+                  // Payment Format Table Header (PARTICULARS | AMOUNT | Payment info) ⭐
+                  <div className="grid grid-cols-12 border-b-2 border-slate-900 font-extrabold bg-slate-100 py-2 px-2 text-xs">
+                    <div className="col-span-5 border-r-2 border-slate-900 text-left pl-3 text-slate-900">PARTICULARS</div>
+                    <div className="col-span-3 border-r-2 border-slate-900 text-right pr-4 text-slate-900">AMOUNT</div>
+                    <div className="col-span-4 text-left pl-4 text-slate-900">Payment info</div>
                   </div>
                 ) : (
-                  // View Mode Table Header
+                  // Default View Mode Table Header (PARTICULARS | AMOUNT)
                   <div className="grid grid-cols-12 border-b-2 border-slate-900 font-extrabold bg-slate-50 py-1.5 px-2 text-center text-xs">
                     <div className="col-span-8 border-r-2 border-slate-900">PARTICULARS</div>
                     <div className="col-span-4">AMOUNT</div>
@@ -3979,15 +4272,22 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     selectedInvoice.services.map((srv, idx) => {
                       const itemCfg = crItemPaymentConfigs[idx] || {
                         mode: srv.paymentMode === 'Cheque' ? 'Cheque' : 'Cash',
+                        amount: srv.amount,
+                        bank: 'BDO (Banco de Oro)',
+                        customBank: '',
                         chequeNo: srv.chequeNumber || '',
                         payee: srv.chequePayee || 'FFCSI',
-                        customPayee: ''
+                        customPayee: '',
+                        isPaid: false
                       };
+
+                      const finalBank = itemCfg.bank === 'Other Bank' ? (itemCfg.customBank || 'Bank') : itemCfg.bank.split(' ')[0];
+                      const finalPayee = itemCfg.payee === 'Other' ? (itemCfg.customPayee || 'Other') : itemCfg.payee;
 
                       if (isCrPaymentMode) {
                         return (
-                          <div key={idx} className="grid grid-cols-12 gap-3 text-xs items-start border-b border-slate-200 pb-3 last:border-b-0 last:pb-0">
-                            {/* Col 1: Particulars */}
+                          <div key={idx} className="grid grid-cols-12 gap-2 text-xs items-start border-b border-slate-200 pb-3 last:border-b-0 last:pb-0 pt-1">
+                            {/* Col 1: PARTICULARS */}
                             <div className="col-span-4 pl-2 space-y-0.5">
                               <div className="font-bold text-slate-900 text-[11px] leading-tight">
                                 {srv.description}
@@ -4002,108 +4302,246 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                               </div>
                             </div>
 
-                            {/* Col 2: Payment Settings (Cash vs Cheque, Cheque No, Payee) */}
-                            <div className="col-span-5 px-2 space-y-2 border-l border-r border-slate-200">
-                              {/* Toggle Cash vs Cheque */}
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateItemPayment(idx, { mode: 'Cash' })}
-                                  className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer ${
-                                    itemCfg.mode === 'Cash'
-                                      ? 'bg-emerald-600 text-white shadow-2xs'
-                                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
-                                  }`}
-                                >
-                                  <span>💵 Cash</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateItemPayment(idx, { mode: 'Cheque' })}
-                                  className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer ${
-                                    itemCfg.mode === 'Cheque'
-                                      ? 'bg-indigo-600 text-white shadow-2xs'
-                                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
-                                  }`}
-                                >
-                                  <span>📝 Cheque</span>
-                                </button>
-                              </div>
-
-                              {itemCfg.mode === 'Cash' ? (
-                                <div className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1 bg-emerald-50/70 p-1.5 rounded-md border border-emerald-200">
-                                  <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                  <span>Direct Cash Collection for FFCSI</span>
-                                </div>
-                              ) : (
-                                <div className="p-2 bg-amber-50/80 border border-amber-200 rounded-lg space-y-2">
-                                  {/* Cheque & Cheque No Textbox */}
-                                  <div>
-                                    <label className="block text-[10px] font-bold text-amber-900 mb-0.5">
-                                      Cheque & Cheque No. *
-                                    </label>
-                                    <input
-                                      type="text"
-                                      placeholder="e.g. BDO Cheque #123456"
-                                      value={itemCfg.chequeNo}
-                                      onChange={e => handleUpdateItemPayment(idx, { chequeNo: e.target.value })}
-                                      className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded font-semibold text-slate-900 text-xs focus:ring-1 focus:ring-amber-500"
-                                    />
-                                  </div>
-
-                                  {/* Payee Selection & Custom Textbox */}
-                                  <div>
-                                    <label className="block text-[10px] font-bold text-amber-900 mb-1">
-                                      Paid To Payee:
-                                    </label>
-                                    <div className="flex flex-wrap gap-1">
-                                      {['FFCSI', 'BIR', 'City Hall', 'SEC', 'SSS', 'Other'].map(p => (
-                                        <button
-                                          key={p}
-                                          type="button"
-                                          onClick={() => handleUpdateItemPayment(idx, { payee: p })}
-                                          className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
-                                            itemCfg.payee === p
-                                              ? 'bg-indigo-600 text-white shadow-2xs'
-                                              : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
-                                          }`}
-                                        >
-                                          {p}
-                                        </button>
-                                      ))}
-                                    </div>
-                                    {itemCfg.payee === 'Other' && (
-                                      <input
-                                        type="text"
-                                        placeholder="Type custom payee (e.g. Quezon City Hall, BIR RDO 50, etc.)"
-                                        value={itemCfg.customPayee}
-                                        onChange={e => handleUpdateItemPayment(idx, { customPayee: e.target.value })}
-                                        className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-900 mt-1 focus:ring-1 focus:ring-indigo-500"
-                                      />
-                                    )}
-                                  </div>
-                                </div>
-                              )}
+                            {/* Col 2: AMOUNT */}
+                            <div className="col-span-2 px-2 text-right font-mono font-bold text-slate-900 text-xs pt-1 border-r border-slate-200">
+                              ₱{srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </div>
 
-                            {/* Col 3: Amount */}
-                            <div className="col-span-3 text-right pr-2 font-mono font-bold text-slate-900 text-xs">
-                              ₱{srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            {/* Col 3: PAYMENT SETTINGS (CASH / CHEQUE & PAYEE) */}
+                            <div className="col-span-6 pl-2 space-y-2">
+                              {itemCfg.isPaid ? (
+                                // Paid State: Hide selectors, show confirmed summary badge + Edit button
+                                <div className={`p-2 rounded-xl border flex items-center justify-between gap-2 shadow-2xs ${
+                                  itemCfg.mode === 'Cash' 
+                                    ? 'bg-emerald-50 border-emerald-300 text-emerald-950' 
+                                    : 'bg-indigo-50 border-indigo-300 text-indigo-950'
+                                }`}>
+                                  <div className="space-y-0.5 text-xs">
+                                    <div className="font-bold flex items-center gap-1.5 flex-wrap">
+                                      {itemCfg.mode === 'Cash' ? (
+                                        <>
+                                          <span className="text-emerald-700 font-black">💵 Cash Payment</span>
+                                          <span className="text-emerald-800 font-mono font-bold">
+                                            ₱{(Number(itemCfg.amount) || srv.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <span className="text-indigo-700 font-black">📝 Cheque</span>
+                                          <span className="font-mono text-indigo-900 font-bold">
+                                            ({finalBank} {itemCfg.chequeNo ? `#${itemCfg.chequeNo}` : ''} to {finalPayee})
+                                          </span>
+                                          <span className="text-indigo-800 font-mono font-bold">
+                                            ₱{(Number(itemCfg.amount) || srv.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                                          </span>
+                                        </>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 flex items-center gap-1">
+                                      <Check className="w-3 h-3 text-emerald-600" />
+                                      <span className="font-semibold text-emerald-700">Marked as Paid</span>
+                                    </div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateItemPayment(idx, { isPaid: false })}
+                                    className="px-2.5 py-1 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 hover:text-slate-900 rounded-lg font-bold text-[11px] flex items-center gap-1 shadow-2xs cursor-pointer shrink-0"
+                                    title="Edit this item's payment details"
+                                  >
+                                    <Edit className="w-3.5 h-3.5 text-slate-600" /> Edit
+                                  </button>
+                                </div>
+                              ) : (
+                                // Unpaid State: Show Mode Toggle, Amount input, Bank & Cheque details, and Paid confirmation button
+                                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                                  {/* Mode Toggle & Amount Textbox */}
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateItemPayment(idx, { mode: 'Cash' })}
+                                        className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer ${
+                                          itemCfg.mode === 'Cash'
+                                            ? 'bg-emerald-600 text-white shadow-2xs'
+                                            : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-300'
+                                        }`}
+                                      >
+                                        <span>💵 Cash</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateItemPayment(idx, { mode: 'Cheque' })}
+                                        className={`px-3 py-1 rounded-lg font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer ${
+                                          itemCfg.mode === 'Cheque'
+                                            ? 'bg-indigo-600 text-white shadow-2xs'
+                                            : 'bg-white text-slate-700 hover:bg-slate-100 border border-slate-300'
+                                        }`}
+                                      >
+                                        <span>📝 Cheque</span>
+                                      </button>
+                                    </div>
+
+                                    {/* Amount Textbox (defaulting to srv.amount) */}
+                                    <div className="flex items-center gap-1">
+                                      <label className="text-[10px] font-bold text-slate-700 shrink-0">Amount ₱:</label>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        value={itemCfg.amount}
+                                        onChange={e => handleUpdateItemPayment(idx, { amount: parseFloat(e.target.value) || 0 })}
+                                        className="w-24 px-2 py-0.5 font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded text-xs text-right focus:ring-1 focus:ring-emerald-500"
+                                        placeholder="0.00"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {itemCfg.mode === 'Cash' ? (
+                                    <div className="flex items-center justify-between gap-2 bg-emerald-50/90 p-2 rounded-lg border border-emerald-200">
+                                      <div className="text-[11px] text-emerald-800 font-semibold flex items-center gap-1">
+                                        <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <span>Direct Cash Collection for FFCSI</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateItemPayment(idx, { isPaid: true })}
+                                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-1 shadow-2xs cursor-pointer shrink-0"
+                                      >
+                                        <Check className="w-3.5 h-3.5" /> Paid
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="p-2.5 bg-amber-50/90 border border-amber-200 rounded-lg space-y-2">
+                                      {/* Bank Dropdown & Cheque No Textbox */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        <div>
+                                          <label className="block text-[10px] font-bold text-amber-900 mb-0.5">
+                                            Bank Name:
+                                          </label>
+                                          <select
+                                            value={itemCfg.bank}
+                                            onChange={e => handleUpdateItemPayment(idx, { bank: e.target.value })}
+                                            className="w-full px-2 py-1 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-900 focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                          >
+                                            {PH_BANKS.map(b => (
+                                              <option key={b} value={b}>{b}</option>
+                                            ))}
+                                          </select>
+                                          {itemCfg.bank === 'Other Bank' && (
+                                            <input
+                                              type="text"
+                                              placeholder="Type custom bank name..."
+                                              value={itemCfg.customBank}
+                                              onChange={e => handleUpdateItemPayment(idx, { customBank: e.target.value })}
+                                              className="w-full px-2 py-1 mt-1 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-900 focus:ring-1 focus:ring-indigo-500"
+                                            />
+                                          )}
+                                        </div>
+
+                                        <div>
+                                          <label className="block text-[10px] font-bold text-amber-900 mb-0.5">
+                                            Cheque Number *
+                                          </label>
+                                          <input
+                                            type="text"
+                                            placeholder="e.g. 1312312"
+                                            value={itemCfg.chequeNo}
+                                            onChange={e => handleUpdateItemPayment(idx, { chequeNo: e.target.value })}
+                                            className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded font-mono font-bold text-slate-900 text-xs focus:ring-1 focus:ring-amber-500"
+                                          />
+                                        </div>
+                                      </div>
+
+                                      {/* Payee Selection & Custom Payee */}
+                                      <div>
+                                        <label className="block text-[10px] font-bold text-amber-900 mb-1">
+                                          Paid To Payee:
+                                        </label>
+                                        <div className="flex flex-wrap gap-1">
+                                          {['FFCSI', 'BIR', 'City Hall', 'SEC', 'SSS', 'Other'].map(p => (
+                                            <button
+                                              key={p}
+                                              type="button"
+                                              onClick={() => handleUpdateItemPayment(idx, { payee: p })}
+                                              className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                                                itemCfg.payee === p
+                                                  ? 'bg-indigo-600 text-white shadow-2xs'
+                                                  : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                                              }`}
+                                            >
+                                              {p}
+                                            </button>
+                                          ))}
+                                        </div>
+                                        {itemCfg.payee === 'Other' && (
+                                          <input
+                                            type="text"
+                                            placeholder="Type custom payee (e.g. Quezon City Hall, BIR RDO 50, etc.)"
+                                            value={itemCfg.customPayee}
+                                            onChange={e => handleUpdateItemPayment(idx, { customPayee: e.target.value })}
+                                            className="w-full px-2.5 py-1 bg-white border border-slate-300 rounded text-xs font-semibold text-slate-900 mt-1 focus:ring-1 focus:ring-indigo-500"
+                                          />
+                                        )}
+                                      </div>
+
+                                      {/* Mark as Paid button for Cheque */}
+                                      <div className="flex justify-end pt-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (!itemCfg.chequeNo.trim()) {
+                                              alert('Please enter the Cheque Number before marking as Paid.');
+                                              return;
+                                            }
+                                            handleUpdateItemPayment(idx, { isPaid: true });
+                                          }}
+                                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                                        >
+                                          <Check className="w-3.5 h-3.5" /> Paid
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
                         );
                       }
 
-                      // View Mode Row
+                      // Payment Format View Mode (3 columns: PARTICULARS | AMOUNT | Payment info) ⭐
+                      if (crViewFormat === 'payment') {
+                        const isCheque = srv.paymentMode === 'Cheque' || !!srv.chequeNumber;
+                        return (
+                          <div key={idx} className="grid grid-cols-12 text-xs font-bold pl-2 py-1.5 items-center border-b border-slate-100 last:border-b-0 hover:bg-slate-50/50">
+                            <div className="col-span-5 text-slate-900 pr-2 border-r border-slate-200 pl-1">
+                              <div className="leading-snug text-[11.5px] font-bold">
+                                {srv.description} {srv.monthYear ? `— ${srv.monthYear}` : ''}
+                              </div>
+                            </div>
+                            <div className="col-span-3 text-right font-mono font-bold text-slate-900 pr-4 border-r border-slate-200 text-xs">
+                              {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </div>
+                            <div className="col-span-4 pl-4 pr-1">
+                              {isCheque ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-950 font-bold px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs">
+                                  📝 Cheque #{srv.chequeNumber ? srv.chequeNumber.replace(/^#/, '') : (itemCfg.chequeNo || 'N/A')} • Paid to {srv.chequePayee || itemCfg.payee || 'FFCSI'}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-950 font-bold px-2 py-0.5 rounded-md border border-emerald-300 shadow-2xs">
+                                  💵 Cash • Paid to {srv.chequePayee || itemCfg.payee || 'FFCSI'}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      // Default View Mode Row (2 columns: PARTICULARS | AMOUNT - Untouched)
                       return (
                         <div key={idx} className="grid grid-cols-12 text-xs font-bold pl-3 items-center">
                           <div className="col-span-8 text-slate-900">
                             <span>{srv.description} {srv.monthYear ? `— ${srv.monthYear}` : ''}</span>
-                            {(srv.paymentMode === 'Cheque' || srv.chequeNumber) && (
-                              <span className="ml-2 inline-flex items-center gap-1 text-[10px] bg-amber-100 text-amber-900 font-semibold px-1.5 py-0.5 rounded border border-amber-200">
-                                📝 Cheque {srv.chequeNumber ? `#${srv.chequeNumber}` : ''} • Paid to {srv.chequePayee || 'FFCSI'}
-                              </span>
-                            )}
                           </div>
                           <div className="col-span-4 text-right font-mono text-slate-900">
                             {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -4129,12 +4567,37 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
                 {/* Table Total Row */}
                 <div className="grid grid-cols-12 border-t-2 border-slate-900 font-bold p-2.5 bg-slate-50 items-center">
-                  <div className={`${isCrPaymentMode ? 'col-span-9' : 'col-span-8'} text-right pr-6 text-sm font-extrabold text-slate-900`}>
-                    TOTAL   ₱
-                  </div>
-                  <div className={`${isCrPaymentMode ? 'col-span-3' : 'col-span-4'} text-right text-sm font-extrabold text-slate-900 font-mono`}>
-                    PHP {(selectedInvoice.paidAmount || selectedInvoice.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </div>
+                  {isCrPaymentMode ? (
+                    <>
+                      <div className="col-span-6 text-right pr-6 text-sm font-extrabold text-slate-900">
+                        TOTAL   ₱
+                      </div>
+                      <div className="col-span-6 text-right text-sm font-extrabold text-slate-900 font-mono">
+                        PHP {paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+                    </>
+                  ) : crViewFormat === 'payment' ? (
+                    <>
+                      <div className="col-span-5 text-right pr-4 text-sm font-extrabold text-slate-900">
+                        TOTAL   ₱
+                      </div>
+                      <div className="col-span-3 text-right pr-4 text-sm font-extrabold text-slate-900 font-mono">
+                        PHP {(selectedInvoice.paidAmount || selectedInvoice.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="col-span-4 pl-4 text-[11px] font-semibold text-slate-600">
+                        Format: <span className="text-emerald-700 font-bold">Payment Itemized Info</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="col-span-8 text-right pr-6 text-sm font-extrabold text-slate-900">
+                        TOTAL   ₱
+                      </div>
+                      <div className="col-span-4 text-right text-sm font-extrabold text-slate-900 font-mono">
+                        PHP {(selectedInvoice.paidAmount || selectedInvoice.totalAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -4173,40 +4636,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
             </div>
 
-            {/* In Payment Mode: Remittance Processing Form Controls */}
+            {/* In Payment Mode: Optional Notes Controls */}
             {isCrPaymentMode && (
-              <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-slate-700 font-bold text-xs">
-                        Payment Remittance Amount (₱) *
-                      </label>
-                      <span className="text-[10px] text-amber-800 font-semibold font-mono">
-                        Bal: ₱{(selectedInvoice.totalAmount - (selectedInvoice.paidAmount || 0)).toLocaleString()}
-                      </span>
-                    </div>
-                    <CurrencyInput
-                      required
-                      placeholder="0.00"
-                      value={paymentAmount}
-                      onChange={val => setPaymentAmount(val)}
-                      className="w-full bg-white border border-slate-300 rounded-lg text-slate-900 font-mono font-bold text-xs px-3 py-1.5 focus:ring-2 focus:ring-emerald-200"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-700 font-bold text-xs mb-1">
-                      Payment / Reference Notes
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Optional reference details (deposited branch, etc.)"
-                      value={paymentNotes}
-                      onChange={e => setPaymentNotes(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs focus:ring-2 focus:ring-emerald-200"
-                    />
-                  </div>
-                </div>
+              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl">
+                <label className="block text-slate-700 font-bold text-xs mb-1">
+                  Payment / Reference Notes (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Optional reference details (deposited branch, client representative, etc.)"
+                  value={paymentNotes}
+                  onChange={e => setPaymentNotes(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs focus:ring-2 focus:ring-emerald-200"
+                />
               </div>
             )}
 
@@ -4219,7 +4661,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     onClick={() => setIsCrPaymentMode(false)}
                     className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
                   >
-                    Cancel / Preview
+                    Cancel / View Receipt
                   </button>
                   <button
                     type="button"

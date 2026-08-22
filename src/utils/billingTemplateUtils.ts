@@ -692,3 +692,291 @@ export function generateFFCSICollectionReceiptPDF(
   const cleanClient = inv.clientName.replace(/[^a-zA-Z0-9]/g, '_');
   doc.save(`FFCSI_Collection_Receipt_${cleanCrNo}_${cleanClient}.pdf`);
 }
+
+// 7. Payment Tab Collection Receipt PDF Generator (Dedicated 3-column PARTICULARS | AMOUNT | Payment info layout)
+export function generatePaymentCollectionReceiptPDF(
+  inv: InvoiceItem,
+  customOptions?: {
+    preparedBy?: string;
+    checkNo?: string;
+    clientAddress?: string;
+  }
+) {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth(); // 210mm
+  const margin = 14;
+  const rightX = pageWidth - margin; // 196mm
+  const contentWidth = pageWidth - (margin * 2); // 182mm
+
+  const crNo = inv.collectionReceiptNumber || inv.collectionNumber || inv.officialReceiptNumber || inv.invoiceNumber || '1001';
+  const cleanCrNo = crNo.replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim() || crNo.replace(/\D/g, '') || crNo;
+  const displayDate = inv.paymentDate || inv.issueDate || '05/08/2026';
+  const preparedBy = customOptions?.preparedBy || 'Maricris';
+  const clientAddress = customOptions?.clientAddress || (inv as any).clientAddress || 'Gen. Aguinaldo Hi-Way Panapaan V, Bacoor City';
+
+  let y = 16;
+
+  // Header: FFCSI Logo Badge + Company Name
+  const badgeWidth = 18;
+  const badgeHeight = 6.5;
+  const companyName = 'Family Friends Consultancy Services Inc.';
+  
+  doc.setFont('times', 'italic');
+  doc.setFontSize(16);
+  const textWidth = doc.getTextWidth(companyName);
+  const gap = 3;
+  const totalHeaderWidth = badgeWidth + gap + textWidth;
+  const startX = (pageWidth - totalHeaderWidth) / 2;
+
+  // Draw FFCSI red badge
+  doc.setFillColor(185, 28, 28); // Red-700
+  doc.roundedRect(startX, y - 4.8, badgeWidth, badgeHeight, 1.5, 1.5, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.setTextColor(255, 255, 255);
+  doc.text('FFCSI', startX + (badgeWidth / 2), y - 0.2, { align: 'center' });
+
+  // Draw Company Name
+  doc.setFont('times', 'italic');
+  doc.setFontSize(16);
+  doc.setTextColor(185, 28, 28); // Red-700
+  doc.text(companyName, startX + badgeWidth + gap, y);
+
+  // Address & Contacts below header
+  y += 7;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(8.5);
+  doc.setTextColor(30, 41, 59);
+  doc.text('# 50-M Aguilar Street, Brgy. Bungad, Quezon City', pageWidth / 2, y, { align: 'center' });
+  y += 4;
+  doc.text('Tel. No.: (632) 8713-1412', pageWidth / 2, y, { align: 'center' });
+  y += 4;
+  doc.text('Email Add: ffcsi2019.acctg@gmail.com; ffcsi2018@gmail.com', pageWidth / 2, y, { align: 'center' });
+
+  // Document Name: COLLECTION RECEIPT
+  y += 8;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(13);
+  doc.setTextColor(15, 23, 42);
+  doc.text('COLLECTION RECEIPT', pageWidth / 2, y, { align: 'center' });
+
+  // Client Info Fields
+  y += 10;
+  
+  // Row 1: CLIENT : [Name]                    No. : [Red Number]
+  doc.setFontSize(9.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text('CLIENT :', margin, y);
+  
+  doc.setFont('helvetica', 'bold');
+  doc.text(inv.clientName, margin + 22, y);
+  doc.setDrawColor(71, 85, 105);
+  doc.setLineWidth(0.4);
+  doc.line(margin + 20, y + 1, margin + 115, y + 1);
+
+  // Right Side: No. : 35428
+  doc.setFont('helvetica', 'bold');
+  doc.text('No.', rightX - 42, y);
+  doc.setTextColor(220, 38, 38); // Red
+  doc.text(`: ${cleanCrNo}`, rightX - 32, y);
+
+  // Row 2: Address : [Address Line 1]          Date : [05/08/2026]
+  y += 7;
+  doc.setTextColor(15, 23, 42);
+  doc.text('Address :', margin, y);
+  
+  const addrParts = clientAddress.split(',');
+  const addrLine1 = addrParts[0] || clientAddress;
+  const addrLine2 = addrParts.slice(1).join(',').trim();
+
+  doc.setFont('helvetica', 'bold');
+  doc.text(addrLine1, margin + 22, y);
+  doc.line(margin + 20, y + 1, margin + 115, y + 1);
+
+  // Date on right side
+  doc.setFont('helvetica', 'bold');
+  doc.text('Date', rightX - 42, y);
+  doc.text(`: ${displayDate}`, rightX - 32, y);
+
+  // Row 3 (if Address has line 2)
+  if (addrLine2) {
+    y += 6;
+    doc.text(addrLine2, margin + 22, y);
+    doc.line(margin + 20, y + 1, margin + 115, y + 1);
+  }
+
+  // 3-COLUMN TABLE FRAME: PARTICULARS | AMOUNT | Payment info
+  y += 8;
+  const tableStartY = y;
+  const col1DividerX = margin + 88; // 102mm (PARTICULARS)
+  const col2DividerX = margin + 124; // 138mm (AMOUNT)
+
+  // Table Header Box
+  doc.setDrawColor(15, 23, 42);
+  doc.setLineWidth(0.6);
+  doc.line(margin, y, rightX, y); // Top border
+
+  y += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(15, 23, 42);
+  doc.text('PARTICULARS', margin + 30, y);
+  doc.text('AMOUNT', col1DividerX + 18, y, { align: 'center' });
+  doc.text('Payment info', col2DividerX + 5, y);
+
+  y += 3;
+  doc.line(margin, y, rightX, y); // Header Bottom border
+
+  // Subtitle inside Particulars
+  y += 6;
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Payment for the following:', margin + 2, y);
+
+  // Line items
+  y += 6;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+
+  let calculatedTotal = 0;
+  if (inv.services && inv.services.length > 0) {
+    inv.services.forEach((s) => {
+      const lineLabel = s.monthYear ? `${s.description} — ${s.monthYear}` : s.description;
+      // Col 1: PARTICULARS (truncated if needed to avoid overflow)
+      const labelText = doc.splitTextToSize(lineLabel, 84);
+      doc.text(labelText[0] || lineLabel, margin + 4, y);
+      
+      // Col 2: AMOUNT
+      doc.text(s.amount.toLocaleString(undefined, { minimumFractionDigits: 2 }), col2DividerX - 4, y, { align: 'right' });
+      
+      // Col 3: Payment info
+      let payInfoText = '';
+      if (s.paymentMode === 'Cheque' || s.chequeNumber) {
+        payInfoText = `Cheque #${s.chequeNumber || 'N/A'} • Paid to ${s.chequePayee || 'FFCSI'}`;
+      } else {
+        payInfoText = `Cash • Paid to ${s.chequePayee || 'FFCSI'}`;
+      }
+      const payInfoTrunc = doc.splitTextToSize(payInfoText, 52);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.text(payInfoTrunc[0] || payInfoText, col2DividerX + 3, y);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+
+      calculatedTotal += s.amount;
+      y += 6.5;
+    });
+
+    if (inv.billingNotes && inv.billingNotes.trim()) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8);
+      doc.setTextColor(30, 41, 59);
+      doc.text(inv.billingNotes.trim(), margin + 4, y);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(8.5);
+      y += 6;
+    }
+  } else {
+    doc.text(`Professional Accounting Retainer Fee`, margin + 4, y);
+    doc.text((inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 }), col2DividerX - 4, y, { align: 'right' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text(`Cash • Paid to FFCSI`, col2DividerX + 3, y);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8.5);
+    calculatedTotal = inv.totalAmount;
+    y += 7;
+  }
+
+  // Ensure table body height
+  const minTableBottomY = tableStartY + 75;
+  if (y < minTableBottomY) {
+    y = minTableBottomY;
+  }
+
+  // Vertical Divider lines for 3-columns
+  doc.setLineWidth(0.5);
+  doc.line(col1DividerX, tableStartY, col1DividerX, y + 8);
+  doc.line(col2DividerX, tableStartY, col2DividerX, y + 8);
+  // Left border
+  doc.line(margin, tableStartY, margin, y + 8);
+  // Right border
+  doc.line(rightX, tableStartY, rightX, y + 8);
+
+  // Table Bottom Line
+  doc.line(margin, y + 8, rightX, y + 8);
+
+  // TOTAL Row
+  y += 5;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.text('TOTAL   ₱', col1DividerX - 6, y, { align: 'right' });
+
+  const finalTotal = calculatedTotal || inv.totalAmount || 0;
+  doc.text(`PHP ${finalTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, col2DividerX - 4, y, { align: 'right' });
+
+  // Footer Signatures Section (3 Columns)
+  y += 10;
+  const footerStartY = y;
+  doc.line(margin, y, rightX, y); // Top footer border
+
+  y += 6;
+  doc.setFontSize(8.5);
+  
+  // Left Column: CHECK, DATE, PREPARED BY
+  const detectedCheck = customOptions?.checkNo || (
+    inv.services?.filter(s => s.paymentMode === 'Cheque' || s.chequeNumber).map(s => `${s.chequeNumber || 'Cheque'}${s.chequePayee ? ` (${s.chequePayee})` : ''}`).join(', ')
+  ) || (inv.paymentMethod && inv.paymentMethod.includes('Cheque') ? inv.paymentMethod : '') || '';
+
+  doc.setFont('helvetica', 'bold');
+  doc.text('CHECK   :', margin + 2, y);
+  if (detectedCheck) {
+    doc.setFontSize(7.5);
+    doc.text(detectedCheck.substring(0, 24), margin + 20, y);
+    doc.setFontSize(8.5);
+  }
+  doc.line(margin + 20, y + 0.5, margin + 55, y + 0.5);
+
+  y += 5;
+  doc.text('DATE      :', margin + 2, y);
+  doc.setFontSize(7.5);
+  doc.text(displayDate, margin + 20, y);
+  doc.setFontSize(8.5);
+  doc.line(margin + 20, y + 0.5, margin + 55, y + 0.5);
+
+  y += 5;
+  doc.text('PREPARED BY :', margin + 2, y);
+  doc.text(preparedBy, margin + 28, y);
+  doc.line(margin + 26, y + 0.5, margin + 55, y + 0.5);
+
+  // Middle Column: BILLING RECEIVED BY
+  let midX = margin + 65;
+  doc.text('BILLING RECEIVED BY', midX, footerStartY + 6);
+  doc.line(midX, footerStartY + 16, midX + 50, footerStartY + 16);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.text('Signature over Printed Name', midX + 6, footerStartY + 20);
+
+  // Right Column: PAYMENT RECEIVED BY:
+  let rightColX = margin + 125;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+  doc.text('PAYMENT RECEIVED BY:', rightColX, footerStartY + 6);
+  doc.line(rightColX, footerStartY + 16, rightColX + 50, footerStartY + 16);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.text('Signature over Printed Name', rightColX + 6, footerStartY + 20);
+
+  // Bottom outer box
+  doc.setLineWidth(0.5);
+  doc.rect(margin, footerStartY, contentWidth, 24);
+
+  const cleanClient = inv.clientName.replace(/[^a-zA-Z0-9]/g, '_');
+  doc.save(`FFCSI_Payment_Collection_Receipt_${cleanCrNo}_${cleanClient}.pdf`);
+}

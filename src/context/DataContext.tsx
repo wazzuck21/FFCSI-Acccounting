@@ -146,6 +146,7 @@ interface DataContextType {
   addInvoice: (invoice: Omit<InvoiceItem, 'id' | 'invoiceNumber'>) => InvoiceItem;
   updateInvoice: (invoiceId: string, updates: Partial<InvoiceItem>, modificationDetails?: string, modifiedBy?: string) => void;
   recordInvoicePayment: (invoiceId: string, paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; referenceNumber?: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services'] }, userId?: string, userName?: string) => { success: boolean; message: string };
+  editInvoicePayment: (invoiceId: string, paymentDetails: { amount: number; paymentDate: string; paymentMethod: string; referenceNumber?: string; officialReceiptNumber?: string; collectionReceiptNumber?: string; notes?: string; updatedServices?: InvoiceItem['services']; amendedHistory?: InvoiceItem['amendedHistory'] }, userId?: string, userName?: string) => { success: boolean; message: string };
   cancelInvoicePayment: (paymentId: string, reason: string, userId?: string, userName?: string) => { success: boolean; message: string };
   getInvoicePayments: (invoiceId: string) => Payment[];
   getInvoiceBalance: (invoiceId: string) => number;
@@ -1769,6 +1770,126 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { success: true, message: `Payment of ₱${paymentDetails.amount.toLocaleString()} successfully recorded for Invoice ${targetInv.invoiceNumber}!` };
   };
 
+  const editInvoicePayment = (
+    invoiceId: string,
+    paymentDetails: {
+      amount: number;
+      paymentDate: string;
+      paymentMethod: string;
+      referenceNumber?: string;
+      officialReceiptNumber?: string;
+      collectionReceiptNumber?: string;
+      notes?: string;
+      updatedServices?: InvoiceItem['services'];
+      amendedHistory?: InvoiceItem['amendedHistory'];
+    },
+    userId: string = 'system',
+    userName: string = 'Super Admin'
+  ) => {
+    const targetInv = invoices.find(i => i.id === invoiceId);
+    if (!targetInv) {
+      return { success: false, message: 'Invoice not found.' };
+    }
+
+    const now = new Date().toISOString();
+    const crToSave = paymentDetails.collectionReceiptNumber || paymentDetails.officialReceiptNumber || targetInv.collectionReceiptNumber || targetInv.officialReceiptNumber;
+
+    // Check if an existing active payment is associated with this invoice in payments ledger
+    const existingPayment = payments.find(p => p.invoiceId === invoiceId && p.status === 'Active');
+
+    let updatedPayments: Payment[];
+    let activePaymentRecord: Payment;
+
+    if (existingPayment) {
+      activePaymentRecord = {
+        ...existingPayment,
+        amount: Number(paymentDetails.amount) || 0,
+        paymentDate: paymentDetails.paymentDate,
+        paymentMethod: paymentDetails.paymentMethod,
+        referenceNumber: paymentDetails.referenceNumber || existingPayment.referenceNumber,
+        officialReceiptNumber: paymentDetails.officialReceiptNumber || existingPayment.officialReceiptNumber,
+        collectionReceiptNumber: crToSave || existingPayment.collectionReceiptNumber,
+        notes: paymentDetails.notes !== undefined ? paymentDetails.notes : existingPayment.notes,
+        updatedAt: now,
+        receivedById: userId,
+        receivedByName: userName
+      };
+      updatedPayments = payments.map(p => p.id === existingPayment.id ? activePaymentRecord : p);
+    } else {
+      activePaymentRecord = {
+        id: `pmt_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+        invoiceId,
+        clientId: targetInv.clientId,
+        amount: Number(paymentDetails.amount) || 0,
+        paymentDate: paymentDetails.paymentDate,
+        paymentMethod: paymentDetails.paymentMethod,
+        referenceNumber: paymentDetails.referenceNumber,
+        officialReceiptNumber: paymentDetails.officialReceiptNumber,
+        collectionReceiptNumber: crToSave,
+        notes: paymentDetails.notes,
+        receivedById: userId,
+        receivedByName: userName,
+        status: 'Active',
+        createdAt: now,
+        updatedAt: now
+      };
+      updatedPayments = [activePaymentRecord, ...payments];
+    }
+
+    setPayments(updatedPayments);
+    persistState('afms_payments', updatedPayments);
+
+    // Calculate total active paid amount
+    const activePaymentsForInv = updatedPayments.filter(p => p.invoiceId === invoiceId && p.status === 'Active');
+    const newPaidAmount = activePaymentsForInv.reduce((sum, p) => sum + p.amount, 0);
+
+    let newStatus: InvoiceItem['status'] = targetInv.status;
+    if (newPaidAmount >= targetInv.totalAmount) {
+      newStatus = 'Paid';
+    } else if (newPaidAmount > 0) {
+      newStatus = 'Partially Paid';
+    }
+
+    if (crToSave) {
+      const cleanDigits = crToSave.replace(/\D/g, '');
+      const newCrList = Array.from(new Set([...usedCrNumbers, cleanDigits, crToSave].filter(Boolean)));
+      setUsedCrNumbers(newCrList);
+      persistState('afms_used_cr_numbers', newCrList);
+    }
+
+    const updatedInvoices = invoices.map(inv => {
+      if (inv.id === invoiceId) {
+        return {
+          ...inv,
+          paidAmount: newPaidAmount,
+          status: newStatus,
+          paymentDate: paymentDetails.paymentDate,
+          paymentMethod: paymentDetails.paymentMethod,
+          officialReceiptNumber: paymentDetails.officialReceiptNumber || inv.officialReceiptNumber,
+          collectionReceiptNumber: crToSave || inv.collectionReceiptNumber,
+          billingNotes: paymentDetails.notes !== undefined ? paymentDetails.notes : inv.billingNotes,
+          services: paymentDetails.updatedServices || inv.services,
+          amendedHistory: paymentDetails.amendedHistory || inv.amendedHistory,
+          payments: [activePaymentRecord]
+        };
+      }
+      return inv;
+    });
+
+    setInvoices(updatedInvoices);
+    persistState('afms_invoices', updatedInvoices);
+
+    // Record audit log
+    addAuditLog(
+      'Invoice Payment Amended',
+      `Amended payment record of ₱${paymentDetails.amount.toLocaleString()} (C.R. #${crToSave || 'N/A'}) for Invoice ${targetInv.invoiceNumber} (${targetInv.clientName}). Status: ${newStatus}.`,
+      userId,
+      userName
+    );
+
+    return { success: true, message: `Payment record updated successfully in Invoice Payment Ledger & History Audit!` };
+  };
+
   const cancelInvoicePayment = (
     paymentId: string,
     reason: string,
@@ -3280,6 +3401,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addInvoice,
         updateInvoice,
         recordInvoicePayment,
+        editInvoicePayment,
         getNextInvoiceNumber,
         getNextCrNumber,
         isCrNumberUsed,
