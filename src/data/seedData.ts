@@ -485,7 +485,7 @@ export const INITIAL_TASKS: TaskItem[] = [
 export const INITIAL_INVOICES: InvoiceItem[] = [
   {
     id: 'inv_001',
-    invoiceNumber: 'INV-2026-0801',
+    invoiceNumber: '1001',
     collectionNumber: '1001',
     clientId: 'client_001',
     clientName: 'San Miguel Logistics & Trading Corp.',
@@ -506,7 +506,7 @@ export const INITIAL_INVOICES: InvoiceItem[] = [
   },
   {
     id: 'inv_002',
-    invoiceNumber: 'INV-2026-0802',
+    invoiceNumber: '1002',
     collectionNumber: '1002',
     clientId: 'client_002',
     clientName: 'Manila Bistro & Hospitality Group Inc.',
@@ -516,7 +516,7 @@ export const INITIAL_INVOICES: InvoiceItem[] = [
     vatAmount: 3840,
     totalAmount: 35840,
     paidAmount: 0,
-    status: 'Sent',
+    status: 'For Collection',
     services: [
       { description: 'Monthly Bookkeeping & Retainer (August 2026)', amount: 32000 }
     ]
@@ -708,8 +708,8 @@ export const INITIAL_DOCUMENTS: DocumentItem[] = [
     id: 'doc_008',
     clientId: 'client_001',
     clientName: 'San Miguel Logistics & Trading Corp.',
-    title: 'Billing Invoice #INV-2026-001 (August Retainer)',
-    fileName: 'Invoice_INV_2026_001.pdf',
+    title: 'Statement of Account #1001 (August Retainer)',
+    fileName: 'SOA_1001.pdf',
     fileType: 'PDF',
     fileSize: '420 KB',
     category: 'Billing & Collections',

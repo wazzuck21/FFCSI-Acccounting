@@ -47,11 +47,33 @@ import {
   Briefcase,
   Receipt,
   ShieldAlert,
-  Menu
+  Menu,
+  ArrowLeft
 } from 'lucide-react';
+
+export const TAB_LABELS: Record<NavTab, string> = {
+  'dashboard': 'Operations Dashboard',
+  'executive-bi': 'Executive BI Analytics',
+  'my-clients': 'My Clients (To-Do List)',
+  'clients': 'Client Management',
+  'workspaces': 'Client Workspace',
+  'dynamic-builder': 'Dynamic Info Builder',
+  'payables': 'BIR & Benefits Payables',
+  'compliance': 'Deadline Monitoring',
+  'tasks': 'Task & Workflow',
+  'documents': 'Document Library',
+  'billing': 'Billing & Invoices',
+  'payroll': 'Company Payroll & HR',
+  'company-expenses': 'Company Expenses & Bills',
+  'credentials': 'Core Credentials Vault',
+  'users': 'User Management',
+  'settings': 'System & Master Tables',
+  'system-integrity': 'Data Integrity & Sync'
+};
 
 const MainAppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
+  const [navHistory, setNavHistory] = useState<NavTab[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -59,12 +81,28 @@ const MainAppContent: React.FC = () => {
   const { payables, complianceItems, tasks, invoices, addAuditLog } = useData();
   const { currentUser, isSuperAdmin } = useAuth();
 
+  const handleTabChange = (nextTab: NavTab) => {
+    if (nextTab !== activeTab) {
+      setNavHistory(prev => [...prev, activeTab]);
+      setActiveTab(nextTab);
+    }
+  };
+
+  const handleReturnPrevious = () => {
+    if (navHistory.length > 0) {
+      const prevTab = navHistory[navHistory.length - 1];
+      setNavHistory(prev => prev.slice(0, -1));
+      setActiveTab(prevTab);
+    }
+  };
+
   if (!currentUser) {
     return <LoginView />;
   }
 
   const unpaidPayablesCount = payables.filter(p => p.status === 'Unpaid').length;
   const pendingComplianceCount = complianceItems.filter(c => c.status === 'Pending' || c.status === 'Due Today').length;
+  const previousTab = navHistory.length > 0 ? navHistory[navHistory.length - 1] : null;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-slate-800 font-sans flex flex-col antialiased">
@@ -78,9 +116,7 @@ const MainAppContent: React.FC = () => {
         {/* Left Sidebar (Desktop & Mobile Drawer) */}
         <Sidebar 
           activeTab={activeTab} 
-          onTabChange={(tab) => {
-            setActiveTab(tab);
-          }}
+          onTabChange={handleTabChange}
           unpaidPayablesCount={unpaidPayablesCount}
           pendingComplianceCount={pendingComplianceCount}
           mobileOpen={mobileNavOpen}
@@ -89,19 +125,43 @@ const MainAppContent: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-24 md:pb-8">
+          {/* Quick Return to Previous Core Navigation Banner */}
+          {previousTab && (
+            <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={handleReturnPrevious}
+                className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 hover:text-slate-900 transition-colors group cursor-pointer"
+                title={`Return to ${TAB_LABELS[previousTab]}`}
+              >
+                <span className="p-1.5 rounded-lg bg-slate-100 group-hover:bg-slate-200 text-slate-600 group-hover:text-slate-900 transition-colors">
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                </span>
+                <span>
+                  Return to <strong className="text-slate-900 underline decoration-slate-300 underline-offset-2">{TAB_LABELS[previousTab]}</strong>
+                </span>
+              </button>
+
+              <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
+                <span>Current View:</span>
+                <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">{TAB_LABELS[activeTab]}</span>
+              </div>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && (
-            <DashboardView onNavigate={setActiveTab} />
+            <DashboardView onNavigate={handleTabChange} />
           )}
 
           {activeTab === 'executive-bi' && (
-            <ExecutiveBiView onNavigate={setActiveTab} />
+            <ExecutiveBiView onNavigate={handleTabChange} />
           )}
 
           {activeTab === 'my-clients' && (
             <MyClientsView 
               onSelectClientWorkspace={(clientId) => {
                 setSelectedClientId(clientId);
-                setActiveTab('workspaces');
+                handleTabChange('workspaces');
               }} 
             />
           )}
@@ -110,7 +170,7 @@ const MainAppContent: React.FC = () => {
             <ClientManagementView 
               onSelectClientWorkspace={(clientId) => {
                 setSelectedClientId(clientId);
-                setActiveTab('workspaces');
+                handleTabChange('workspaces');
               }} 
             />
           )}
@@ -131,7 +191,11 @@ const MainAppContent: React.FC = () => {
           )}
 
           {activeTab === 'compliance' && (
-            <ComplianceMonitoringView />
+            <ComplianceMonitoringView 
+              onNavigate={handleTabChange}
+              onReturnPrevious={previousTab ? handleReturnPrevious : undefined}
+              previousTabName={previousTab ? TAB_LABELS[previousTab] : undefined}
+            />
           )}
 
           {activeTab === 'users' && (
@@ -143,7 +207,7 @@ const MainAppContent: React.FC = () => {
             <TaskWorkflowView 
               onNavigateToClient={(clientId) => {
                 setSelectedClientId(clientId);
-                setActiveTab('workspaces');
+                handleTabChange('workspaces');
               }} 
             />
           )}
@@ -153,8 +217,11 @@ const MainAppContent: React.FC = () => {
             <DocumentLibraryView 
               onNavigateToClient={(clientId) => {
                 setSelectedClientId(clientId);
-                setActiveTab('workspaces');
-              }} 
+                handleTabChange('workspaces');
+              }}
+              onNavigate={handleTabChange}
+              onReturnPrevious={previousTab ? handleReturnPrevious : undefined}
+              previousTabName={previousTab ? TAB_LABELS[previousTab] : undefined}
             />
           )}
 
@@ -163,7 +230,7 @@ const MainAppContent: React.FC = () => {
             <BillingManagementView 
               onNavigateToClient={(clientId) => {
                 setSelectedClientId(clientId);
-                setActiveTab('workspaces');
+                handleTabChange('workspaces');
               }} 
             />
           )}

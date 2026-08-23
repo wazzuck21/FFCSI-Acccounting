@@ -191,7 +191,7 @@ export function generateCustomizedInvoicePDF(inv: InvoiceItem, config: BillingTe
         doc.text('STATEMENT OF ACCOUNT', rightX, posY, { align: 'right' });
         doc.setFontSize(10);
         doc.setTextColor(15, 23, 42);
-        doc.text(inv.invoiceNumber, rightX, posY + 6, { align: 'right' });
+        doc.text(`Collection #: ${inv.collectionNumber || '1001'}`, rightX, posY + 6, { align: 'right' });
 
         // Divider line
         doc.setDrawColor(accentR, accentG, accentB);
@@ -431,7 +431,7 @@ export function generateCustomizedInvoicePDF(inv: InvoiceItem, config: BillingTe
   });
 
   const cleanClient = inv.clientName.replace(/[^a-zA-Z0-9]/g, '_');
-  doc.save(`${inv.invoiceNumber}_${cleanClient}_SOA.pdf`);
+  doc.save(`SOA_Collection_${inv.collectionNumber || '1001'}_${cleanClient}.pdf`);
 }
 
 // Dedicated 1:1 PDF Generator for FFCSI Collection Receipt (Exact Image Replica)
@@ -857,7 +857,10 @@ export function generatePaymentCollectionReceiptPDF(
       
       // Col 3: Payment info
       let payInfoText = '';
-      if (s.paymentMode === 'Cheque' || s.chequeNumber) {
+      const isLinePaid = s.isPaid || !!s.paymentMode || !!s.chequeNumber || inv.status === 'Paid' || (inv.paidAmount !== undefined && inv.paidAmount > 0);
+      if (!isLinePaid) {
+        payInfoText = 'Unpaid / Pending';
+      } else if (s.paymentMode === 'Cheque' || s.chequeNumber) {
         payInfoText = `Cheque #${s.chequeNumber || 'N/A'} • Paid to ${s.chequePayee || 'FFCSI'}`;
       } else {
         payInfoText = `Cash • Paid to ${s.chequePayee || 'FFCSI'}`;
@@ -883,11 +886,12 @@ export function generatePaymentCollectionReceiptPDF(
       y += 6;
     }
   } else {
+    const isInvPaid = inv.status === 'Paid' || (inv.paidAmount !== undefined && inv.paidAmount > 0);
     doc.text(`Professional Accounting Retainer Fee`, margin + 4, y);
     doc.text((inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 }), col2DividerX - 4, y, { align: 'right' });
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
-    doc.text(`Cash • Paid to FFCSI`, col2DividerX + 3, y);
+    doc.text(isInvPaid ? `Cash • Paid to FFCSI` : `Unpaid / Pending`, col2DividerX + 3, y);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
     calculatedTotal = inv.totalAmount;

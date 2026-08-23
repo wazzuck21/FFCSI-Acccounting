@@ -504,6 +504,7 @@ export interface InvoiceServiceLine {
   paymentMode?: 'Cash' | 'Cheque';
   chequeNumber?: string;
   chequePayee?: string;
+  isPaid?: boolean;
   itemType?: 'Service' | 'One-Time' | 'Adjustment' | 'Other';
   isNote?: boolean;
 }
@@ -538,7 +539,7 @@ export interface InvoiceItem {
   vatAmount: number;
   totalAmount: number;
   paidAmount: number;
-  status: 'Draft' | 'Sent' | 'Partially Paid' | 'Paid' | 'Overdue' | 'Cancelled';
+  status: 'Draft' | 'For Collection' | 'Sent' | 'Partially Paid' | 'Paid' | 'Overdue' | 'Cancelled';
   services: InvoiceServiceLine[];
   payments?: Payment[]; // Payment transaction ledger ⭐
   officialReceiptNumber?: string;

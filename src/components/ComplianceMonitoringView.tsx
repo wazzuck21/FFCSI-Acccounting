@@ -36,10 +36,21 @@ import {
   Sparkles,
   MapPin,
   MessageSquare,
-  FileText
+  FileText,
+  ArrowLeft
 } from 'lucide-react';
 
-export const ComplianceMonitoringView: React.FC = () => {
+interface ComplianceMonitoringViewProps {
+  onNavigate?: (tab: any) => void;
+  onReturnPrevious?: () => void;
+  previousTabName?: string;
+}
+
+export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> = ({
+  onNavigate,
+  onReturnPrevious,
+  previousTabName
+}) => {
   const { complianceItems, payables, clients, masterChoices, updateComplianceStatus, addComplianceItem, cancelPayablePayment, deletePayable, resetPayableAssessment } = useData();
   const { isSuperAdmin } = useAuth();
 
@@ -551,6 +562,18 @@ export const ComplianceMonitoringView: React.FC = () => {
             Incoming filing deadlines for BIR returns, statutory remittances (SSS, PhilHealth, Pag-IBIG), SEC & DTI grouped by date based on the Deadline Picker rules.
           </p>
         </div>
+
+        {onReturnPrevious && (
+          <button
+            type="button"
+            onClick={onReturnPrevious}
+            className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-300 text-slate-700 hover:text-slate-900 font-bold rounded-xl flex items-center gap-2 transition-all cursor-pointer text-xs shadow-2xs shrink-0 self-start lg:self-center"
+            title={`Return to ${previousTabName || 'previous view'}`}
+          >
+            <ArrowLeft className="w-4 h-4 text-slate-500" />
+            <span>Return to {previousTabName || 'Previous Navigation'}</span>
+          </button>
+        )}
       </div>
 
       {/* Month & Year Selection Bar */}

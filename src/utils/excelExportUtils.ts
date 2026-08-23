@@ -32,7 +32,6 @@ export function exportSOAExcel(client: ClientProfile | { companyName: string; ti
       'Date',
       'Tx Type',
       'Collection #',
-      'Invoice / Ref #',
       'Billing Period',
       'Services / Particulars',
       'Due Date',
@@ -50,7 +49,6 @@ export function exportSOAExcel(client: ClientProfile | { companyName: string; ti
       entry.date,
       entry.type,
       entry.collectionNo,
-      entry.refNo,
       entry.billingPeriod,
       entry.servicesDescription,
       entry.dueDate || '-',
@@ -70,7 +68,6 @@ export function exportSOAExcel(client: ClientProfile | { companyName: string; ti
     { wch: 12 }, // Date
     { wch: 16 }, // Tx Type
     { wch: 14 }, // Collection #
-    { wch: 18 }, // Invoice Ref
     { wch: 16 }, // Billing Period
     { wch: 40 }, // Services
     { wch: 12 }, // Due Date
@@ -113,7 +110,6 @@ export function exportARAgingExcel(invoices: InvoiceItem[], payments: Payment[])
     ['INVOICE-LEVEL AR AGING BREAKDOWN'],
     [
       'Collection #',
-      'Invoice #',
       'Client Name',
       'Issue Date',
       'Due Date',
@@ -152,7 +148,6 @@ export function exportARAgingExcel(invoices: InvoiceItem[], payments: Payment[])
 
     rows.push([
       inv.collectionNumber || '1001',
-      inv.invoiceNumber,
       inv.clientName,
       inv.issueDate,
       inv.dueDate,
@@ -169,7 +164,7 @@ export function exportARAgingExcel(invoices: InvoiceItem[], payments: Payment[])
 
   const ws = XLSX.utils.aoa_to_sheet(rows);
   ws['!cols'] = [
-    { wch: 14 }, { wch: 18 }, { wch: 32 }, { wch: 12 }, { wch: 12 },
+    { wch: 14 }, { wch: 32 }, { wch: 12 }, { wch: 12 },
     { wch: 12 }, { wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 22 },
     { wch: 18 }, { wch: 18 }, { wch: 35 }
   ];

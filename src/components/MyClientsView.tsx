@@ -56,9 +56,9 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const [selectedMonth, setSelectedMonth] = useState<('Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec')>(currentMonthCode);
   const [selectedYear, setSelectedYear] = useState<number>(currentYearNum);
 
-  // Selected staff filter
+  // Selected staff filter (Super Admin defaults to "ALL_STAFF" / All Staff Members)
   const [selectedStaffName, setSelectedStaffName] = useState<string>(
-    currentUser?.fullName || (allUsers.length > 0 ? allUsers[0].fullName : 'ALL_STAFF')
+    isSuperAdmin ? 'ALL_STAFF' : (currentUser?.fullName || (allUsers.length > 0 ? allUsers[0].fullName : 'ALL_STAFF'))
   );
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -134,12 +134,13 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
       return true;
     })
     .filter(client => {
-    if (selectedStaffName === 'ALL_STAFF') return true;
-    const match = client.assignedStaffName === selectedStaffName || 
-                  client.assignedStaffId === currentUser?.id ||
-                  (currentUser?.fullName && client.assignedStaffName?.toLowerCase().includes(currentUser.fullName.toLowerCase()));
-    return match;
-  }).filter(client => {
+      if (selectedStaffName === 'ALL_STAFF') return true;
+      const selectedUserObj = allUsers.find(u => u.fullName === selectedStaffName);
+      const match = client.assignedStaffName === selectedStaffName || 
+                    (selectedUserObj && client.assignedStaffId === selectedUserObj.id) ||
+                    (client.assignedStaffName && client.assignedStaffName.toLowerCase().includes(selectedStaffName.toLowerCase()));
+      return match;
+    }).filter(client => {
     if (!(searchQuery || '').trim()) return true;
     const q = (searchQuery || '').toLowerCase();
     return (client.companyName || '').toLowerCase().includes(q) ||
@@ -153,9 +154,10 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     .filter(client => client.status !== 'Archived')
     .filter(client => {
       if (selectedStaffName === 'ALL_STAFF') return true;
+      const selectedUserObj = allUsers.find(u => u.fullName === selectedStaffName);
       return client.assignedStaffName === selectedStaffName || 
-             client.assignedStaffId === currentUser?.id ||
-             (currentUser?.fullName && client.assignedStaffName?.toLowerCase().includes(currentUser.fullName.toLowerCase()));
+             (selectedUserObj && client.assignedStaffId === selectedUserObj.id) ||
+             (client.assignedStaffName && client.assignedStaffName.toLowerCase().includes(selectedStaffName.toLowerCase()));
     });
   const activeClientsCount = assignedBaseClients.filter(c => c.status === 'Active').length;
   const forComplianceClientsCount = assignedBaseClients.filter(c => c.status === 'For Compliance').length;

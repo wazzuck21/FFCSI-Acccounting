@@ -860,7 +860,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                               )}
                               {invoiceObj && (
                                 <span className="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded font-bold">
-                                  Inv #{invoiceObj.invoiceNumber}
+                                  Collection #{invoiceObj.collectionNumber || invoiceObj.invoiceNumber || '1001'}
                                 </span>
                               )}
                             </div>
@@ -942,7 +942,6 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                         <th className="py-2.5 px-3">Date</th>
                         <th className="py-2.5 px-3">Tx Type</th>
                         <th className="py-2.5 px-3">Coll #</th>
-                        <th className="py-2.5 px-3">Invoice / Ref #</th>
                         <th className="py-2.5 px-3">Period</th>
                         <th className="py-2.5 px-3">Services / Particulars</th>
                         <th className="py-2.5 px-3 text-right">Billed (+)</th>
@@ -955,7 +954,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                     <tbody className="divide-y divide-slate-100">
                       {clientSoa.entries.length === 0 ? (
                         <tr>
-                          <td colSpan={11} className="py-8 text-center text-slate-400">
+                          <td colSpan={10} className="py-8 text-center text-slate-400">
                             No Statement of Account ledger transactions recorded for this client.
                           </td>
                         </tr>
@@ -963,8 +962,8 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                         clientSoa.entries.map(entry => (
                           <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
                             <td className="py-3 px-3 font-mono text-slate-600 text-[11px] whitespace-nowrap">{entry.date}</td>
-                            <td className="py-3 px-3 font-bold">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            <td className="py-3 px-3 font-bold whitespace-nowrap">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase whitespace-nowrap inline-block ${
                                 entry.type === 'Invoice' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                                 entry.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                                 'bg-amber-50 text-amber-800 border border-amber-200'
@@ -972,8 +971,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                                 {entry.type}
                               </span>
                             </td>
-                            <td className="py-3 px-3 font-mono font-bold text-slate-900 text-[11px]">#{entry.collectionNo}</td>
-                            <td className="py-3 px-3 font-mono text-slate-700 text-[11px]">{entry.refNo}</td>
+                            <td className="py-3 px-3 font-mono font-bold text-slate-900 text-[11px] whitespace-nowrap">#{entry.collectionNo}</td>
                             <td className="py-3 px-3 text-slate-600 text-[11px] whitespace-nowrap">{entry.billingPeriod}</td>
                             <td className="py-3 px-3 text-slate-800 font-medium max-w-xs truncate" title={entry.servicesDescription}>
                               {entry.servicesDescription}

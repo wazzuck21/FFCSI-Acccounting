@@ -3,6 +3,8 @@ import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile } from '../types';
 import { CurrencyInput } from './CurrencyInput';
+import { SmartServiceInput } from './SmartServiceInput';
+import { SmartPeriodInput } from './SmartPeriodInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
 import { PeriodCoverageModal } from './PeriodCoverageModal';
@@ -151,7 +153,7 @@ export const downloadBillingSummaryReportPDF = (invoices: InvoiceItem[]) => {
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text('INVOICE #', 18, y + 5.5);
+  doc.text('COLLECTION #', 18, y + 5.5);
   doc.text('CLIENT NAME', 55, y + 5.5);
   doc.text('ISSUE DATE', 120, y + 5.5);
   doc.text('DUE DATE', 150, y + 5.5);
@@ -173,7 +175,7 @@ export const downloadBillingSummaryReportPDF = (invoices: InvoiceItem[]) => {
     const bal = inv.totalAmount - (inv.paidAmount || 0);
 
     doc.setTextColor(15, 23, 42);
-    doc.text(inv.invoiceNumber, 18, y);
+    doc.text(inv.collectionNumber ? `#${inv.collectionNumber}` : (inv.invoiceNumber || '1001'), 18, y);
     doc.text(inv.clientName.substring(0, 32), 55, y);
     doc.text(inv.issueDate, 120, y);
     doc.text(inv.dueDate, 150, y);
@@ -384,6 +386,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   });
   
   const [services, setServices] = useState<InvoiceServiceLine[]>([]);
+  const [descriptionErrors, setDescriptionErrors] = useState<Record<number, string>>({});
+  const [monthYearErrors, setMonthYearErrors] = useState<Record<number, string>>({});
+  const [amountErrors, setAmountErrors] = useState<Record<number, string>>({});
 
   // Unified Service Picker Dropdown State ⭐
   const [isServicePickerOpen, setIsServicePickerOpen] = useState(false);
@@ -470,6 +475,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       setCollectionNumError('');
       setSelectedClientId('');
       setServices([]);
+      setDescriptionErrors({});
+      setMonthYearErrors({});
+      setAmountErrors({});
       setBillingNotes('');
       setShowNotesBox(false);
     }
@@ -1045,12 +1053,39 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
   const handleRemoveServiceLine = (index: number) => {
     setServices(services.filter((_, i) => i !== index));
+    setDescriptionErrors(prev => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+    setMonthYearErrors(prev => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
+    setAmountErrors(prev => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
   };
 
   const handleServiceChange = (index: number, field: 'description' | 'monthYear' | 'amount', value: any) => {
     const updated = [...services];
     const current = updated[index] || { description: '', monthYear: '', amount: 0 };
-    if (field === 'monthYear') {
+    if (field === 'description') {
+      updated[index] = {
+        ...current,
+        description: value
+      };
+      if (descriptionErrors[index]) {
+        setDescriptionErrors(prev => {
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      }
+    } else if (field === 'monthYear') {
       const parsedMonths = parsePeriodToMonths(String(value || ''));
       const amt = Number(current.amount) || 0;
       updated[index] = {
@@ -1059,6 +1094,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         coveredMonths: parsedMonths,
         monthlyRate: parsedMonths.length > 0 ? amt / parsedMonths.length : amt
       };
+      if (monthYearErrors[index]) {
+        setMonthYearErrors(prev => {
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      }
     } else if (field === 'amount') {
       const numAmt = Number(value) || 0;
       const months = current.coveredMonths && current.coveredMonths.length > 0 
@@ -1070,6 +1112,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         unitPrice: numAmt,
         monthlyRate: months.length > 0 ? numAmt / months.length : numAmt
       };
+      if (amountErrors[index]) {
+        setAmountErrors(prev => {
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      }
     } else {
       updated[index] = {
         ...current,
@@ -1110,6 +1159,34 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       alert('Please add at least one billable item or service line to generate the SOA.');
       return;
     }
+
+    // Validate that every line item has a valid description, month/year, and positive amount
+    const descErrs: Record<number, string> = {};
+    const monthErrs: Record<number, string> = {};
+    const amtErrs: Record<number, string> = {};
+
+    services.forEach((item, idx) => {
+      if (!item.description || !item.description.trim()) {
+        descErrs[idx] = 'Item description is empty';
+      }
+      if (!item.monthYear || !String(item.monthYear).trim()) {
+        monthErrs[idx] = 'Month and Year is empty';
+      }
+      const amt = Number(item.amount);
+      if (!amt || amt <= 0 || isNaN(amt)) {
+        amtErrs[idx] = 'Amount is empty';
+      }
+    });
+
+    if (Object.keys(descErrs).length > 0 || Object.keys(monthErrs).length > 0 || Object.keys(amtErrs).length > 0 || totalAmount <= 0) {
+      setDescriptionErrors(descErrs);
+      setMonthYearErrors(monthErrs);
+      setAmountErrors(amtErrs);
+      return;
+    }
+    setDescriptionErrors({});
+    setMonthYearErrors({});
+    setAmountErrors({});
 
     // Open confirmation dialog before finalizing creation
     setConfirmGenerateModal({
@@ -1157,7 +1234,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       vatAmount: 0,
       totalAmount,
       paidAmount: 0,
-      status: 'Sent',
+      status: 'For Collection',
       services: confirmedServices,
       billingNotes: confirmedNotes,
     });
@@ -1187,36 +1264,154 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setShowCrModal(true);
   };
 
-  // Helper to update per-item payment configurations
+  // Helper to update per-item payment configurations and auto-save payment remittance
   const handleUpdateItemPayment = (serviceIdx: number, updates: Partial<CrItemPaymentConfig>) => {
-    setCrItemPaymentConfigs(prev => {
-      const current = prev[serviceIdx] || {
-        mode: 'Cash',
-        amount: selectedInvoice?.services[serviceIdx]?.amount || 0,
+    if (!selectedInvoice) return;
+
+    const current = crItemPaymentConfigs[serviceIdx] || {
+      mode: 'Cash',
+      amount: selectedInvoice?.services[serviceIdx]?.amount || 0,
+      bank: 'BDO (Banco de Oro)',
+      customBank: '',
+      chequeNo: '',
+      payee: 'FFCSI',
+      customPayee: '',
+      isPaid: false
+    };
+    const updated = {
+      ...current,
+      ...updates
+    };
+    const newConfigs = {
+      ...crItemPaymentConfigs,
+      [serviceIdx]: updated
+    };
+
+    setCrItemPaymentConfigs(newConfigs);
+
+    // Automatically recalculate overall payment total from all configured item amounts
+    const totalFromConfigs = (Object.values(newConfigs) as CrItemPaymentConfig[]).reduce(
+      (sum: number, c: CrItemPaymentConfig) => sum + (Number(c.amount) || 0),
+      0
+    );
+    if (totalFromConfigs > 0) {
+      setPaymentAmount(totalFromConfigs);
+    }
+
+    // If this item was marked as isPaid: true, auto-sync and persist to DataContext immediately
+    if (updates.isPaid === true) {
+      saveItemPaymentToDatabase(serviceIdx, updated, newConfigs);
+    }
+  };
+
+  // Auto-sync and persist payment remittance when item is marked as paid
+  const saveItemPaymentToDatabase = (
+    serviceIdx: number,
+    updatedConfig: CrItemPaymentConfig,
+    allConfigs: Record<number, CrItemPaymentConfig>
+  ) => {
+    if (!selectedInvoice) return;
+
+    const targetInv = invoices.find(i => i.id === selectedInvoice.id) || selectedInvoice;
+    const finalCr = (orNumber || targetInv.collectionNumber || targetInv.collectionReceiptNumber || targetInv.invoiceNumber || '1001').replace(/\D/g, '') || '1001';
+
+    const updatedServices = targetInv.services.map((s, idx) => {
+      const cfg: CrItemPaymentConfig = allConfigs[idx] || (idx === serviceIdx ? updatedConfig : {
+        mode: s.paymentMode === 'Cheque' ? 'Cheque' : 'Cash',
+        amount: s.amount,
         bank: 'BDO (Banco de Oro)',
         customBank: '',
-        chequeNo: '',
-        payee: 'FFCSI',
+        chequeNo: s.chequeNumber || '',
+        payee: s.chequePayee || 'FFCSI',
         customPayee: '',
-        isPaid: false
-      };
-      const updated = {
-        ...current,
-        ...updates
-      };
-      const newConfigs = {
-        ...prev,
-        [serviceIdx]: updated
-      };
+        isPaid: Boolean(s.isPaid || s.paymentMode || targetInv.status === 'Paid')
+      });
 
-      // Automatically recalculate overall payment total from all configured item amounts
-      const totalFromConfigs = (Object.values(newConfigs) as CrItemPaymentConfig[]).reduce((sum: number, c: CrItemPaymentConfig) => sum + (Number(c.amount) || 0), 0);
-      if (totalFromConfigs > 0) {
-        setPaymentAmount(totalFromConfigs);
-      }
+      const finalBank = cfg.bank === 'Other Bank' ? (cfg.customBank || 'Bank') : cfg.bank.split(' ')[0];
+      const finalPayee = cfg.payee === 'Other' ? (cfg.customPayee || 'Other') : cfg.payee;
+      const finalChequeStr = `${finalBank} ${cfg.chequeNo}`.trim();
+      const methodLabel = cfg.mode === 'Cheque'
+        ? `Cheque (${finalChequeStr || 'No #'}) to ${finalPayee || 'FFCSI'}`
+        : 'Cash Payment';
 
-      return newConfigs;
+      return {
+        ...s,
+        isPaid: Boolean(cfg.isPaid),
+        amount: Number(cfg.amount) > 0 ? Number(cfg.amount) : s.amount,
+        paymentMode: cfg.mode,
+        chequeNumber: cfg.mode === 'Cheque' ? finalChequeStr : undefined,
+        chequePayee: cfg.mode === 'Cheque' ? finalPayee : undefined,
+        paymentMethod: methodLabel
+      };
     });
+
+    const configsList = Object.values(allConfigs) as CrItemPaymentConfig[];
+    const hasCheque = configsList.some((c: CrItemPaymentConfig) => c.mode === 'Cheque');
+    const hasCash = configsList.some((c: CrItemPaymentConfig) => c.mode === 'Cash');
+    const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : 'Cash Collection';
+
+    const chequeRefs = configsList
+      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && (c.isPaid || c.chequeNo))
+      .map((c: CrItemPaymentConfig) => {
+        const b = c.bank === 'Other Bank' ? (c.customBank || 'Cheque') : c.bank.split(' ')[0];
+        const p = c.payee === 'Other' ? c.customPayee : c.payee;
+        return `${b} #${c.chequeNo} (${p})`;
+      })
+      .join(', ');
+
+    // Total paid from items that have isPaid === true
+    const totalPaidAmount = updatedServices.reduce((sum, s, idx) => {
+      const c = allConfigs[idx];
+      return sum + ((c && c.isPaid) ? (Number(c.amount) || s.amount) : 0);
+    }, 0);
+
+    const isFullyPaid = totalPaidAmount >= targetInv.totalAmount;
+    const newStatus = isFullyPaid ? 'Paid' : (totalPaidAmount > 0 ? 'Partially Paid' : targetInv.status);
+
+    const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const auditDetails = `Payment Remittance Recorded: Item #${serviceIdx + 1} (${updatedServices[serviceIdx]?.description || ''}) marked as Paid (₱${(Number(updatedConfig.amount) || 0).toLocaleString()}), C.R. #${finalCr}, Method: ${updatedConfig.mode}`;
+
+    const amendmentRecord = {
+      date: nowTimestamp,
+      modifiedBy: currentUser?.fullName || 'Super Admin',
+      details: auditDetails,
+      previousTotal: targetInv.paidAmount || 0,
+      newTotal: totalPaidAmount
+    };
+
+    const updatedAmendedHistory = [amendmentRecord, ...(targetInv.amendedHistory || [])];
+
+    const updatedTargetInv: InvoiceItem = {
+      ...targetInv,
+      paidAmount: totalPaidAmount,
+      status: newStatus,
+      collectionReceiptNumber: finalCr,
+      officialReceiptNumber: finalCr,
+      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
+      paymentMethod: overallMethod,
+      services: updatedServices,
+      amendedHistory: updatedAmendedHistory
+    };
+
+    // Save directly to DataContext and LocalStorage
+    editInvoicePayment(
+      targetInv.id,
+      {
+        amount: totalPaidAmount,
+        paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
+        paymentMethod: overallMethod,
+        referenceNumber: chequeRefs || paymentRefNum,
+        officialReceiptNumber: finalCr,
+        collectionReceiptNumber: finalCr,
+        notes: paymentNotes,
+        updatedServices,
+        amendedHistory: updatedAmendedHistory
+      },
+      currentUser?.id || 'system',
+      currentUser?.fullName || 'Super Admin'
+    );
+
+    setSelectedInvoice(updatedTargetInv);
   };
 
   // Open Payment Remittance in Official Collection Receipt (FFCSI Format) - Super Admin Only
@@ -1234,15 +1429,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setPaymentRefNum('');
     setPaymentNotes(inv.billingNotes || '');
 
-    // C.R. Number: use existing 4-digit if available, otherwise get next 4-digit
-    const existingCr = inv.collectionReceiptNumber || inv.officialReceiptNumber;
-    const cleanDigits = existingCr ? existingCr.replace(/\D/g, '') : '';
-    if (cleanDigits && cleanDigits.length === 4) {
-      setOrNumber(cleanDigits);
-    } else {
-      const next4Digit = getNextCrNumber();
-      setOrNumber(next4Digit);
-    }
+    // C.R. Number: ALWAYS default to this invoice's collection number (e.g. 1014, 1007)
+    const existingCr = inv.collectionNumber || inv.collectionReceiptNumber || inv.officialReceiptNumber || inv.invoiceNumber || '1001';
+    const cleanDigits = existingCr.replace(/\D/g, '') || '1001';
+    setOrNumber(cleanDigits);
     setCrError('');
 
     // Initialize per-item payment configurations
@@ -1273,7 +1463,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         chequeNo: chequeNo,
         payee: isCustomPayee ? 'Other' : detectedPayee,
         customPayee: isCustomPayee ? detectedPayee : '',
-        isPaid: isAlreadyPaid
+        isPaid: isAlreadyPaid || (s.isPaid ?? false)
       };
     });
     setCrItemPaymentConfigs(initialConfigs);
@@ -1314,31 +1504,28 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (e) e.preventDefault();
     if (!selectedInvoice) return;
 
-    if (paymentAmount <= 0) {
-      alert('Please enter a valid payment amount.');
-      return;
-    }
-
-    const isEditingExistingPayment = (selectedInvoice.paidAmount || 0) > 0 || (selectedInvoice.payments && selectedInvoice.payments.length > 0) || !!selectedInvoice.collectionReceiptNumber;
+    const targetInv = invoices.find(i => i.id === selectedInvoice.id) || selectedInvoice;
 
     // 4-Digit Unique C.R. # Enforcement
-    const cleanDigits = (orNumber || '1001').trim().replace(/\D/g, '');
-    if (!cleanDigits || cleanDigits.length !== 4) {
-      setCrError('Collection Receipt Number MUST be exactly 4 digits (e.g., 1001, 1002).');
+    const cleanDigits = (orNumber || targetInv.collectionNumber || targetInv.collectionReceiptNumber || targetInv.invoiceNumber || '1001').trim().replace(/\D/g, '') || '1001';
+
+    // Verify other invoices do not have this CR #
+    const isUsedByOther = invoices.some(
+      other => other.id !== targetInv.id && (
+        (other.collectionReceiptNumber && other.collectionReceiptNumber.replace(/\D/g, '') === cleanDigits) ||
+        (other.officialReceiptNumber && other.officialReceiptNumber.replace(/\D/g, '') === cleanDigits)
+      )
+    );
+
+    if (isUsedByOther) {
+      setCrError(`❌ C.R. # ${cleanDigits} has already been assigned to another invoice.`);
       return;
     }
 
-    const previousCrDigits = (selectedInvoice.collectionReceiptNumber || selectedInvoice.officialReceiptNumber || '').replace(/\D/g, '');
-    const isSameCr = cleanDigits === previousCrDigits;
-
-    if (!isSameCr && (isCrNumberUsed(cleanDigits) || isCrNumberUsed(orNumber))) {
-      setCrError(`❌ C.R. # ${cleanDigits} has ALREADY been generated/used! Duplicate Collection Receipt numbers cannot be reused once assigned. Next available 4-digit C.R. # is ${getNextCrNumber()}.`);
-      return;
-    }
-
+    setCrError('');
     const finalCr = cleanDigits;
 
-    const updatedServices = selectedInvoice.services.map((s, idx) => {
+    const updatedServices = targetInv.services.map((s, idx) => {
       const cfg: CrItemPaymentConfig = crItemPaymentConfigs[idx] || {
         mode: 'Cash',
         amount: s.amount,
@@ -1358,6 +1545,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
       return {
         ...s,
+        isPaid: true,
         amount: Number(cfg.amount) > 0 ? Number(cfg.amount) : s.amount,
         paymentMode: cfg.mode,
         chequeNumber: cfg.mode === 'Cheque' ? finalChequeStr : undefined,
@@ -1380,88 +1568,62 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       })
       .join(', ');
 
+    const finalPaymentAmount = paymentAmount > 0 ? paymentAmount : targetInv.totalAmount;
     const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const auditDetails = isEditingExistingPayment
-      ? `Payment Remittance Info Edited: C.R. #${finalCr}, Amount: ₱${Number(paymentAmount).toLocaleString()}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${paymentNotes ? ` • Notes: ${paymentNotes}` : ''}`
-      : `Initial Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(paymentAmount).toLocaleString()}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}`;
+    const auditDetails = `Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(finalPaymentAmount).toLocaleString()}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${paymentNotes ? ` • Notes: ${paymentNotes}` : ''}`;
 
     const amendmentRecord = {
       date: nowTimestamp,
       modifiedBy: currentUser?.fullName || 'Super Admin',
       details: auditDetails,
-      previousTotal: selectedInvoice.paidAmount || 0,
-      newTotal: Number(paymentAmount)
+      previousTotal: targetInv.paidAmount || 0,
+      newTotal: Number(finalPaymentAmount)
     };
 
-    const updatedAmendedHistory = [amendmentRecord, ...(selectedInvoice.amendedHistory || [])];
-    const isFullyPaid = Number(paymentAmount) >= selectedInvoice.totalAmount;
-    const newStatus = isFullyPaid ? 'Paid' : (Number(paymentAmount) > 0 ? 'Partially Paid' : selectedInvoice.status);
+    const updatedAmendedHistory = [amendmentRecord, ...(targetInv.amendedHistory || [])];
+    const isFullyPaid = Number(finalPaymentAmount) >= targetInv.totalAmount;
+    const newStatus = isFullyPaid ? 'Paid' : (Number(finalPaymentAmount) > 0 ? 'Partially Paid' : targetInv.status);
 
     const updatedTargetInv: InvoiceItem = {
-      ...selectedInvoice,
-      paidAmount: Number(paymentAmount),
+      ...targetInv,
+      paidAmount: Number(finalPaymentAmount),
       status: newStatus,
       collectionReceiptNumber: finalCr,
       officialReceiptNumber: finalCr,
-      paymentDate,
+      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
       paymentMethod: overallMethod,
-      billingNotes: paymentNotes || selectedInvoice.billingNotes,
+      billingNotes: paymentNotes || targetInv.billingNotes,
       services: updatedServices,
       amendedHistory: updatedAmendedHistory
     };
 
-    if (isEditingExistingPayment) {
-      editInvoicePayment(
-        selectedInvoice.id,
-        {
-          amount: Number(paymentAmount),
-          paymentDate,
-          paymentMethod: overallMethod,
-          referenceNumber: chequeRefs || paymentRefNum,
-          officialReceiptNumber: finalCr,
-          collectionReceiptNumber: finalCr,
-          notes: paymentNotes,
-          updatedServices,
-          amendedHistory: updatedAmendedHistory
-        },
-        currentUser?.id || 'system',
-        currentUser?.fullName || 'Super Admin'
-      );
-    } else {
-      recordInvoicePayment(
-        selectedInvoice.id,
-        {
-          amount: Number(paymentAmount),
-          paymentDate,
-          paymentMethod: overallMethod,
-          referenceNumber: chequeRefs || paymentRefNum,
-          officialReceiptNumber: finalCr,
-          collectionReceiptNumber: finalCr,
-          notes: paymentNotes,
-          updatedServices
-        },
-        currentUser?.id,
-        currentUser?.fullName
-      );
-      updateInvoice(selectedInvoice.id, {
+    editInvoicePayment(
+      targetInv.id,
+      {
+        amount: Number(finalPaymentAmount),
+        paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
+        paymentMethod: overallMethod,
+        referenceNumber: chequeRefs || paymentRefNum,
+        officialReceiptNumber: finalCr,
+        collectionReceiptNumber: finalCr,
+        notes: paymentNotes,
+        updatedServices,
         amendedHistory: updatedAmendedHistory
-      });
-    }
+      },
+      currentUser?.id || 'system',
+      currentUser?.fullName || 'Super Admin'
+    );
 
     addAuditLog(
-      isEditingExistingPayment ? 'Financial Payment Amended' : 'Financial Payment Recorded',
-      `${auditDetails} for Invoice ${selectedInvoice.invoiceNumber} (${selectedInvoice.clientName}).`,
+      'Financial Payment Recorded',
+      `${auditDetails} for Collection #${targetInv.collectionNumber || targetInv.invoiceNumber} (${targetInv.clientName}). Status updated to ${newStatus}.`,
       currentUser?.id || 'system',
       currentUser?.fullName || 'Super Admin'
     );
 
     setSelectedInvoice(updatedTargetInv);
     setIsCrPaymentMode(false);
-    alert(
-      isEditingExistingPayment
-        ? `Payment remittance info updated successfully!\nAny edits have been logged in the Invoice Payment Ledger & History Audit.`
-        : `Payment remittance successfully recorded!\nOfficial Collection Receipt #${finalCr} has been issued for ${selectedInvoice.clientName}.`
-    );
+    alert(`✅ Payment remittance successfully recorded!\nOfficial Collection Receipt #${finalCr} has been issued for ${targetInv.clientName}.\nStatus is now: ${newStatus} (₱${Number(finalPaymentAmount).toLocaleString()}).`);
   };
 
   // Open SOA / Collection Receipt Modal (Default to FFCSI Format)
@@ -1566,7 +1728,11 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const filteredInvoices = invoices.filter(inv => {
     const matchesSearch = inv.invoiceNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           inv.clientName.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'ALL' || inv.status === statusFilter;
+    const matchesStatus = statusFilter === 'ALL' 
+      ? true 
+      : statusFilter === 'For Collection'
+        ? (inv.status === 'For Collection' || inv.status === 'Sent')
+        : inv.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
@@ -1574,7 +1740,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const totalBilled = invoices.filter(i => i.status !== 'Cancelled').reduce((acc, i) => acc + i.totalAmount, 0);
   const totalCollected = invoices.filter(i => i.status !== 'Cancelled').reduce((acc, i) => acc + (i.paidAmount || 0), 0);
   const totalOutstanding = totalBilled - totalCollected;
-  const overdueCount = invoices.filter(i => i.status !== 'Cancelled' && (i.status === 'Overdue' || (i.status === 'Sent' && new Date(i.dueDate) < new Date()))).length;
+  const overdueCount = invoices.filter(i => i.status !== 'Cancelled' && (i.status === 'Overdue' || ((i.status === 'For Collection' || i.status === 'Sent') && new Date(i.dueDate) < new Date()))).length;
 
   // Accounts Receivable Filtered List ⭐
   const filteredARInvoices = invoices.filter(inv => {
@@ -1876,7 +2042,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
           <input
             type="text"
-            placeholder="Search invoice # or client..."
+            placeholder="Search collection # or client..."
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             className="w-full pl-9 pr-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-emerald-100 text-xs"
@@ -1887,7 +2053,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           <span className="text-xs font-semibold text-slate-500 flex items-center gap-1 shrink-0">
             <Filter className="w-3.5 h-3.5" /> Filter:
           </span>
-          {['ALL', 'Sent', 'Partially Paid', 'Paid', 'Overdue', 'Draft'].map(status => (
+          {['ALL', 'For Collection', 'Partially Paid', 'Paid', 'Overdue', 'Draft'].map(status => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -1909,7 +2075,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           <table className="w-full text-left">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold uppercase text-[10px]">
-                <th className="py-3 px-4">Invoice #</th>
+                <th className="py-3 px-4">Collection #</th>
                 <th className="py-3 px-4">Client Name</th>
                 <th className="py-3 px-4">Issue & Due Date</th>
                 <th className="py-3 px-4 text-right">Total Amount</th>
@@ -1931,11 +2097,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 paginatedInvoices.map(inv => {
                   const balance = inv.totalAmount - (inv.paidAmount || 0);
                   const isPastDue = new Date(inv.dueDate) < new Date() && balance > 0;
-                  const displayStatus = isPastDue ? 'Overdue' : inv.status;
+                  const normalizedStatus = inv.status === 'Sent' ? 'For Collection' : inv.status;
+                  const displayStatus = isPastDue ? 'Overdue' : normalizedStatus;
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                      <td className="py-3.5 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
                         <button
                           onClick={() => {
                             setSelectedInvoice(inv);
@@ -1964,7 +2131,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         )}
                       </td>
 
-                      <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">
+                      <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px] whitespace-nowrap">
                         <div>Issue: {inv.issueDate}</div>
                         <div className={isPastDue ? 'text-rose-600 font-bold' : 'text-slate-400'}>Due: {inv.dueDate}</div>
                       </td>
@@ -1981,12 +2148,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         ₱{balance.toLocaleString()}
                       </td>
 
-                      <td className="py-3.5 px-4 text-center">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap inline-block ${
                           displayStatus === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                           displayStatus === 'Partially Paid' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                           displayStatus === 'Overdue' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
-                          displayStatus === 'Sent' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
+                          (displayStatus === 'For Collection' || displayStatus === 'Sent') ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                           'bg-slate-100 text-slate-600'
                         }`}>
                           {displayStatus}
@@ -2621,7 +2788,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           <th className="py-2.5 px-3">Date</th>
                           <th className="py-2.5 px-3">Tx Type</th>
                           <th className="py-2.5 px-3">Collection #</th>
-                          <th className="py-2.5 px-3">Invoice / Ref #</th>
                           <th className="py-2.5 px-3">Billing Period</th>
                           <th className="py-2.5 px-3">Services / Particulars</th>
                           <th className="py-2.5 px-3 text-right">Billed (+)</th>
@@ -2634,7 +2800,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       <tbody className="divide-y divide-slate-100">
                         {clientSoa.entries.length === 0 ? (
                           <tr>
-                            <td colSpan={11} className="py-8 text-center text-slate-400">
+                            <td colSpan={10} className="py-8 text-center text-slate-400">
                               No statement of account ledger entries found for this client and date filter.
                             </td>
                           </tr>
@@ -2642,8 +2808,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           clientSoa.entries.map(entry => (
                             <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
                               <td className="py-3 px-3 font-mono text-slate-600 whitespace-nowrap">{entry.date}</td>
-                              <td className="py-3 px-3 font-bold">
-                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              <td className="py-3 px-3 font-bold whitespace-nowrap">
+                                <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase whitespace-nowrap inline-block ${
                                   entry.type === 'Invoice' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                                   entry.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                                   'bg-amber-50 text-amber-800 border border-amber-200'
@@ -2651,8 +2817,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                   {entry.type}
                                 </span>
                               </td>
-                              <td className="py-3 px-3 font-mono font-bold text-slate-900">#{entry.collectionNo}</td>
-                              <td className="py-3 px-3 font-mono text-slate-700">{entry.refNo}</td>
+                              <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">#{entry.collectionNo}</td>
                               <td className="py-3 px-3 text-slate-600 whitespace-nowrap">{entry.billingPeriod}</td>
                               <td className="py-3 px-3 text-slate-800 font-medium max-w-xs truncate" title={entry.servicesDescription}>
                                 {entry.servicesDescription}
@@ -3523,24 +3688,64 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       return (
                         <div key={idx} className="bg-slate-50/80 p-2 border border-slate-200 rounded-xl space-y-1.5">
                           <div className="grid grid-cols-11 gap-2 items-center">
-                            <div className="col-span-5">
+                            <div className="col-span-5 relative">
                               <input
                                 type="text"
                                 required
                                 placeholder="e.g. Retainers Fee"
                                 value={item.description || ''}
-                                onChange={e => handleServiceChange(idx, 'description', e.target.value)}
-                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
+                                onChange={e => {
+                                  handleServiceChange(idx, 'description', e.target.value);
+                                  if (descriptionErrors[idx]) {
+                                    setDescriptionErrors(prev => {
+                                      const next = { ...prev };
+                                      delete next[idx];
+                                      return next;
+                                    });
+                                  }
+                                }}
+                                className={`w-full px-2.5 py-1.5 bg-white border rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100 transition-all ${
+                                  descriptionErrors[idx]
+                                    ? 'border-rose-500 ring-2 ring-rose-300 bg-rose-50/70 text-rose-950 placeholder-rose-400'
+                                    : 'border-slate-200'
+                                }`}
                               />
+                              {descriptionErrors[idx] && (
+                                <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
+                                  <AlertCircle className="w-3 h-3 shrink-0" />
+                                  <span>{descriptionErrors[idx]}</span>
+                                </div>
+                              )}
                             </div>
-                            <div className="col-span-3 flex items-center gap-1">
-                              <input
-                                type="text"
-                                placeholder="e.g. May – Jul 2026"
-                                value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
-                                onChange={e => handleServiceChange(idx, 'monthYear', e.target.value)}
-                                className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
-                              />
+                            <div className="col-span-3 flex items-center gap-1 relative">
+                              <div className="w-full relative">
+                                <input
+                                  type="text"
+                                  placeholder="e.g. May – Jul 2026"
+                                  value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
+                                  onChange={e => {
+                                    handleServiceChange(idx, 'monthYear', e.target.value);
+                                    if (monthYearErrors[idx]) {
+                                      setMonthYearErrors(prev => {
+                                        const next = { ...prev };
+                                        delete next[idx];
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                  className={`w-full px-2 py-1.5 bg-white border rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100 transition-all ${
+                                    monthYearErrors[idx]
+                                      ? 'border-rose-500 ring-2 ring-rose-300 bg-rose-50/70 text-rose-950 placeholder-rose-400'
+                                      : 'border-slate-200'
+                                  }`}
+                                />
+                                {monthYearErrors[idx] && (
+                                  <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
+                                    <AlertCircle className="w-3 h-3 shrink-0" />
+                                    <span>{monthYearErrors[idx]}</span>
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 type="button"
                                 onClick={() => {
@@ -3561,16 +3766,46 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
                               </button>
                             </div>
-                            <div className="col-span-3 flex items-center gap-1.5">
-                              <CurrencyInput
-                                value={item.amount}
-                                onChange={val => handleServiceChange(idx, 'amount', val)}
-                                placeholder="1,000,000.00"
-                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-mono font-bold focus:bg-white focus:ring-2 focus:ring-emerald-100 min-w-[120px]"
-                              />
+                            <div className="col-span-3 flex items-center gap-1.5 relative">
+                              <div className="w-full relative">
+                                <CurrencyInput
+                                  value={item.amount}
+                                  onChange={val => {
+                                    handleServiceChange(idx, 'amount', val);
+                                    if (amountErrors[idx]) {
+                                      setAmountErrors(prev => {
+                                        const next = { ...prev };
+                                        delete next[idx];
+                                        return next;
+                                      });
+                                    }
+                                  }}
+                                  placeholder="0.00"
+                                  className={`w-full px-2.5 py-1.5 bg-white border rounded-lg text-slate-900 text-xs font-mono font-bold focus:bg-white focus:ring-2 focus:ring-emerald-100 min-w-[120px] transition-all ${
+                                    amountErrors[idx]
+                                      ? 'border-rose-500 ring-2 ring-rose-300 bg-rose-50/70 text-rose-950 placeholder-rose-400'
+                                      : 'border-slate-200'
+                                  }`}
+                                />
+                                {amountErrors[idx] && (
+                                  <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
+                                    <AlertCircle className="w-3 h-3 shrink-0" />
+                                    <span>Amount is empty</span>
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 type="button"
-                                onClick={() => handleRemoveServiceLine(idx)}
+                                onClick={() => {
+                                  handleRemoveServiceLine(idx);
+                                  if (amountErrors[idx]) {
+                                    setAmountErrors(prev => {
+                                      const next = { ...prev };
+                                      delete next[idx];
+                                      return next;
+                                    });
+                                  }
+                                }}
                                 className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg shrink-0 cursor-pointer transition-colors"
                                 title="Remove line item"
                               >
@@ -3744,6 +3979,16 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   </div>
                 )}
               </div>
+
+              {/* Line Item Validation Error Banner */}
+              {(Object.keys(descriptionErrors).length > 0 || Object.keys(monthYearErrors).length > 0 || Object.keys(amountErrors).length > 0) && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-800 text-xs font-semibold animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>
+                    Please complete all required fields (Item Description, Month and Year, and Amount) for the highlighted item(s) before generating the SOA.
+                  </span>
+                </div>
+              )}
 
               {/* Total Calculation Summary (12% VAT removed) */}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
@@ -4067,91 +4312,92 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </button>
             </div>
 
-            {/* 2-Column Action Bar for Controls (Default Receipt, Payment, Edit, Download PDF, Print) ⭐ */}
+            {/* Unified 5-Button Action Bar for Controls (Default Receipt, Payment, Edit, Download PDF, Print) - All Same Size ⭐ */}
             {!isCrPaymentMode ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-                {/* Column 1: Format Switchers (Default Receipt | Payment) */}
-                <div className="flex items-center gap-2">
+              <div className={`grid gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 ${
+                isSuperAdmin ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'
+              }`}>
+                {/* Button 1: Default Receipt */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCrViewFormat('default');
+                    setIsCrPaymentMode(false);
+                  }}
+                  className={`h-9 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs w-full text-center ${
+                    crViewFormat === 'default' && !isCrPaymentMode
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                  }`}
+                  title="Default Official Collection Receipt (2-Column Format: PARTICULARS | AMOUNT)"
+                >
+                  <Receipt className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Default Receipt</span>
+                </button>
+
+                {/* Button 2: Payment */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCrViewFormat('payment');
+                    setIsCrPaymentMode(false);
+                  }}
+                  className={`h-9 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs w-full text-center ${
+                    crViewFormat === 'payment' && !isCrPaymentMode
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                  }`}
+                  title="Payment Receipt: 3-Column PARTICULARS | AMOUNT | Payment info format"
+                >
+                  <CreditCard className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Payment</span>
+                </button>
+
+                {/* Button 3: Edit (Super Admin) */}
+                {isSuperAdmin && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setCrViewFormat('default');
-                      setIsCrPaymentMode(false);
-                    }}
-                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs ${
-                      crViewFormat === 'default' && !isCrPaymentMode
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                    title="Default Official Collection Receipt (2-Column Format: PARTICULARS | AMOUNT)"
+                    onClick={() => handleOpenPayment(selectedInvoice)}
+                    className="h-9 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-2xs cursor-pointer transition-colors w-full text-center"
+                    title="Edit payment remittance details, cheque info, and records"
                   >
-                    <Receipt className="w-3.5 h-3.5" />
-                    <span>Default Receipt</span>
+                    <Edit className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">Edit</span>
                   </button>
+                )}
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCrViewFormat('payment');
-                      setIsCrPaymentMode(false);
-                    }}
-                    className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs ${
-                      crViewFormat === 'payment' && !isCrPaymentMode
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                    }`}
-                    title="Payment Receipt: 3-Column PARTICULARS | AMOUNT | Payment info format"
-                  >
-                    <CreditCard className="w-3.5 h-3.5" />
-                    <span>Payment</span>
-                  </button>
-                </div>
+                {/* Button 4: Download PDF */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (crViewFormat === 'payment') {
+                      downloadPaymentCollectionReceiptPDF(selectedInvoice);
+                    } else {
+                      downloadCollectionReceiptPDF(selectedInvoice);
+                    }
+                  }}
+                  className="h-9 px-2.5 py-1.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-2xs cursor-pointer transition-colors w-full text-center"
+                  title={crViewFormat === 'payment' ? 'Download Payment Receipt PDF (3-Column)' : 'Download Collection Receipt PDF'}
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Download PDF</span>
+                </button>
 
-                {/* Column 2: Action Buttons (Edit | Download PDF | Print) */}
-                <div className="flex items-center gap-2">
-                  {isSuperAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => handleOpenPayment(selectedInvoice)}
-                      className="flex-1 py-2 px-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl flex items-center justify-center gap-1 text-xs shadow-2xs cursor-pointer transition-colors"
-                      title="Edit payment remittance details, cheque info, and records"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                      <span>Edit</span>
-                    </button>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (crViewFormat === 'payment') {
-                        downloadPaymentCollectionReceiptPDF(selectedInvoice);
-                      } else {
-                        downloadCollectionReceiptPDF(selectedInvoice);
-                      }
-                    }}
-                    className="flex-1 py-2 px-2.5 bg-red-700 hover:bg-red-600 text-white font-bold rounded-xl flex items-center justify-center gap-1 text-xs shadow-2xs cursor-pointer transition-colors"
-                    title={crViewFormat === 'payment' ? 'Download Payment Receipt PDF (3-Column)' : 'Download Collection Receipt PDF'}
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Download PDF</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      printHardcopyReceiptDirectly(selectedInvoice, {
-                        mode: 'data-only',
-                        config: getHardcopyPrintConfig()
-                      });
-                    }}
-                    className="flex-1 py-2 px-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center justify-center gap-1 text-xs cursor-pointer shadow-2xs transition-colors"
-                    title="Print on Hardcopy Stationery (Data Only)"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span>Print</span>
-                  </button>
-                </div>
+                {/* Button 5: Print */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    printHardcopyReceiptDirectly(selectedInvoice, {
+                      mode: 'data-only',
+                      config: getHardcopyPrintConfig()
+                    });
+                  }}
+                  className="h-9 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs cursor-pointer shadow-2xs transition-colors w-full text-center"
+                  title="Print on Hardcopy Stationery (Data Only)"
+                >
+                  <Printer className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Print</span>
+                </button>
               </div>
             ) : (
               <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
@@ -4212,7 +4458,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 <div className="col-span-4 text-right flex items-center justify-end gap-1.5">
                   <span className="text-slate-800 shrink-0">No. :</span>
                   <span className="text-red-600 font-extrabold font-mono text-sm tracking-wider">
-                    {(isCrPaymentMode ? (orNumber || '1001') : (selectedInvoice.collectionReceiptNumber || selectedInvoice.officialReceiptNumber || selectedInvoice.collectionNumber || selectedInvoice.invoiceNumber || '1001')).replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim()}
+                    {(selectedInvoice.collectionNumber || selectedInvoice.collectionReceiptNumber || selectedInvoice.officialReceiptNumber || orNumber || selectedInvoice.invoiceNumber || '1001').replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim()}
                   </span>
                 </div>
 
@@ -4511,6 +4757,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
                       // Payment Format View Mode (3 columns: PARTICULARS | AMOUNT | Payment info) ⭐
                       if (crViewFormat === 'payment') {
+                        const isLinePaid = srv.isPaid || !!srv.paymentMode || !!srv.chequeNumber || selectedInvoice.status === 'Paid' || (selectedInvoice.paidAmount !== undefined && selectedInvoice.paidAmount > 0);
                         const isCheque = srv.paymentMode === 'Cheque' || !!srv.chequeNumber;
                         return (
                           <div key={idx} className="grid grid-cols-12 text-xs font-bold pl-2 py-1.5 items-center border-b border-slate-100 last:border-b-0 hover:bg-slate-50/50">
@@ -4523,7 +4770,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                               {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                             </div>
                             <div className="col-span-4 pl-4 pr-1">
-                              {isCheque ? (
+                              {!isLinePaid ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                                  <Clock className="w-3 h-3 text-slate-400" />
+                                  <span>Unpaid / Pending</span>
+                                </span>
+                              ) : isCheque ? (
                                 <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-950 font-bold px-2 py-0.5 rounded-md border border-amber-300 shadow-2xs">
                                   📝 Cheque #{srv.chequeNumber ? srv.chequeNumber.replace(/^#/, '') : (itemCfg.chequeNo || 'N/A')} • Paid to {srv.chequePayee || itemCfg.payee || 'FFCSI'}
                                 </span>
@@ -4549,6 +4801,27 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         </div>
                       );
                     })
+                  ) : crViewFormat === 'payment' ? (
+                    <div className="grid grid-cols-12 text-xs font-bold pl-2 py-1.5 items-center">
+                      <div className="col-span-5 text-slate-900 pr-2 border-r border-slate-200 pl-1">
+                        Professional Accounting Retainer Fee
+                      </div>
+                      <div className="col-span-3 text-right font-mono font-bold text-slate-900 pr-4 border-r border-slate-200 text-xs">
+                        {(selectedInvoice.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </div>
+                      <div className="col-span-4 pl-4 pr-1">
+                        {selectedInvoice.status === 'Paid' || (selectedInvoice.paidAmount && selectedInvoice.paidAmount > 0) ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-950 font-bold px-2 py-0.5 rounded-md border border-emerald-300 shadow-2xs">
+                            💵 Cash • Paid to FFCSI
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 font-semibold px-2 py-0.5 rounded-md border border-slate-200 shadow-2xs">
+                            <Clock className="w-3 h-3 text-slate-400" />
+                            <span>Unpaid / Pending</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   ) : (
                     <div className="grid grid-cols-12 text-xs font-bold pl-3">
                       <div className="col-span-8">Professional Accounting Retainer Fee</div>
@@ -5380,6 +5653,16 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
                 updated[idx] = pendingLine;
                 setServices(updated);
+                setMonthYearErrors(prev => {
+                  const next = { ...prev };
+                  delete next[idx];
+                  return next;
+                });
+                setAmountErrors(prev => {
+                  const next = { ...prev };
+                  delete next[idx];
+                  return next;
+                });
               }
             }
           }}

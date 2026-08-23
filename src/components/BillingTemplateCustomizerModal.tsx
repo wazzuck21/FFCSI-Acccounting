@@ -141,7 +141,8 @@ export const BillingTemplateCustomizerModal: React.FC<CustomizerModalProps> = ({
   // Demo invoice for live preview canvas
   const previewInvoice: InvoiceItem = sampleInvoice || {
     id: 'INV-DEMO',
-    invoiceNumber: 'SOA-2026-0881',
+    invoiceNumber: '1001',
+    collectionNumber: '1001',
     clientId: 'CL-1002',
     clientName: 'ACME Global Trading Philippines Inc.',
     issueDate: '2026-08-01',
@@ -969,7 +970,7 @@ export const BillingTemplateCustomizerModal: React.FC<CustomizerModalProps> = ({
                           <h2 className="text-sm font-extrabold tracking-tight" style={{ color: config.accentColor }}>
                             STATEMENT OF ACCOUNT
                           </h2>
-                          <p className="text-xs font-mono font-bold text-slate-900">{previewInvoice.invoiceNumber}</p>
+                          <p className="text-xs font-mono font-bold text-slate-900">Collection #: {previewInvoice.collectionNumber || '1001'}</p>
                         </div>
                       </div>
                     </div>

@@ -1929,13 +1929,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const activePayments = updatedPayments.filter(p => p.invoiceId === targetInv.id && p.status === 'Active');
       const newPaidAmount = activePayments.reduce((sum, p) => sum + p.amount, 0);
 
-      let newStatus: InvoiceItem['status'] = 'Sent';
+      let newStatus: InvoiceItem['status'] = 'For Collection';
       if (newPaidAmount >= targetInv.totalAmount) {
         newStatus = 'Paid';
       } else if (newPaidAmount > 0) {
         newStatus = 'Partially Paid';
       } else {
-        newStatus = 'Sent';
+        newStatus = 'For Collection';
       }
 
       const updatedInvoices = invoices.map(inv => {

@@ -36,7 +36,9 @@ import {
   CheckSquare,
   Receipt,
   CreditCard,
-  Briefcase
+  Briefcase,
+  ShieldAlert,
+  ArrowLeft
 } from 'lucide-react';
 
 export const DOCUMENT_CATEGORIES: DocumentCategory[] = [
@@ -69,9 +71,17 @@ export const DOCUMENT_TYPES = [
 
 interface DocumentLibraryViewProps {
   onNavigateToClient?: (clientId: string) => void;
+  onNavigate?: (tab: any) => void;
+  onReturnPrevious?: () => void;
+  previousTabName?: string;
 }
 
-export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavigateToClient }) => {
+export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ 
+  onNavigateToClient,
+  onNavigate,
+  onReturnPrevious,
+  previousTabName
+}) => {
   const { 
     documents, 
     clients, 
@@ -502,12 +512,39 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavi
           </p>
         </div>
 
-        <button 
-          onClick={() => setIsUploadModalOpen(true)}
-          className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-sm flex items-center gap-2 transition-all shrink-0"
-        >
-          <Upload className="w-4 h-4" /> Upload Document
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {onReturnPrevious && (
+            <button
+              type="button"
+              onClick={onReturnPrevious}
+              className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl border border-slate-200 shadow-2xs flex items-center gap-1.5 transition-all shrink-0 cursor-pointer"
+              title={`Return to ${previousTabName || 'previous view'}`}
+            >
+              <ArrowLeft className="w-4 h-4 text-slate-500" />
+              <span>Return to {previousTabName || 'Previous'}</span>
+            </button>
+          )}
+
+          {onNavigate && (
+            <button 
+              type="button"
+              onClick={() => onNavigate('compliance')}
+              className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-xl shadow-2xs flex items-center gap-2 transition-all shrink-0 cursor-pointer"
+              title="Open Deadline Monitoring & Compliance Schedule"
+            >
+              <ShieldAlert className="w-4 h-4 text-emerald-600" />
+              <span>Deadline Monitoring</span>
+            </button>
+          )}
+
+          <button 
+            type="button"
+            onClick={() => setIsUploadModalOpen(true)}
+            className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-sm flex items-center gap-2 transition-all shrink-0 cursor-pointer"
+          >
+            <Upload className="w-4 h-4" /> Upload Document
+          </button>
+        </div>
       </div>
 
       {/* Overview Stat Cards */}
@@ -765,7 +802,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavi
                         {invoiceObj && (
                           <div className="flex items-center gap-1 text-[10px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 w-fit">
                             <Receipt className="w-3 h-3 shrink-0" />
-                            <span className="font-bold">{invoiceObj.invoiceNumber}</span>
+                            <span className="font-bold">Collection #{invoiceObj.collectionNumber || invoiceObj.invoiceNumber || '1001'}</span>
                           </div>
                         )}
 
@@ -1069,7 +1106,7 @@ export const DocumentLibraryView: React.FC<DocumentLibraryViewProps> = ({ onNavi
                     >
                       <option value="">-- No Invoice Link --</option>
                       {invoices.filter(i => !uploadClientId || i.clientId === uploadClientId).map(i => (
-                        <option key={i.id} value={i.id}>{i.invoiceNumber} (₱{i.totalAmount.toLocaleString()})</option>
+                        <option key={i.id} value={i.id}>Collection #{i.collectionNumber || i.invoiceNumber || '1001'} (₱{i.totalAmount.toLocaleString()})</option>
                       ))}
                     </select>
                   </div>
