@@ -1289,17 +1289,15 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
     setCrItemPaymentConfigs(newConfigs);
 
-    // Automatically recalculate overall payment total from all configured item amounts
-    const totalFromConfigs = (Object.values(newConfigs) as CrItemPaymentConfig[]).reduce(
-      (sum: number, c: CrItemPaymentConfig) => sum + (Number(c.amount) || 0),
+    // Automatically recalculate overall payment total ONLY from items marked as PAID
+    const totalFromPaidConfigs = (Object.values(newConfigs) as CrItemPaymentConfig[]).reduce(
+      (sum: number, c: CrItemPaymentConfig) => sum + (c.isPaid ? (Number(c.amount) || 0) : 0),
       0
     );
-    if (totalFromConfigs > 0) {
-      setPaymentAmount(totalFromConfigs);
-    }
+    setPaymentAmount(totalFromPaidConfigs);
 
-    // If this item was marked as isPaid: true, auto-sync and persist to DataContext immediately
-    if (updates.isPaid === true) {
+    // If this item's paid status or payment configuration was updated, auto-sync and persist to DataContext immediately
+    if (updates.isPaid !== undefined || updates.mode !== undefined || updates.amount !== undefined || updates.bank !== undefined || updates.chequeNo !== undefined || updates.payee !== undefined) {
       saveItemPaymentToDatabase(serviceIdx, updated, newConfigs);
     }
   };
@@ -1324,7 +1322,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         chequeNo: s.chequeNumber || '',
         payee: s.chequePayee || 'FFCSI',
         customPayee: '',
-        isPaid: Boolean(s.isPaid || s.paymentMode || targetInv.status === 'Paid')
+        isPaid: Boolean(s.isPaid)
       });
 
       const finalBank = cfg.bank === 'Other Bank' ? (cfg.customBank || 'Bank') : cfg.bank.split(' ')[0];
@@ -1346,12 +1344,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     });
 
     const configsList = Object.values(allConfigs) as CrItemPaymentConfig[];
-    const hasCheque = configsList.some((c: CrItemPaymentConfig) => c.mode === 'Cheque');
-    const hasCash = configsList.some((c: CrItemPaymentConfig) => c.mode === 'Cash');
-    const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : 'Cash Collection';
+    const paidConfigs = configsList.filter((c: CrItemPaymentConfig) => c.isPaid);
+    const hasCheque = paidConfigs.some((c: CrItemPaymentConfig) => c.mode === 'Cheque');
+    const hasCash = paidConfigs.some((c: CrItemPaymentConfig) => c.mode === 'Cash');
+    const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : hasCash ? 'Cash Collection' : (targetInv.paymentMethod || 'Cash');
 
-    const chequeRefs = configsList
-      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && (c.isPaid || c.chequeNo))
+    const chequeRefs = paidConfigs
+      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && c.chequeNo)
       .map((c: CrItemPaymentConfig) => {
         const b = c.bank === 'Other Bank' ? (c.customBank || 'Cheque') : c.bank.split(' ')[0];
         const p = c.payee === 'Other' ? c.customPayee : c.payee;
@@ -1366,10 +1365,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     }, 0);
 
     const isFullyPaid = totalPaidAmount >= targetInv.totalAmount;
-    const newStatus = isFullyPaid ? 'Paid' : (totalPaidAmount > 0 ? 'Partially Paid' : targetInv.status);
+    const newStatus = isFullyPaid ? 'Paid' : (totalPaidAmount > 0 ? 'Partially Paid' : 'Pending');
 
     const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const auditDetails = `Payment Remittance Recorded: Item #${serviceIdx + 1} (${updatedServices[serviceIdx]?.description || ''}) marked as Paid (₱${(Number(updatedConfig.amount) || 0).toLocaleString()}), C.R. #${finalCr}, Method: ${updatedConfig.mode}`;
+    const auditDetails = updatedConfig.isPaid
+      ? `Payment Remittance Recorded: Item #${serviceIdx + 1} (${updatedServices[serviceIdx]?.description || ''}) marked as Paid (₱${(Number(updatedConfig.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}) via ${updatedConfig.mode}`
+      : `Payment Status Reverted: Item #${serviceIdx + 1} (${updatedServices[serviceIdx]?.description || ''}) marked as Unpaid / Pending`;
 
     const amendmentRecord = {
       date: nowTimestamp,
@@ -1421,9 +1422,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       return;
     }
     setSelectedInvoice(inv);
-    const balance = getInvoiceBalance(inv.id);
-    const isAlreadyPaid = (inv.paidAmount || 0) > 0 || inv.status === 'Paid';
-    setPaymentAmount(isAlreadyPaid ? (inv.paidAmount || inv.totalAmount) : (balance > 0 ? balance : inv.totalAmount));
     setPaymentDate(inv.paymentDate || new Date().toISOString().substring(0, 10));
     setPaymentMethod(inv.paymentMethod || 'Cash');
     setPaymentRefNum('');
@@ -1435,7 +1433,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setOrNumber(cleanDigits);
     setCrError('');
 
-    // Initialize per-item payment configurations
+    // Initialize per-item payment configurations with strict item-level isolation
     const initialConfigs: Record<number, CrItemPaymentConfig> = {};
 
     inv.services.forEach((s, idx) => {
@@ -1455,6 +1453,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         }
       }
 
+      // Check item-level paid status: strictly paid if s.isPaid === true, or if invoice was fully Paid
+      const itemIsPaid = s.isPaid === true || (inv.status === 'Paid' && s.isPaid !== false);
+
       initialConfigs[idx] = {
         mode: isCheque ? 'Cheque' : 'Cash',
         amount: s.amount || 0,
@@ -1463,9 +1464,15 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         chequeNo: chequeNo,
         payee: isCustomPayee ? 'Other' : detectedPayee,
         customPayee: isCustomPayee ? detectedPayee : '',
-        isPaid: isAlreadyPaid || (s.isPaid ?? false)
+        isPaid: itemIsPaid
       };
     });
+
+    const paidSum = Object.values(initialConfigs).reduce(
+      (sum, c) => sum + (c.isPaid ? (Number(c.amount) || 0) : 0),
+      0
+    );
+    setPaymentAmount(paidSum);
     setCrItemPaymentConfigs(initialConfigs);
     setIsCrPaymentMode(true);
     setShowCrModal(true);
@@ -1534,7 +1541,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         chequeNo: '',
         payee: 'FFCSI',
         customPayee: '',
-        isPaid: true
+        isPaid: Boolean(s.isPaid)
       };
       const finalBank = cfg.bank === 'Other Bank' ? (cfg.customBank || 'Bank') : cfg.bank.split(' ')[0];
       const finalPayee = cfg.payee === 'Other' ? (cfg.customPayee || 'Other') : cfg.payee;
@@ -1545,7 +1552,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
       return {
         ...s,
-        isPaid: true,
+        isPaid: Boolean(cfg.isPaid),
         amount: Number(cfg.amount) > 0 ? Number(cfg.amount) : s.amount,
         paymentMode: cfg.mode,
         chequeNumber: cfg.mode === 'Cheque' ? finalChequeStr : undefined,
@@ -1555,12 +1562,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     });
 
     const configsList = Object.values(crItemPaymentConfigs) as CrItemPaymentConfig[];
-    const hasCheque = configsList.some((c: CrItemPaymentConfig) => c.mode === 'Cheque');
-    const hasCash = configsList.some((c: CrItemPaymentConfig) => c.mode === 'Cash');
-    const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : 'Cash Collection';
+    const paidConfigs = configsList.filter((c: CrItemPaymentConfig) => c.isPaid);
+    const hasCheque = paidConfigs.some((c: CrItemPaymentConfig) => c.mode === 'Cheque');
+    const hasCash = paidConfigs.some((c: CrItemPaymentConfig) => c.mode === 'Cash');
+    const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : hasCash ? 'Cash Collection' : (targetInv.paymentMethod || 'Cash');
 
-    const chequeRefs = configsList
-      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && (c.isPaid || c.chequeNo))
+    const chequeRefs = paidConfigs
+      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && c.chequeNo)
       .map((c: CrItemPaymentConfig) => {
         const b = c.bank === 'Other Bank' ? (c.customBank || 'Cheque') : c.bank.split(' ')[0];
         const p = c.payee === 'Other' ? c.customPayee : c.payee;
@@ -1568,9 +1576,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       })
       .join(', ');
 
-    const finalPaymentAmount = paymentAmount > 0 ? paymentAmount : targetInv.totalAmount;
+    const totalPaidFromItems = updatedServices.reduce((sum, s, idx) => {
+      const c = crItemPaymentConfigs[idx];
+      return sum + ((c && c.isPaid) ? (Number(c.amount) || s.amount) : 0);
+    }, 0);
+    const finalPaymentAmount = totalPaidFromItems;
     const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const auditDetails = `Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(finalPaymentAmount).toLocaleString()}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${paymentNotes ? ` • Notes: ${paymentNotes}` : ''}`;
+    const auditDetails = `Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(finalPaymentAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${paymentNotes ? ` • Notes: ${paymentNotes}` : ''}`;
 
     const amendmentRecord = {
       date: nowTimestamp,
@@ -3689,13 +3701,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         <div key={idx} className="bg-slate-50/80 p-2 border border-slate-200 rounded-xl space-y-1.5">
                           <div className="grid grid-cols-11 gap-2 items-center">
                             <div className="col-span-5 relative">
-                              <input
-                                type="text"
+                              <SmartServiceInput
                                 required
-                                placeholder="e.g. Retainers Fee"
+                                placeholder="e.g. 0619E, Retainers Fee"
                                 value={item.description || ''}
-                                onChange={e => {
-                                  handleServiceChange(idx, 'description', e.target.value);
+                                onChange={val => {
+                                  handleServiceChange(idx, 'description', val);
                                   if (descriptionErrors[idx]) {
                                     setDescriptionErrors(prev => {
                                       const next = { ...prev };
@@ -3704,11 +3715,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                     });
                                   }
                                 }}
-                                className={`w-full px-2.5 py-1.5 bg-white border rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100 transition-all ${
-                                  descriptionErrors[idx]
-                                    ? 'border-rose-500 ring-2 ring-rose-300 bg-rose-50/70 text-rose-950 placeholder-rose-400'
-                                    : 'border-slate-200'
-                                }`}
+                                onSelectSuggestion={catalogItem => {
+                                  if (catalogItem.defaultAmount && !item.amount) {
+                                    handleServiceChange(idx, 'amount', catalogItem.defaultAmount);
+                                  }
+                                }}
+                                hasError={!!descriptionErrors[idx]}
                               />
                               {descriptionErrors[idx] && (
                                 <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
@@ -3719,12 +3731,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             </div>
                             <div className="col-span-3 flex items-center gap-1 relative">
                               <div className="w-full relative">
-                                <input
-                                  type="text"
-                                  placeholder="e.g. May – Jul 2026"
+                                <SmartPeriodInput
+                                  placeholder="e.g. July 2026, Q2 2026"
                                   value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
-                                  onChange={e => {
-                                    handleServiceChange(idx, 'monthYear', e.target.value);
+                                  selectedYear={selectedYear}
+                                  onChange={val => {
+                                    handleServiceChange(idx, 'monthYear', val);
                                     if (monthYearErrors[idx]) {
                                       setMonthYearErrors(prev => {
                                         const next = { ...prev };
@@ -3733,11 +3745,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                       });
                                     }
                                   }}
-                                  className={`w-full px-2 py-1.5 bg-white border rounded-lg text-slate-900 text-xs font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100 transition-all ${
-                                    monthYearErrors[idx]
-                                      ? 'border-rose-500 ring-2 ring-rose-300 bg-rose-50/70 text-rose-950 placeholder-rose-400'
-                                      : 'border-slate-200'
-                                  }`}
+                                  hasError={!!monthYearErrors[idx]}
                                 />
                                 {monthYearErrors[idx] && (
                                   <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
@@ -4627,18 +4635,17 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                       </button>
                                     </div>
 
-                                    {/* Amount Textbox (defaulting to srv.amount) */}
+                                    {/* Amount Textbox (defaulting to srv.amount) formatted as x,xxx,xxx.xx */}
                                     <div className="flex items-center gap-1">
                                       <label className="text-[10px] font-bold text-slate-700 shrink-0">Amount ₱:</label>
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={itemCfg.amount}
-                                        onChange={e => handleUpdateItemPayment(idx, { amount: parseFloat(e.target.value) || 0 })}
-                                        className="w-24 px-2 py-0.5 font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded text-xs text-right focus:ring-1 focus:ring-emerald-500"
-                                        placeholder="0.00"
-                                      />
+                                      <div className="w-28">
+                                        <CurrencyInput
+                                          value={itemCfg.amount}
+                                          onChange={val => handleUpdateItemPayment(idx, { amount: val })}
+                                          className="w-full px-2 py-0.5 font-mono font-bold text-slate-900 bg-white border border-slate-300 rounded text-xs text-right focus:ring-1 focus:ring-emerald-500"
+                                          placeholder="0.00"
+                                        />
+                                      </div>
                                     </div>
                                   </div>
 
@@ -4757,8 +4764,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
                       // Payment Format View Mode (3 columns: PARTICULARS | AMOUNT | Payment info) ⭐
                       if (crViewFormat === 'payment') {
-                        const isLinePaid = srv.isPaid || !!srv.paymentMode || !!srv.chequeNumber || selectedInvoice.status === 'Paid' || (selectedInvoice.paidAmount !== undefined && selectedInvoice.paidAmount > 0);
-                        const isCheque = srv.paymentMode === 'Cheque' || !!srv.chequeNumber;
+                        const isLinePaid = Boolean(srv.isPaid || (selectedInvoice.status === 'Paid' && srv.isPaid !== false));
+                        const isCheque = srv.paymentMode === 'Cheque' || (srv.paymentMethod && srv.paymentMethod.toLowerCase().includes('cheque')) || !!srv.chequeNumber;
                         return (
                           <div key={idx} className="grid grid-cols-12 text-xs font-bold pl-2 py-1.5 items-center border-b border-slate-100 last:border-b-0 hover:bg-slate-50/50">
                             <div className="col-span-5 text-slate-900 pr-2 border-r border-slate-200 pl-1">
@@ -4767,7 +4774,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                               </div>
                             </div>
                             <div className="col-span-3 text-right font-mono font-bold text-slate-900 pr-4 border-r border-slate-200 text-xs">
-                              {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                              {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                             <div className="col-span-4 pl-4 pr-1">
                               {!isLinePaid ? (
@@ -4796,7 +4803,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             <span>{srv.description} {srv.monthYear ? `— ${srv.monthYear}` : ''}</span>
                           </div>
                           <div className="col-span-4 text-right font-mono text-slate-900">
-                            {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </div>
                         </div>
                       );
@@ -4807,10 +4814,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         Professional Accounting Retainer Fee
                       </div>
                       <div className="col-span-3 text-right font-mono font-bold text-slate-900 pr-4 border-r border-slate-200 text-xs">
-                        {(selectedInvoice.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {(selectedInvoice.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="col-span-4 pl-4 pr-1">
-                        {selectedInvoice.status === 'Paid' || (selectedInvoice.paidAmount && selectedInvoice.paidAmount > 0) ? (
+                        {selectedInvoice.status === 'Paid' ? (
                           <span className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-950 font-bold px-2 py-0.5 rounded-md border border-emerald-300 shadow-2xs">
                             💵 Cash • Paid to FFCSI
                           </span>
@@ -4997,29 +5004,34 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   {editServices.map((s, idx) => (
                     <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-slate-50/80 p-1.5 border border-slate-200 rounded-xl">
                       <div className="col-span-5">
-                        <input
-                          type="text"
+                        <SmartServiceInput
                           required
+                          placeholder="e.g. 0619E, Retainers Fee"
                           value={s.description || ''}
-                          onChange={e => {
+                          onChange={val => {
                             const updated = [...editServices];
-                            updated[idx].description = e.target.value;
+                            updated[idx].description = val;
                             setEditServices(updated);
                           }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium"
+                          onSelectSuggestion={catalogItem => {
+                            if (catalogItem.defaultAmount && !s.amount) {
+                              const updated = [...editServices];
+                              updated[idx].amount = catalogItem.defaultAmount;
+                              setEditServices(updated);
+                            }
+                          }}
                         />
                       </div>
                       <div className="col-span-4 flex items-center gap-1">
-                        <input
-                          type="text"
-                          placeholder="e.g. August 2026"
+                        <SmartPeriodInput
+                          placeholder="e.g. August 2026, Q3 2026"
                           value={s.monthYear !== undefined && s.monthYear !== null ? s.monthYear : ''}
-                          onChange={e => {
+                          selectedYear={selectedYear}
+                          onChange={val => {
                             const updated = [...editServices];
-                            updated[idx].monthYear = e.target.value;
+                            updated[idx].monthYear = val;
                             setEditServices(updated);
                           }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-slate-900 text-xs font-medium"
                         />
                         <button
                           type="button"
