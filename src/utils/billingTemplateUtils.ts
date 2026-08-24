@@ -584,24 +584,37 @@ export function generateFFCSICollectionReceiptPDF(
   let calculatedTotal = 0;
   if (inv.services && inv.services.length > 0) {
     inv.services.forEach((s) => {
-      const lineLabel = s.monthYear ? `${s.description} — ${s.monthYear}` : s.description;
-      doc.text(lineLabel, margin + 10, y);
+      // Particulars description on left
+      const descLines = doc.splitTextToSize(s.description, 68);
+      doc.text(descLines, margin + 6, y);
+
+      // Month/Year centered in the period zone of Particulars
+      if (s.monthYear) {
+        doc.text(s.monthYear, margin + 88, y, { align: 'center' });
+      }
+
+      // Amount right-aligned in Amount column
       doc.text(s.amount.toLocaleString(undefined, { minimumFractionDigits: 2 }), rightX - 8, y, { align: 'right' });
       calculatedTotal += s.amount;
-      y += 7;
+      
+      const lineCount = Array.isArray(descLines) ? descLines.length : 1;
+      y += Math.max(7, lineCount * 4.5 + 2.5);
     });
 
     if (inv.billingNotes && inv.billingNotes.trim()) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(30, 41, 59);
-      doc.text(inv.billingNotes.trim(), margin + 10, y);
+      doc.text(inv.billingNotes.trim(), margin + 6, y);
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(9.5);
       y += 7;
     }
   } else {
-    doc.text(`Professional Accounting Retainer Fee`, margin + 10, y);
+    doc.text(`Professional Accounting Retainer Fee`, margin + 6, y);
+    if (inv.billingPeriod) {
+      doc.text(inv.billingPeriod, margin + 88, y, { align: 'center' });
+    }
     doc.text((inv.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 }), rightX - 8, y, { align: 'right' });
     calculatedTotal = inv.totalAmount;
     y += 7;

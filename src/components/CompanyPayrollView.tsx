@@ -14,6 +14,8 @@ import { computeEmployeePayslip, calculateSSSContribution, calculatePhilHealthCo
 import { DolePayrollSandbox } from './DolePayrollSandbox';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
+import { AttendanceReportModal } from './AttendanceReportModal';
+import { generateCutoffAttendance, exportAttendanceReportToExcel } from '../utils/attendanceUtils';
 import { 
   Banknote, 
   Plus, 
@@ -38,7 +40,8 @@ import {
   ChevronRight,
   Download,
   Upload,
-  FileSpreadsheet
+  FileSpreadsheet,
+  TableProperties
 } from 'lucide-react';
 
 export const CompanyPayrollView: React.FC = () => {
@@ -63,7 +66,7 @@ export const CompanyPayrollView: React.FC = () => {
 
   const { currentUser, isSuperAdmin } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'payroll' | 'employees' | 'leaves' | 'vale' | 'calculator'>('payroll');
+  const [activeTab, setActiveTab] = useState<'payroll' | 'employees' | 'leaves' | 'vale' | 'attendance' | 'calculator'>('payroll');
   const [selectedRun, setSelectedRun] = useState<PayrollRun | null>(null);
   const [showNewRunModal, setShowNewRunModal] = useState(false);
   const [showEmployeeModal, setShowEmployeeModal] = useState(false);
@@ -71,6 +74,8 @@ export const CompanyPayrollView: React.FC = () => {
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showValeModal, setShowValeModal] = useState(false);
   const [showPayslipModal, setShowPayslipModal] = useState<{ run: PayrollRun; item: PayrollItem } | null>(null);
+  const [attendanceModalEmployee, setAttendanceModalEmployee] = useState<CompanyEmployee | null>(null);
+  const [selectedAttEmployeeId, setSelectedAttEmployeeId] = useState<string>(employees[0]?.id || '');
   const [searchTerm, setSearchTerm] = useState('');
 
   // Form states for New Payroll Run
@@ -89,9 +94,11 @@ export const CompanyPayrollView: React.FC = () => {
     otherAllowances: number;
     valeDeduction: number;
     otherDeductions: number;
+    timeIn?: string;
+    timeOut?: string;
   }>>({});
 
-  // Employee Form State
+  // Employee Form State (Defaults to Gross / 22 for Daily Salary)
   const [empForm, setEmpForm] = useState<Omit<CompanyEmployee, 'id'>>({
     employeeNo: `EMP-00${employees.length + 1}`,
     fullName: '',
@@ -100,8 +107,8 @@ export const CompanyPayrollView: React.FC = () => {
     dateHired: new Date().toISOString().split('T')[0],
     employmentType: 'Regular',
     monthlyBasicSalary: 25000,
-    dailyRate: 1149.43,
-    hourlyRate: 143.68,
+    dailyRate: 1136.36, // 25,000 / 22
+    hourlyRate: 142.05, // 1136.36 / 8
     tinNumber: '',
     sssNumber: '',
     philhealthNumber: '',
@@ -136,7 +143,7 @@ export const CompanyPayrollView: React.FC = () => {
     cutoffDeductionAmount: 500
   });
 
-  // Parse shift times helper (e.g. "08:15 AM", "17:30")
+  // Parse shift times helper (Standard Shift: 8:30 AM - 5:30 PM, Grace Allowance up to 8:45 AM)
   const parseShiftTimes = (timeInStr: string, timeOutStr: string) => {
     const parseToMinutes = (str: string) => {
       const clean = str.trim().toUpperCase();
@@ -158,13 +165,22 @@ export const CompanyPayrollView: React.FC = () => {
     const outMins = parseToMinutes(timeOutStr);
     if (inMins === null || outMins === null) return null;
 
-    // Standard shift: 8:00 AM (480 mins) to 5:00 PM (1020 mins)
-    const scheduledIn = 8 * 60; // 480
-    const scheduledOut = 17 * 60; // 1020
+    // Standard Shift: 8:30 AM (510 mins) to 5:30 PM (1050 mins)
+    const scheduledIn = 8 * 60 + 30; // 510
+    const scheduledOut = 17 * 60 + 30; // 1050
+    const graceAllowance = 8 * 60 + 45; // 525 (8:45 AM)
 
-    const lateMinutes = Math.max(0, inMins - scheduledIn);
+    // Allowance up to 8:45 AM -> 0 late. Beyond 8:45 AM -> computed every minute from 8:30 AM
+    let lateMinutes = 0;
+    if (inMins > graceAllowance) {
+      lateMinutes = Math.max(0, inMins - scheduledIn);
+    }
+
+    // Early out / undertime if left before 5:30 PM
     const undertimeMinutes = Math.max(0, scheduledOut - outMins);
-    const otHours = Math.max(0, Math.floor(((outMins - scheduledOut) / 60) * 10) / 10);
+
+    // Overtime if worked past 5:30 PM
+    const otHours = Math.max(0, Number(((outMins - scheduledOut) / 60).toFixed(2)));
 
     return { lateMinutes, undertimeMinutes, otHours };
   };
@@ -656,6 +672,21 @@ export const CompanyPayrollView: React.FC = () => {
         >
           <DollarSign className="w-4 h-4" />
           Vale Tracker (Cash Advances)
+        </button>
+
+        <button
+          onClick={() => setActiveTab('attendance')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+            activeTab === 'attendance' 
+              ? 'bg-blue-600 text-white shadow-xs' 
+              : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+          }`}
+        >
+          <TableProperties className="w-4 h-4" />
+          Attendance & DTR Reports
+          <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] rounded-full font-bold">
+            {employees.filter(e => e.status === 'Active').length}
+          </span>
         </button>
 
         <button
@@ -1183,7 +1214,194 @@ export const CompanyPayrollView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 5: DOLE & BIR REFERENCE CALCULATOR & INTERACTIVE SANDBOX */}
+      {/* TAB 5: ATTENDANCE & DTR REPORTS (MATCHING FFCSI ATTENDANCE FORMAT) ⭐ */}
+      {activeTab === 'attendance' && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+                  Automated Timekeeping & DOLE Rules
+                </span>
+                <span className="text-xs text-slate-500 font-mono">Gross / 22 • 8:30 AM - 5:30 PM • Grace up to 8:45 AM</span>
+              </div>
+              <h2 className="text-xl font-bold text-slate-900">Attendance & DTR Sheets</h2>
+              <p className="text-xs text-slate-500">
+                View, edit, export, and print employee daily time records. Computes Overtime, Late (with 8:45 AM allowance), Early Out, Absences, Holiday Pay, and Night Differential.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees[0];
+                  if (emp) {
+                    const rep = generateCutoffAttendance(emp, newRunPeriod, newRunPeriodType);
+                    exportAttendanceReportToExcel(rep);
+                  }
+                }}
+                className="px-4 py-2 bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors shadow-2xs"
+              >
+                <Download className="w-4 h-4 text-emerald-600" /> Export Excel (.xlsx)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees[0];
+                  if (emp) setAttendanceModalEmployee(emp);
+                }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-colors"
+              >
+                <TableProperties className="w-4 h-4" /> Open Full DTR Grid Modal
+              </button>
+            </div>
+          </div>
+
+          {/* Quick Staff Selector Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+            {employees.filter(e => e.status === 'Active').map(emp => {
+              const isSelected = selectedAttEmployeeId === emp.id;
+              const dailySal = emp.dailyRate || Number((emp.monthlyBasicSalary / 22).toFixed(2));
+              
+              return (
+                <div
+                  key={emp.id}
+                  onClick={() => setSelectedAttEmployeeId(emp.id)}
+                  className={`p-4 rounded-xl border transition-all cursor-pointer ${
+                    isSelected 
+                      ? 'bg-blue-50/80 border-blue-500 shadow-xs ring-2 ring-blue-500/20' 
+                      : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-2xs'
+                  }`}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-[10px] font-mono font-bold text-slate-400">{emp.employeeNo}</span>
+                      <h4 className="text-xs font-bold text-slate-900">{emp.fullName}</h4>
+                      <span className="text-[11px] text-slate-500">{emp.position}</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-blue-100 text-blue-800">
+                      ₱{dailySal.toFixed(0)}/day
+                    </span>
+                  </div>
+
+                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <span className="text-slate-500">Working Hours: <strong>8:30 - 5:30</strong></span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAttendanceModalEmployee(emp);
+                      }}
+                      className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-0.5 text-[11px]"
+                    >
+                      View DTR <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Inline Preview Table of Selected Employee */}
+          {(() => {
+            const selectedEmp = employees.find(e => e.id === selectedAttEmployeeId) || employees[0];
+            if (!selectedEmp) return null;
+            const previewReport = generateCutoffAttendance(selectedEmp, newRunPeriod, newRunPeriodType);
+
+            return (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
+                      <TableProperties className="w-4 h-4 text-blue-600" />
+                      Attendance Sheet: <span className="text-blue-700">{selectedEmp.fullName}</span> ({selectedEmp.employeeNo})
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Cutoff: <strong className="text-slate-800">{newRunPeriod}</strong> • Standard Shift: <strong>8:30 AM - 5:30 PM</strong> (1h Break: 12:00 PM - 1:00 PM) • Grace Allowance: <strong>Up to 8:45 AM</strong>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAttendanceModalEmployee(selectedEmp)}
+                      className="px-3.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Interactive Edit Mode
+                    </button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto border border-blue-300 rounded-xl">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-blue-600 text-white font-bold">
+                        <th colSpan={6} className="py-2 px-3 text-center border-r border-blue-400">Attendance List</th>
+                        <th className="py-2 px-2 text-center border-r border-blue-400">Late (Mins)</th>
+                        <th className="py-2 px-2 text-center border-r border-blue-400">Absent</th>
+                        <th className="py-2 px-2 text-center border-r border-blue-400">Early Out</th>
+                        <th className="py-2 px-2 text-center border-r border-blue-400">Holiday Pay</th>
+                        <th className="py-2 px-2 text-center">Night Diff</th>
+                      </tr>
+                      <tr className="bg-blue-50 text-blue-950 font-bold text-[11px] border-b border-blue-200">
+                        <th className="py-1.5 px-3 border-r border-blue-200">dd/ww</th>
+                        <th className="py-1.5 px-2 text-center border-r border-blue-200">AM In</th>
+                        <th className="py-1.5 px-2 text-center border-r border-blue-200">AM Out</th>
+                        <th className="py-1.5 px-2 text-center border-r border-blue-200">PM In</th>
+                        <th className="py-1.5 px-2 text-center border-r border-blue-200">PM Out</th>
+                        <th className="py-1.5 px-2 text-center border-r border-blue-200">OT</th>
+                        <th colSpan={5} className="py-1.5 px-2 text-center text-slate-500 font-normal italic">Auto-Calculated by Firm Rules</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {previewReport.records.map(r => (
+                        <tr key={r.dayNum} className={r.isRestDay ? 'bg-slate-50/70 text-slate-400' : 'hover:bg-blue-50/30'}>
+                          <td className="py-1.5 px-3 font-mono font-bold border-r border-slate-200">{r.ddWwLabel}</td>
+                          <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200">{r.amIn || '-'}</td>
+                          <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200">{r.amOut || '-'}</td>
+                          <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200">{r.pmIn || '-'}</td>
+                          <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200">{r.pmOut || '-'}</td>
+                          <td className="py-1.5 px-2 text-center font-mono font-bold text-emerald-700 border-r border-slate-200">{r.otHours > 0 ? `${r.otHours}h` : '-'}</td>
+                          <td className={`py-1.5 px-2 text-center font-mono border-r border-slate-200 ${r.lateMinutes > 0 ? 'text-rose-600 font-bold' : 'text-slate-400'}`}>
+                            {r.lateMinutes > 0 ? `${r.lateMinutes}m` : '0'}
+                          </td>
+                          <td className={`py-1.5 px-2 text-center font-mono border-r border-slate-200 ${r.absent > 0 ? 'text-rose-600 font-bold' : 'text-slate-400'}`}>
+                            {r.absent > 0 ? '1' : '0'}
+                          </td>
+                          <td className={`py-1.5 px-2 text-center font-mono border-r border-slate-200 ${r.earlyOutMinutes > 0 ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>
+                            {r.earlyOutMinutes > 0 ? `${r.earlyOutMinutes}m` : '0'}
+                          </td>
+                          <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200 text-indigo-700 font-bold">
+                            {r.holidayPay > 0 ? `₱${r.holidayPay.toFixed(2)}` : '-'}
+                          </td>
+                          <td className="py-1.5 px-2 text-center font-mono text-purple-700 font-bold">
+                            {r.nightDiffHours > 0 ? `${r.nightDiffHours}h` : '0'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-900 text-white font-bold font-mono text-xs">
+                        <td colSpan={5} className="py-2 px-3 text-right uppercase tracking-wider font-sans text-slate-300">Cutoff Aggregated Totals:</td>
+                        <td className="py-2 px-2 text-center text-emerald-300">{previewReport.totalOtHours}h</td>
+                        <td className="py-2 px-2 text-center text-amber-300">{previewReport.totalLateMinutes}m</td>
+                        <td className="py-2 px-2 text-center text-rose-300">{previewReport.totalDaysAbsent}d</td>
+                        <td className="py-2 px-2 text-center text-amber-300">{previewReport.totalEarlyOutMinutes}m</td>
+                        <td className="py-2 px-2 text-center text-indigo-300">₱{previewReport.totalHolidayPay.toFixed(2)}</td>
+                        <td className="py-2 px-2 text-center text-purple-300">{previewReport.totalNightDiffHours}h</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* TAB 6: DOLE & BIR REFERENCE CALCULATOR & INTERACTIVE SANDBOX */}
       {activeTab === 'calculator' && (
         <DolePayrollSandbox />
       )}
@@ -1345,9 +1563,9 @@ export const CompanyPayrollView: React.FC = () => {
                           <span className="text-slate-500 text-[10px] font-medium">In:</span>
                           <input
                             type="text"
-                            value={inp.timeIn || '08:00 AM'}
-                            onChange={e => handleShiftTimeChange(e.target.value, inp.timeOut || '05:00 PM')}
-                            placeholder="08:00 AM"
+                            value={inp.timeIn || '08:30 AM'}
+                            onChange={e => handleShiftTimeChange(e.target.value, inp.timeOut || '05:30 PM')}
+                            placeholder="08:30 AM"
                             className="w-24 px-2 py-1 bg-white border border-slate-300 rounded font-mono text-slate-800 text-xs font-bold text-center"
                           />
                         </div>
@@ -1356,17 +1574,26 @@ export const CompanyPayrollView: React.FC = () => {
                           <span className="text-slate-500 text-[10px] font-medium">Out:</span>
                           <input
                             type="text"
-                            value={inp.timeOut || '05:00 PM'}
-                            onChange={e => handleShiftTimeChange(inp.timeIn || '08:00 AM', e.target.value)}
-                            placeholder="05:00 PM"
+                            value={inp.timeOut || '05:30 PM'}
+                            onChange={e => handleShiftTimeChange(inp.timeIn || '08:30 AM', e.target.value)}
+                            placeholder="05:30 PM"
                             className="w-24 px-2 py-1 bg-white border border-slate-300 rounded font-mono text-slate-800 text-xs font-bold text-center"
                           />
                         </div>
 
-                        <div className="text-[11px] text-slate-500 flex items-center gap-2 ml-auto">
+                        <div className="text-[11px] text-slate-500 flex items-center gap-2">
                           <span>Auto Tardiness: <strong className="text-amber-600 font-mono">{inp.tardinessMinutes}m</strong></span>
                           <span>Auto OT: <strong className="text-emerald-600 font-mono">{inp.otRegularHours}h</strong></span>
                         </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setAttendanceModalEmployee(emp)}
+                          className="ml-auto px-2.5 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 border border-indigo-300 rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <TableProperties className="w-3.5 h-3.5 text-indigo-700" />
+                          Attendance Sheet / DTR
+                        </button>
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
@@ -2000,6 +2227,47 @@ export const CompanyPayrollView: React.FC = () => {
             </div>
           </form>
         </div>
+      )}
+
+      {/* ATTENDANCE & DTR REPORT MODAL (FFCSI FORMAT) ⭐ */}
+      {attendanceModalEmployee && (
+        <AttendanceReportModal
+          employee={attendanceModalEmployee}
+          cutoffPeriod={newRunPeriod}
+          cutoffPeriodType={newRunPeriodType}
+          onClose={() => setAttendanceModalEmployee(null)}
+          onSyncToPayroll={(totals) => {
+            const current = payrollInputs[attendanceModalEmployee.id] || {
+              daysWorked: 11,
+              daysAbsent: 0,
+              tardinessMinutes: 0,
+              undertimeMinutes: 0,
+              otRegularHours: 0,
+              otRestDayHours: 0,
+              otHolidayHours: 0,
+              nightDiffHours: 0,
+              otherAllowances: 0,
+              valeDeduction: 0,
+              otherDeductions: 0
+            };
+
+            setPayrollInputs({
+              ...payrollInputs,
+              [attendanceModalEmployee.id]: {
+                ...current,
+                daysWorked: totals.daysWorked,
+                daysAbsent: totals.daysAbsent,
+                tardinessMinutes: totals.tardinessMinutes,
+                undertimeMinutes: totals.undertimeMinutes,
+                otRegularHours: totals.otRegularHours,
+                otHolidayHours: totals.otHolidayHours,
+                nightDiffHours: totals.nightDiffHours,
+                otherAllowances: current.otherAllowances + (totals.holidayPayAmount || 0)
+              }
+            });
+            alert(`Synced attendance metrics for ${attendanceModalEmployee.fullName} to payroll batch!`);
+          }}
+        />
       )}
     </div>
   );

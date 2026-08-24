@@ -382,12 +382,13 @@ export const DOLE_DAY_RATE_RULES: Record<DoleDayType, DoleDayRateRule> = {
   }
 };
 
-// DOLE Working Days Annual Factors
-export type DoleWorkingFactor = '313' | '261' | '365' | '393.8';
+// DOLE Working Days Annual Factors & Company 22-Day Factor ⭐
+export type DoleWorkingFactor = '264' | '261' | '313' | '365' | '393.8';
 
 export const DOLE_WORKING_FACTORS: Record<DoleWorkingFactor, { days: number; description: string; daysPerMonth: number }> = {
-  '313': { days: 313, description: '6 days/week (Ordinary working days, 52 rest days unworked)', daysPerMonth: 313 / 12 }, // 26.083
+  '264': { days: 264, description: 'Company Standard (22 Working Days/month: Gross Monthly / 22)', daysPerMonth: 22.0 }, // 22 days/mo ⭐
   '261': { days: 261, description: '5 days/week (Mon-Fri, Saturday & Sunday rest days unworked)', daysPerMonth: 261 / 12 }, // 21.75
+  '313': { days: 313, description: '6 days/week (Ordinary working days, 52 rest days unworked)', daysPerMonth: 313 / 12 }, // 26.083
   '365': { days: 365, description: 'Everyday working (Rest days considered paid)', daysPerMonth: 365 / 12 }, // 30.417
   '393.8': { days: 393.8, description: 'Everyday + Paid 52 Rest Days at 130% + 12 Regular Holidays at 200%', daysPerMonth: 393.8 / 12 }
 };
@@ -446,41 +447,51 @@ export function parseTimeToMinutes(timeStr: string): number | null {
 }
 
 /**
- * Computes DOLE shift hours and overtime breakdown from Time-In to Time-Out
- * e.g. "8:30 AM" to "10:00 PM" with 1 hr lunch break
+ * Computes DOLE shift hours, tardiness with 8:45 AM allowance, and overtime breakdown
+ * Company Standard: Shift 8:30 AM - 5:30 PM, 1 hr break 12:00 PM - 1:00 PM
+ * Grace period: Up to 8:45 AM is 0 late; beyond 8:45 AM computed per minute from 8:30 AM.
+ * Daily Salary = Gross Monthly Income / 22
  */
 export function computeDoleShiftOvertime(
   timeInStr: string,
   timeOutStr: string,
   monthlySalary: number,
-  factor: DoleWorkingFactor = '261',
+  factor: DoleWorkingFactor = '264',
   dayType: DoleDayType = 'ORDINARY_DAY',
   unpaidBreakMinutes: number = 60,
   scheduledShiftStartStr: string = '08:30 AM',
-  scheduledShiftEndStr: string = '05:30 PM'
+  scheduledShiftEndStr: string = '05:30 PM',
+  gracePeriodStartStr: string = '08:45 AM'
 ): ShiftOvertimeResult {
   const dayRule = DOLE_DAY_RATE_RULES[dayType] || DOLE_DAY_RATE_RULES.ORDINARY_DAY;
-  const factorInfo = DOLE_WORKING_FACTORS[factor] || DOLE_WORKING_FACTORS['261'];
   
-  // Rate calculations
-  // Daily Rate = (Monthly Salary * 12) / Factor Days
-  const dailyRate = Number(((monthlySalary * 12) / factorInfo.days).toFixed(2));
+  // Daily Salary = Gross Monthly Income / 22 (or factor days/month)
+  const dailyRate = factor === '264'
+    ? Number((monthlySalary / 22).toFixed(2))
+    : Number(((monthlySalary * 12) / (DOLE_WORKING_FACTORS[factor]?.days || 264)).toFixed(2));
+  
   const hourlyRate = Number((dailyRate / 8).toFixed(2));
   const minuteRate = Number((hourlyRate / 60).toFixed(4));
 
   const inMins = parseTimeToMinutes(timeInStr) ?? (8 * 60 + 30);
-  let outMins = parseTimeToMinutes(timeOutStr) ?? (22 * 60);
+  let outMins = parseTimeToMinutes(timeOutStr) ?? (17 * 60 + 30);
 
   // If time out is earlier than time in, assume it crosses midnight
   if (outMins < inMins) {
     outMins += 24 * 60;
   }
 
-  const scheduledStartMins = parseTimeToMinutes(scheduledShiftStartStr) ?? (8 * 60 + 30);
-  const scheduledEndMins = parseTimeToMinutes(scheduledShiftEndStr) ?? (17 * 60 + 30);
+  const scheduledStartMins = parseTimeToMinutes(scheduledShiftStartStr) ?? (8 * 60 + 30); // 510
+  const scheduledEndMins = parseTimeToMinutes(scheduledShiftEndStr) ?? (17 * 60 + 30); // 1050
+  const gracePeriodMins = parseTimeToMinutes(gracePeriodStartStr) ?? (8 * 60 + 45); // 525
 
-  // Tardiness & Undertime
-  const tardinessMinutes = Math.max(0, inMins - scheduledStartMins);
+  // Tardiness: Allowance up to 8:45 AM (525 min) -> 0 late. Beyond 8:45 AM -> computed every minute from 8:30 AM (510 min)
+  let tardinessMinutes = 0;
+  if (inMins > gracePeriodMins) {
+    tardinessMinutes = Math.max(0, inMins - scheduledStartMins);
+  }
+
+  // Early Out / Undertime: Left before 5:30 PM (1050 min)
   const undertimeMinutes = outMins < scheduledEndMins ? Math.max(0, scheduledEndMins - outMins) : 0;
 
   const totalElapsedMinutes = outMins - inMins;
@@ -492,44 +503,34 @@ export function computeDoleShiftOvertime(
 
   // Regular hours capped at 8 hours
   const regularHours = Math.min(8.0, actualRenderedHours);
-  // Overtime hours exceeding 8 hours
+  // Overtime hours exceeding 8 hours (or past 5:30 PM)
   const regularOtHours = Math.max(0, Number((actualRenderedHours - 8.0).toFixed(2)));
 
   // Calculate Night Shift Differential (10:00 PM (22:00 / 1320 mins) to 6:00 AM (06:00 / 360 mins or 1800 mins if next day))
   let nsdMins = 0;
-  // Sample each 15-minute chunk of worked period
   const effectiveStart = inMins;
   const effectiveEnd = outMins;
   
   for (let m = effectiveStart; m < effectiveEnd; m += 15) {
-    // Skip meal break window (e.g. between 12:00 PM and 1:00 PM or custom)
     const normalizedMinute = m % (24 * 60);
-    // NSD window is >= 22:00 (1320) OR < 06:00 (360)
     if (normalizedMinute >= 1320 || normalizedMinute < 360) {
       nsdMins += 15;
     }
   }
 
-  // Deduct meal break from NSD if break falls within NSD window
   const totalNightDiffHours = Number((Math.min(actualRenderedHours, nsdMins / 60)).toFixed(2));
   const nightDiffOtHours = Math.min(regularOtHours, totalNightDiffHours);
   const nightDiffRegularHours = Math.max(0, Number((totalNightDiffHours - nightDiffOtHours).toFixed(2)));
 
   // Pay Components
-  // 1. Regular Hours Pay
   const regularPay = Number((regularHours * hourlyRate * dayRule.regularMultiplier).toFixed(2));
-
-  // 2. Overtime Pay
   const overtimePay = Number((regularOtHours * hourlyRate * dayRule.otMultiplier).toFixed(2));
 
-  // 3. Night Shift Differential Pay (+10% of applicable hourly rate)
-  // For regular NSD: regularHourlyRate * 0.10
-  // For OT NSD: otHourlyRate * 0.10
   const nsdRegularPay = nightDiffRegularHours * hourlyRate * dayRule.regularMultiplier * 0.10;
   const nsdOtPay = nightDiffOtHours * hourlyRate * dayRule.otMultiplier * 0.10;
   const nightDiffPay = Number((nsdRegularPay + nsdOtPay).toFixed(2));
 
-  // 4. Deductions
+  // Deductions
   const tardinessDeduction = Number((tardinessMinutes * minuteRate).toFixed(2));
   const undertimeDeduction = Number((undertimeMinutes * minuteRate).toFixed(2));
 
@@ -538,19 +539,22 @@ export function computeDoleShiftOvertime(
 
   // Generate Step-by-step Mathematical Audit Trail
   const calculationSteps: string[] = [
-    `Daily Rate: (₱${monthlySalary.toLocaleString()} × 12) ÷ ${factorInfo.days} days = ₱${dailyRate.toFixed(2)} / day (DOLE Factor ${factor})`,
+    `Daily Rate: ₱${monthlySalary.toLocaleString()} ÷ 22 days = ₱${dailyRate.toFixed(2)} / day (Company Standard)`,
     `Hourly Rate: ₱${dailyRate.toFixed(2)} ÷ 8 hrs = ₱${hourlyRate.toFixed(2)} / hour (₱${minuteRate.toFixed(2)} / min)`,
+    `Working Hours: 8:30 AM - 5:30 PM (1h Break: 12:00 PM - 1:00 PM)`,
     `Total Shift Duration: ${timeInStr} to ${timeOutStr} = ${totalElapsedHours} hrs (${totalElapsedMinutes} mins)`,
-    `Net Rendered Work Time: ${totalElapsedHours} hrs − ${unpaidBreakHours} hr unpaid meal break = ${actualRenderedHours} hrs`,
+    `Net Rendered Work Time: ${totalElapsedHours} hrs − ${unpaidBreakHours} hr meal break = ${actualRenderedHours} hrs`,
     `Regular Work Pay: ${regularHours} hrs × ₱${hourlyRate.toFixed(2)} × ${dayRule.regularMultiplier * 100}% (${dayRule.shortLabel}) = ₱${regularPay.toFixed(2)}`,
     regularOtHours > 0 
       ? `Overtime Pay: ${regularOtHours} hrs × ₱${hourlyRate.toFixed(2)} × ${(dayRule.otMultiplier * 100).toFixed(0)}% OT Multiplier = ₱${overtimePay.toFixed(2)}`
-      : `Overtime Pay: 0.00 hrs (No hours beyond 8h standard shift)`,
+      : `Overtime Pay: 0.00 hrs (No hours beyond standard 5:30 PM / 8 hrs)`,
     totalNightDiffHours > 0
       ? `Night Shift Differential (10 PM - 6 AM): ${totalNightDiffHours} hrs with +10% DOLE Premium = ₱${nightDiffPay.toFixed(2)}`
       : `Night Shift Differential: 0.00 hrs (Shift within standard daytime window)`,
-    tardinessMinutes > 0 ? `Late Arrival Deduction: ${tardinessMinutes} mins × ₱${minuteRate.toFixed(2)} = −₱${tardinessDeduction.toFixed(2)}` : '',
-    undertimeMinutes > 0 ? `Undertime Deduction: ${undertimeMinutes} mins × ₱${minuteRate.toFixed(2)} = −₱${undertimeDeduction.toFixed(2)}` : '',
+    inMins <= gracePeriodMins
+      ? `Late Arrival: 0 mins (Within 8:45 AM grace allowance)`
+      : `Late Arrival Deduction: ${tardinessMinutes} mins × ₱${minuteRate.toFixed(2)} = −₱${tardinessDeduction.toFixed(2)} (Past 8:45 AM allowance)`,
+    undertimeMinutes > 0 ? `Early Out / Undertime Deduction: ${undertimeMinutes} mins × ₱${minuteRate.toFixed(2)} = −₱${undertimeDeduction.toFixed(2)}` : '',
     `Total Gross Daily Compensation: ₱${regularPay.toFixed(2)} (Regular) + ₱${overtimePay.toFixed(2)} (OT) + ₱${nightDiffPay.toFixed(2)} (NSD) = ₱${grossDailyPay.toFixed(2)}`
   ].filter(Boolean);
 
@@ -607,9 +611,9 @@ export function computeEmployeePayslip(input: PayrollComputationInput) {
   const isSemiMonthly = input.periodType !== 'Monthly';
   const semiMonthlyBasic = isSemiMonthly ? input.monthlyBasic / 2 : input.monthlyBasic;
   
-  // DOLE Standard Working Days per month = 21.75 (at 261 days factor)
-  const dailyRate = input.dailyRateOverride || ((input.monthlyBasic * 12) / 261);
-  const hourlyRate = input.hourlyRateOverride || (dailyRate / 8);
+  // Company Standard: Daily Salary = Gross Monthly Income / 22 ⭐
+  const dailyRate = input.dailyRateOverride || Number((input.monthlyBasic / 22).toFixed(2));
+  const hourlyRate = input.hourlyRateOverride || Number((dailyRate / 8).toFixed(2));
   const minuteRate = hourlyRate / 60;
   
   // Deductions from Attendance

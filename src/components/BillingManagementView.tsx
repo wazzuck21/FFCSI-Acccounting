@@ -23,6 +23,7 @@ import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { parsePeriodToMonths, getLineCoveredMonths, getMonthlyBreakdown, checkMonthPeriodOverlap } from '../utils/periodUtils';
+import { AppModal } from './AppModal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { 
@@ -259,6 +260,66 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCustomizerModal, setShowCustomizerModal] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
+
+  // Reusable System Alert & Notification Modal ⭐
+  const [alertModal, setAlertModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type?: 'info' | 'warning' | 'danger' | 'success' | 'error';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info'
+  });
+
+  // Delete Invoice Confirmation Modal ⭐
+  const [deleteInvoiceModal, setDeleteInvoiceModal] = useState<{
+    isOpen: boolean;
+    invoice: InvoiceItem | null;
+  }>({
+    isOpen: false,
+    invoice: null
+  });
+
+  // Official Collection Receipt Payment Confirmation Modal ⭐
+  const [confirmCrPaymentModal, setConfirmCrPaymentModal] = useState<{
+    isOpen: boolean;
+    targetInv: InvoiceItem | null;
+    finalCr: string;
+    finalPaymentAmount: number;
+    overallMethod: string;
+    paymentDate: string;
+    paymentNotes: string;
+    updatedServices: InvoiceServiceLine[];
+    chequeRefs: string;
+    isFullyPaid: boolean;
+    newStatus: InvoiceItem['status'];
+  }>({
+    isOpen: false,
+    targetInv: null,
+    finalCr: '',
+    finalPaymentAmount: 0,
+    overallMethod: '',
+    paymentDate: '',
+    paymentNotes: '',
+    updatedServices: [],
+    chequeRefs: '',
+    isFullyPaid: false,
+    newStatus: 'Pending'
+  });
+
+  // Cancel Payment Reason Prompt Modal ⭐
+  const [cancelPaymentModal, setCancelPaymentModal] = useState<{
+    isOpen: boolean;
+    payment: Payment | null;
+    reason: string;
+  }>({
+    isOpen: false,
+    payment: null,
+    reason: ''
+  });
 
   // Ask First Before Creating Invoice Confirmation Modal ⭐
   const [confirmGenerateModal, setConfirmGenerateModal] = useState<{
@@ -827,7 +888,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   // Import All Registered Client Services (Only with actual amounts > 0 and NOT already billed)
   const handleImportAllClientServices = () => {
     if (!selectedClient) {
-      alert('Please select a client company first.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Client Company Required',
+        message: 'Please select a client company first before importing registered active payables or retainer fees.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -895,7 +961,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (loadedLines.length > 0) {
       setServices(loadedLines);
     } else {
-      alert(`No unbilled active payables or retainer fees found for ${selectedClient.companyName}.`);
+      setAlertModal({
+        isOpen: true,
+        title: 'No Unbilled Payables Found',
+        message: `No unbilled active payables or retainer fees found for ${selectedClient.companyName} in ${billingPeriod}.`,
+        type: 'info'
+      });
     }
   };
 
@@ -1001,7 +1072,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const handleCreateCustomItem = (nameOverride?: string) => {
     const nameToUse = (nameOverride || customItemName || serviceSearchTerm).trim();
     if (!nameToUse) {
-      alert('Please enter an item or service description.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Description Required',
+        message: 'Please enter an item or service description.',
+        type: 'warning'
+      });
       return;
     }
     const periodToUse = customItemPeriod.trim() || getPeriodForForm(nameToUse, selectedMonth, parseInt(selectedYear, 10), selectedClient);
@@ -1137,7 +1213,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const handleCreateInvoice = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId) {
-      alert('Please select a client company.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Client Company Required',
+        message: 'Please select a client company from the dropdown before generating the Statement of Account (SOA).',
+        type: 'warning'
+      });
       return;
     }
 
@@ -1156,7 +1237,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (!client) return;
 
     if (services.length === 0) {
-      alert('Please add at least one billable item or service line to generate the SOA.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Billable Items Required',
+        message: 'Please add at least one billable item or service line to generate the Statement of Account (SOA).',
+        type: 'warning'
+      });
       return;
     }
 
@@ -1418,7 +1504,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   // Open Payment Remittance in Official Collection Receipt (FFCSI Format) - Super Admin Only
   const handleOpenPayment = (inv: InvoiceItem) => {
     if (!isSuperAdmin) {
-      alert('🔒 Access Restricted: Only Super Admin can process and record payments for billing.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Access Restricted',
+        message: '🔒 Only Super Admin can process and record payments for billing.',
+        type: 'warning'
+      });
       return;
     }
     setSelectedInvoice(inv);
@@ -1506,7 +1597,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     }
   };
 
-  // Submit Record Payment from Official Collection Receipt Remittance Form
+  // Step 1: Validate & Open Confirmation Modal for Payment Remittance (Issue C.R.)
   const handleSubmitPayment = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!selectedInvoice) return;
@@ -1581,8 +1672,32 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       return sum + ((c && c.isPaid) ? (Number(c.amount) || s.amount) : 0);
     }, 0);
     const finalPaymentAmount = totalPaidFromItems;
+    const isFullyPaid = Number(finalPaymentAmount) >= targetInv.totalAmount;
+    const newStatus = isFullyPaid ? 'Paid' : (Number(finalPaymentAmount) > 0 ? 'Partially Paid' : targetInv.status);
+
+    // Open Confirmation Modal instead of alert
+    setConfirmCrPaymentModal({
+      isOpen: true,
+      targetInv,
+      finalCr,
+      finalPaymentAmount,
+      overallMethod,
+      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
+      paymentNotes: paymentNotes || '',
+      updatedServices,
+      chequeRefs,
+      isFullyPaid,
+      newStatus
+    });
+  };
+
+  // Step 2: Execute Payment Recording after user confirms in Modal
+  const handleExecuteCrPayment = () => {
+    if (!confirmCrPaymentModal.targetInv) return;
+    const { targetInv, finalCr, finalPaymentAmount, overallMethod, paymentDate: confirmedDate, paymentNotes: confirmedNotes, updatedServices, chequeRefs, newStatus } = confirmCrPaymentModal;
+
     const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const auditDetails = `Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(finalPaymentAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${paymentNotes ? ` • Notes: ${paymentNotes}` : ''}`;
+    const auditDetails = `Payment Remittance Recorded: C.R. #${finalCr}, Amount: ₱${Number(finalPaymentAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}, Method: ${overallMethod}${chequeRefs ? ` • Cheques: ${chequeRefs}` : ''}${confirmedNotes ? ` • Notes: ${confirmedNotes}` : ''}`;
 
     const amendmentRecord = {
       date: nowTimestamp,
@@ -1593,8 +1708,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     };
 
     const updatedAmendedHistory = [amendmentRecord, ...(targetInv.amendedHistory || [])];
-    const isFullyPaid = Number(finalPaymentAmount) >= targetInv.totalAmount;
-    const newStatus = isFullyPaid ? 'Paid' : (Number(finalPaymentAmount) > 0 ? 'Partially Paid' : targetInv.status);
 
     const updatedTargetInv: InvoiceItem = {
       ...targetInv,
@@ -1602,9 +1715,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       status: newStatus,
       collectionReceiptNumber: finalCr,
       officialReceiptNumber: finalCr,
-      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
+      paymentDate: confirmedDate || new Date().toISOString().substring(0, 10),
       paymentMethod: overallMethod,
-      billingNotes: paymentNotes || targetInv.billingNotes,
+      billingNotes: confirmedNotes || targetInv.billingNotes,
       services: updatedServices,
       amendedHistory: updatedAmendedHistory
     };
@@ -1613,12 +1726,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       targetInv.id,
       {
         amount: Number(finalPaymentAmount),
-        paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
+        paymentDate: confirmedDate || new Date().toISOString().substring(0, 10),
         paymentMethod: overallMethod,
         referenceNumber: chequeRefs || paymentRefNum,
         officialReceiptNumber: finalCr,
         collectionReceiptNumber: finalCr,
-        notes: paymentNotes,
+        notes: confirmedNotes,
         updatedServices,
         amendedHistory: updatedAmendedHistory
       },
@@ -1635,7 +1748,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
     setSelectedInvoice(updatedTargetInv);
     setIsCrPaymentMode(false);
-    alert(`✅ Payment remittance successfully recorded!\nOfficial Collection Receipt #${finalCr} has been issued for ${targetInv.clientName}.\nStatus is now: ${newStatus} (₱${Number(finalPaymentAmount).toLocaleString()}).`);
+    setConfirmCrPaymentModal(prev => ({ ...prev, isOpen: false }));
+
+    setAlertModal({
+      isOpen: true,
+      title: 'Payment Recorded Successfully',
+      message: `Official Collection Receipt #${finalCr} has been issued for ${targetInv.clientName}.\n\nTotal Paid: ₱${Number(finalPaymentAmount).toLocaleString(undefined, { minimumFractionDigits: 2 })}\nStatus: ${newStatus}`,
+      type: 'success'
+    });
   };
 
   // Open SOA / Collection Receipt Modal (Default to FFCSI Format)
@@ -1660,7 +1780,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     e.preventDefault();
     if (!selectedInvoice) return;
     if (!editReason.trim()) {
-      alert('Please provide a reason / details for modifying this transaction.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Modification Reason Required',
+        message: 'Please provide a reason / details for modifying this transaction.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -1687,7 +1812,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     );
 
     setShowEditModal(false);
-    alert('Transaction successfully modified and recorded in Amended History!');
+    setAlertModal({
+      isOpen: true,
+      title: 'Transaction Successfully Modified',
+      message: 'Transaction successfully modified and recorded in Amended History!',
+      type: 'success'
+    });
   };
 
   // Open History Modal
@@ -1715,7 +1845,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (!selectedInvoice) return;
 
     if (!collectionNotes.trim()) {
-      alert('Please enter collection follow-up details or outcome notes.');
+      setAlertModal({
+        isOpen: true,
+        title: 'Notes Required',
+        message: 'Please enter collection follow-up details or outcome notes.',
+        type: 'warning'
+      });
       return;
     }
 
@@ -1732,8 +1867,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       currentUser?.fullName
     );
 
-    alert(res.message);
     setShowCollectionModal(false);
+    setAlertModal({
+      isOpen: true,
+      title: 'Collection Follow-Up Saved',
+      message: res.message,
+      type: res.success ? 'success' : 'warning'
+    });
   };
 
   // Filtered Invoices
@@ -2236,12 +2376,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           {isSuperAdmin && (
                             <button
                               onClick={() => {
-                                if (confirm(`Are you sure you want to delete Invoice ${inv.invoiceNumber}?`)) {
-                                  deleteInvoice(inv.id);
-                                }
+                                setDeleteInvoiceModal({ isOpen: true, invoice: inv });
                               }}
                               title="Delete Invoice"
-                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -3943,7 +4081,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           onClick={() => {
                             if (billingNotes.trim()) {
                               handleSaveNotePreset(billingNotes.trim());
-                              alert('Note saved to presets library for future SOAs!');
+                              setAlertModal({
+                                isOpen: true,
+                                title: 'Note Preset Saved',
+                                message: 'Note saved to presets library for future SOAs!',
+                                type: 'success'
+                              });
                             }
                           }}
                           disabled={!billingNotes.trim()}
@@ -4325,7 +4468,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               <div className={`grid gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 ${
                 isSuperAdmin ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'
               }`}>
-                {/* Button 1: Default Receipt */}
+                {/* Button 1: Default Tab */}
                 <button
                   type="button"
                   onClick={() => {
@@ -4337,10 +4480,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       ? 'bg-emerald-600 text-white shadow-xs'
                       : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
                   }`}
-                  title="Default Official Collection Receipt (2-Column Format: PARTICULARS | AMOUNT)"
+                  title="Default Tab (Format of Hardcopy Collection Receipt Alignment & Print Engine)"
                 >
                   <Receipt className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">Default Receipt</span>
+                  <span className="truncate">Default Tab</span>
                 </button>
 
                 {/* Button 2: Payment */}
@@ -4743,7 +4886,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                           type="button"
                                           onClick={() => {
                                             if (!itemCfg.chequeNo.trim()) {
-                                              alert('Please enter the Cheque Number before marking as Paid.');
+                                              setAlertModal({
+                                                isOpen: true,
+                                                title: 'Cheque Number Required',
+                                                message: 'Please enter the Cheque Number before marking this item as Paid.',
+                                                type: 'warning'
+                                              });
                                               return;
                                             }
                                             handleUpdateItemPayment(idx, { isPaid: true });
@@ -4796,11 +4944,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         );
                       }
 
-                      // Default View Mode Row (2 columns: PARTICULARS | AMOUNT - Untouched)
+                      // Default Tab View Mode Row (3 aligned columns matching Hardcopy Collection Receipt Alignment & Print Engine)
                       return (
-                        <div key={idx} className="grid grid-cols-12 text-xs font-bold pl-3 items-center">
-                          <div className="col-span-8 text-slate-900">
-                            <span>{srv.description} {srv.monthYear ? `— ${srv.monthYear}` : ''}</span>
+                        <div key={idx} className="grid grid-cols-12 text-xs font-bold pl-2 pr-2 py-1 items-center hover:bg-slate-50/50">
+                          <div className="col-span-5 text-slate-900 pr-2">
+                            <span className="leading-snug">{srv.description}</span>
+                          </div>
+                          <div className="col-span-3 text-center text-slate-700 font-semibold">
+                            {srv.monthYear ? <span>{srv.monthYear}</span> : null}
                           </div>
                           <div className="col-span-4 text-right font-mono text-slate-900">
                             {srv.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -4830,9 +4981,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-12 text-xs font-bold pl-3">
-                      <div className="col-span-8">Professional Accounting Retainer Fee</div>
-                      <div className="col-span-4 text-right font-mono">
+                    <div className="grid grid-cols-12 text-xs font-bold pl-2 pr-2 py-1 items-center">
+                      <div className="col-span-5 text-slate-900 pr-2">Professional Accounting Retainer Fee</div>
+                      <div className="col-span-3 text-center text-slate-700 font-semibold">
+                        <span>{selectedInvoice.billingPeriod || ''}</span>
+                      </div>
+                      <div className="col-span-4 text-right font-mono text-slate-900">
                         {(selectedInvoice.totalAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </div>
                     </div>
@@ -5169,7 +5323,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           onClick={() => {
                             if (editBillingNotes.trim()) {
                               handleSaveNotePreset(editBillingNotes.trim());
-                              alert('Note saved to presets library!');
+                              setAlertModal({
+                                isOpen: true,
+                                title: 'Note Preset Saved',
+                                message: 'Note saved to presets library!',
+                                type: 'success'
+                              });
                             }
                           }}
                           disabled={!editBillingNotes.trim()}
@@ -5300,13 +5459,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 <button
                                   type="button"
                                   onClick={() => {
-                                    const reason = prompt(`Enter cancellation reason for payment of ₱${pmt.amount.toLocaleString()}:`);
-                                    if (reason && reason.trim()) {
-                                      const res = cancelInvoicePayment(pmt.id, reason.trim(), currentUser?.id, currentUser?.fullName);
-                                      alert(res.message);
-                                    }
+                                    setCancelPaymentModal({
+                                      isOpen: true,
+                                      payment: pmt,
+                                      reason: ''
+                                    });
                                   }}
-                                  className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded text-[10px] border border-rose-200"
+                                  className="px-2 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded text-[10px] border border-rose-200 cursor-pointer"
                                 >
                                   Cancel
                                 </button>
@@ -5694,6 +5853,215 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           onClose={() => setShowHardcopyModal(false)}
         />
       )}
+
+      {/* MODAL: Delete Invoice Confirmation */}
+      {deleteInvoiceModal.isOpen && deleteInvoiceModal.invoice && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-rose-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-slate-800 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-rose-100 text-rose-700 rounded-xl shrink-0 border border-rose-200">
+                <Trash2 className="w-6 h-6 text-rose-600" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">
+                  Delete Statement of Account?
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Are you sure you want to permanently delete Collection # <strong className="font-mono text-slate-900">{deleteInvoiceModal.invoice.collectionNumber || deleteInvoiceModal.invoice.invoiceNumber}</strong> for <strong className="text-slate-900">{deleteInvoiceModal.invoice.clientName}</strong> (₱{deleteInvoiceModal.invoice.totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })})?
+                </p>
+                <p className="text-[11px] text-rose-600 font-semibold pt-1">
+                  ⚠️ This action cannot be undone and will remove the record from all AR and ledger views.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDeleteInvoiceModal({ isOpen: false, invoice: null })}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (deleteInvoiceModal.invoice) {
+                    deleteInvoice(deleteInvoiceModal.invoice.id);
+                    setDeleteInvoiceModal({ isOpen: false, invoice: null });
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-4 h-4" />
+                Yes, Delete Invoice
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Confirm & Record Official Collection Receipt Payment */}
+      {confirmCrPaymentModal.isOpen && confirmCrPaymentModal.targetInv && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full shadow-2xl text-slate-800 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-emerald-100 text-emerald-800 rounded-xl shrink-0 border border-emerald-200">
+                <Receipt className="w-6 h-6 text-emerald-700" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">
+                  Confirm & Issue C.R. #{confirmCrPaymentModal.finalCr}
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Please review the payment remittance details before finalizing the Official Collection Receipt.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs space-y-2">
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Client Company:</span>
+                <span className="font-bold text-slate-900 text-right">{confirmCrPaymentModal.targetInv.clientName}</span>
+              </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Collection Receipt (C.R.) #:</span>
+                <span className="font-mono font-bold text-emerald-700">#{confirmCrPaymentModal.finalCr}</span>
+              </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Payment Date & Method:</span>
+                <span className="font-semibold text-slate-800">{confirmCrPaymentModal.paymentDate} • {confirmCrPaymentModal.overallMethod}</span>
+              </div>
+              {confirmCrPaymentModal.chequeRefs && (
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                  <span className="text-slate-500 font-medium">Cheque Breakdown:</span>
+                  <span className="font-mono text-indigo-700 font-semibold">{confirmCrPaymentModal.chequeRefs}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pb-1.5 border-b border-slate-200">
+                <span className="text-slate-500 font-medium">Settlement Classification:</span>
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                  confirmCrPaymentModal.isFullyPaid ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {confirmCrPaymentModal.isFullyPaid ? 'Full Payment' : 'Partial Payment'}
+                </span>
+              </div>
+              <div className="flex justify-between items-center pt-1 font-bold">
+                <span className="text-slate-900">Total Remittance Amount:</span>
+                <span className="font-mono text-emerald-700 text-base">
+                  ₱{confirmCrPaymentModal.finalPaymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            {/* Line items being settled */}
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+              <p className="text-[11px] font-bold text-slate-700">Line Items Included in this Payment:</p>
+              {confirmCrPaymentModal.updatedServices.map((item, idx) => (
+                <div key={idx} className={`p-2 rounded-lg border text-xs flex justify-between items-center ${
+                  item.isPaid ? 'bg-emerald-50/70 border-emerald-200 text-slate-800' : 'bg-slate-50 border-slate-200 text-slate-400'
+                }`}>
+                  <div>
+                    <span className="font-semibold text-slate-900">{item.description}</span>
+                    <span className="text-[10px] text-slate-500 block">{item.monthYear} • {item.isPaid ? (item.paymentMode || 'Cash') : 'Unpaid / Pending'}</span>
+                  </div>
+                  <span className="font-mono font-bold text-slate-900">
+                    ₱{item.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setConfirmCrPaymentModal(prev => ({ ...prev, isOpen: false }))}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer"
+              >
+                Cancel / Review
+              </button>
+              <button
+                type="button"
+                onClick={handleExecuteCrPayment}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-md flex items-center gap-1.5 transition-all cursor-pointer"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Confirm & Issue C.R. #{confirmCrPaymentModal.finalCr}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Cancel Payment Prompt */}
+      {cancelPaymentModal.isOpen && cancelPaymentModal.payment && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-rose-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-slate-800 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-rose-100 text-rose-700 rounded-xl shrink-0 border border-rose-200">
+                <AlertCircle className="w-6 h-6 text-rose-600" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">
+                  Cancel Payment Transaction
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Cancel recorded payment of <strong className="font-mono text-slate-900">₱{cancelPaymentModal.payment.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong> ({cancelPaymentModal.payment.paymentMethod}, {cancelPaymentModal.payment.paymentDate}).
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">Cancellation Reason *</label>
+              <textarea
+                rows={2}
+                value={cancelPaymentModal.reason}
+                onChange={e => setCancelPaymentModal(prev => ({ ...prev, reason: e.target.value }))}
+                placeholder="Enter cancellation reason (e.g. Bounced cheque, wrong bank account, double entry)..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-xs focus:bg-white focus:ring-2 focus:ring-rose-200"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCancelPaymentModal({ isOpen: false, payment: null, reason: '' })}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Keep Active
+              </button>
+              <button
+                type="button"
+                disabled={!cancelPaymentModal.reason.trim()}
+                onClick={() => {
+                  if (cancelPaymentModal.payment && cancelPaymentModal.reason.trim()) {
+                    const res = cancelInvoicePayment(cancelPaymentModal.payment.id, cancelPaymentModal.reason.trim(), currentUser?.id, currentUser?.fullName);
+                    setCancelPaymentModal({ isOpen: false, payment: null, reason: '' });
+                    setAlertModal({
+                      isOpen: true,
+                      title: 'Payment Cancelled',
+                      message: res.message,
+                      type: 'info'
+                    });
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                Confirm Cancellation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reusable AppModal for System Alerts & Messages */}
+      <AppModal
+        isOpen={alertModal.isOpen}
+        onClose={() => setAlertModal(prev => ({ ...prev, isOpen: false }))}
+        title={alertModal.title}
+        message={alertModal.message}
+        type={alertModal.type}
+      />
 
     </div>
   );

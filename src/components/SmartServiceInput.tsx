@@ -181,11 +181,6 @@ export const SmartServiceInput: React.FC<SmartServiceInputProps> = ({
               : 'border-slate-200'
           } ${className}`}
         />
-        {value && (
-          <span className="absolute right-2 text-[10px] text-slate-400 pointer-events-none font-bold">
-            ⚡
-          </span>
-        )}
       </div>
 
       {/* Smart Suggestions Dropdown */}

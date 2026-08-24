@@ -797,8 +797,8 @@ export const INITIAL_EMPLOYEES: CompanyEmployee[] = [
     dateHired: '2020-01-15',
     employmentType: 'Regular',
     monthlyBasicSalary: 65000,
-    dailyRate: 2988.51, // 65000 / 21.75
-    hourlyRate: 373.56,
+    dailyRate: 2954.55, // 65000 / 22
+    hourlyRate: 369.32,
     tinNumber: '123-456-789-000',
     sssNumber: '34-1234567-8',
     philhealthNumber: '12-098765432-1',
@@ -821,8 +821,8 @@ export const INITIAL_EMPLOYEES: CompanyEmployee[] = [
     dateHired: '2021-06-01',
     employmentType: 'Regular',
     monthlyBasicSalary: 38000,
-    dailyRate: 1747.13,
-    hourlyRate: 218.39,
+    dailyRate: 1727.27, // 38000 / 22
+    hourlyRate: 215.91,
     tinNumber: '234-567-890-000',
     sssNumber: '34-2345678-9',
     philhealthNumber: '12-198765432-2',
@@ -845,8 +845,8 @@ export const INITIAL_EMPLOYEES: CompanyEmployee[] = [
     dateHired: '2022-03-10',
     employmentType: 'Regular',
     monthlyBasicSalary: 28000,
-    dailyRate: 1287.36,
-    hourlyRate: 160.92,
+    dailyRate: 1272.73, // 28000 / 22
+    hourlyRate: 159.09,
     tinNumber: '345-678-901-000',
     sssNumber: '34-3456789-0',
     philhealthNumber: '12-298765432-3',
@@ -869,8 +869,8 @@ export const INITIAL_EMPLOYEES: CompanyEmployee[] = [
     dateHired: '2023-11-02',
     employmentType: 'Probationary',
     monthlyBasicSalary: 22000,
-    dailyRate: 1011.49,
-    hourlyRate: 126.44,
+    dailyRate: 1000.00, // 22000 / 22
+    hourlyRate: 125.00,
     tinNumber: '456-789-012-000',
     sssNumber: '34-4567890-1',
     philhealthNumber: '12-398765432-4',

@@ -842,7 +842,7 @@ export interface CompanyEmployee {
   dateHired: string; // YYYY-MM-DD
   employmentType: 'Regular' | 'Probationary' | 'Contractual' | 'Part-time';
   monthlyBasicSalary: number;
-  dailyRate: number; // Defaults to monthlyBasicSalary / 21.75
+  dailyRate: number; // Defaults to monthlyBasicSalary / 22
   hourlyRate: number; // Defaults to dailyRate / 8
   
   // Statutory Numbers & Account details
@@ -975,6 +975,66 @@ export interface PayrollRun {
   createdBy: string;
   approvedBy?: string;
   createdAt: string;
+}
+
+// Attendance & DTR Report Record (Matches FFCSI Company Attendance Format) ⭐
+export interface DailyAttendanceRecord {
+  id?: string;
+  dateStr: string; // e.g. "2026-08-16"
+  dayNum: number; // e.g. 16
+  dayOfWeek: string; // e.g. "Th", "Fr", "Sa", "Su", "Mo", "Tu", "We"
+  ddWwLabel: string; // e.g. "16 Th", "17 Fr", "18 Sa"
+  isRestDay: boolean; // Saturday / Sunday
+  isHoliday?: boolean;
+  holidayType?: 'None' | 'Regular' | 'Special';
+  holidayName?: string;
+  
+  // Attendance List Columns
+  amIn: string; // e.g. "08:26"
+  amOut: string; // e.g. "12:00"
+  pmIn: string; // e.g. "13:00"
+  pmOut: string; // e.g. "17:31"
+  otHours: number; // Overtime hours
+  
+  // Auto Computed Columns
+  lateMinutes: number; // Computed with 8:45 AM allowance (0 late if <= 8:45 AM)
+  absent: number; // 0 or 1 day
+  earlyOutMinutes: number; // Undertime if PM Out < 17:30
+  holidayPay: number; // Computed Holiday Compensation (₱)
+  nightDiffHours: number; // Night Differential hours (10 PM - 6 AM)
+  nightDiffPay: number; // Night Differential Pay (₱)
+  
+  remarks?: string;
+}
+
+export interface CutoffAttendanceReport {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  employeeNo: string;
+  position: string;
+  monthlyBasicSalary: number;
+  dailyRate: number;
+  hourlyRate: number;
+  cutoffPeriod: string; // e.g. "August 16-31, 2026"
+  periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
+  year: number;
+  month: number;
+  
+  records: DailyAttendanceRecord[];
+  
+  // Summary Aggregations
+  totalDaysWorked: number;
+  totalDaysAbsent: number;
+  totalLateMinutes: number;
+  totalEarlyOutMinutes: number;
+  totalOtHours: number;
+  totalHolidayHours: number;
+  totalHolidayPay: number;
+  totalNightDiffHours: number;
+  totalNightDiffPay: number;
+  
+  updatedAt: string;
 }
 
 // ==========================================
