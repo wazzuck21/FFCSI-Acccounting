@@ -140,20 +140,63 @@ export function computeDailyAttendanceMetrics(
 }
 
 /**
+ * Helper to extract month, year, and half from cutoff string
+ */
+export function parseCutoffString(cutoffStr: string): { month: number; year: number; periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly' } {
+  const monthMap: Record<string, number> = {
+    january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+    may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8, september: 9, sep: 9, sept: 9,
+    october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12
+  };
+  
+  let month = 8;
+  let year = 2026;
+  let periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly' = '2nd Half (16-30/31)';
+  
+  const lower = cutoffStr.toLowerCase();
+  for (const [mName, mNum] of Object.entries(monthMap)) {
+    if (lower.includes(mName)) {
+      month = mNum;
+      break;
+    }
+  }
+  
+  const yearMatch = cutoffStr.match(/\b(202\d)\b/);
+  if (yearMatch) {
+    year = parseInt(yearMatch[1], 10);
+  }
+  
+  if (lower.includes('1-15') || lower.includes('1st')) {
+    periodType = '1st Half (1-15)';
+  } else if (lower.includes('16-') || lower.includes('2nd') || lower.includes('16-30') || lower.includes('16-31')) {
+    periodType = '2nd Half (16-30/31)';
+  } else if (lower.includes('monthly') || lower.includes('full month')) {
+    periodType = 'Monthly';
+  }
+  
+  return { month, year, periodType };
+}
+
+/**
  * Generates sample/standard cutoff attendance records matching the Attendance Report image
  */
 export function generateCutoffAttendance(
   employee: CompanyEmployee,
   cutoffPeriod: string = 'August 16-31, 2026',
-  periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly' = '2nd Half (16-30/31)',
-  year: number = 2026,
-  month: number = 8
+  periodType?: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly',
+  customYear?: number,
+  customMonth?: number
 ): CutoffAttendanceReport {
+  const parsed = parseCutoffString(cutoffPeriod);
+  const effectivePeriodType = periodType || parsed.periodType;
+  const year = customYear || parsed.year;
+  const month = customMonth || parsed.month;
+
   const dailyRate = employee.dailyRate || Number((employee.monthlyBasicSalary / 22).toFixed(2));
   const hourlyRate = employee.hourlyRate || Number((dailyRate / 8).toFixed(2));
 
-  const startDay = periodType === '1st Half (1-15)' ? 1 : (periodType === '2nd Half (16-30/31)' ? 16 : 1);
-  const endDay = periodType === '1st Half (1-15)' ? 15 : new Date(year, month, 0).getDate();
+  const startDay = effectivePeriodType === '1st Half (1-15)' ? 1 : (effectivePeriodType === '2nd Half (16-30/31)' ? 16 : 1);
+  const endDay = effectivePeriodType === '1st Half (1-15)' ? 15 : new Date(year, month, 0).getDate();
 
   const dayOfWeekAbbrs = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
@@ -222,7 +265,7 @@ export function generateCutoffAttendance(
   const totalNightDiffPay = Number(records.reduce((s, r) => s + r.nightDiffPay, 0).toFixed(2));
 
   return {
-    id: `att_${employee.id}_${year}_${month}_${periodType.replace(/\s+/g, '_')}`,
+    id: `att_${employee.id}_${year}_${month}_${effectivePeriodType.replace(/\s+/g, '_')}`,
     employeeId: employee.id,
     employeeName: employee.fullName,
     employeeNo: employee.employeeNo,
@@ -231,7 +274,7 @@ export function generateCutoffAttendance(
     dailyRate,
     hourlyRate,
     cutoffPeriod,
-    periodType,
+    periodType: effectivePeriodType,
     year,
     month,
     records,

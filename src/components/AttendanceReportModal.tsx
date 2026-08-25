@@ -24,10 +24,13 @@ import {
 
 interface AttendanceReportModalProps {
   employee: CompanyEmployee;
+  allEmployees?: CompanyEmployee[];
   cutoffPeriod: string;
-  periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
-  isOpen: boolean;
+  periodType?: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
+  cutoffPeriodType?: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
+  isOpen?: boolean;
   onClose: () => void;
+  onSelectEmployee?: (emp: CompanyEmployee) => void;
   onSyncToPayroll?: (summary: {
     daysWorked: number;
     daysAbsent: number;
@@ -36,32 +39,75 @@ interface AttendanceReportModalProps {
     otRegularHours: number;
     otHolidayHours: number;
     holidayPay: number;
+    holidayPayAmount?: number;
     nightDiffHours: number;
     nightDiffPay: number;
   }) => void;
 }
 
+const COMMON_CUTOFF_OPTIONS = [
+  'August 16-31, 2026',
+  'August 1-15, 2026',
+  'July 16-31, 2026',
+  'July 1-15, 2026',
+  'June 16-30, 2026',
+  'June 1-15, 2026',
+  'September 1-15, 2026',
+  'September 16-30, 2026',
+  'October 1-15, 2026',
+  'October 16-31, 2026'
+];
+
 export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
   employee,
-  cutoffPeriod,
-  periodType,
-  isOpen,
+  allEmployees = [],
+  cutoffPeriod: initialCutoffPeriod,
+  periodType: initialPeriodType,
+  cutoffPeriodType: initialCutoffPeriodType,
+  isOpen = true,
   onClose,
+  onSelectEmployee,
   onSyncToPayroll
 }) => {
+  const [currentEmployee, setCurrentEmployee] = useState<CompanyEmployee>(employee);
+  const [selectedCutoff, setSelectedCutoff] = useState<string>(initialCutoffPeriod || 'August 16-31, 2026');
+  const [selectedPeriodType, setSelectedPeriodType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>(
+    initialPeriodType || initialCutoffPeriodType || '2nd Half (16-30/31)'
+  );
+
   const [report, setReport] = useState<CutoffAttendanceReport>(() => {
-    return generateCutoffAttendance(employee, cutoffPeriod, periodType);
+    return generateCutoffAttendance(employee, initialCutoffPeriod, initialPeriodType || initialCutoffPeriodType);
   });
 
-  // Re-generate report when employee or cutoff changes
+  // Sync state if employee or initialCutoffPeriod prop changes
   useEffect(() => {
-    setReport(generateCutoffAttendance(employee, cutoffPeriod, periodType));
-  }, [employee, cutoffPeriod, periodType]);
+    setCurrentEmployee(employee);
+  }, [employee]);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (initialCutoffPeriod) {
+      setSelectedCutoff(initialCutoffPeriod);
+    }
+  }, [initialCutoffPeriod]);
 
-  const dailyRate = employee.dailyRate || Number((employee.monthlyBasicSalary / 22).toFixed(2));
-  const hourlyRate = employee.hourlyRate || Number((dailyRate / 8).toFixed(2));
+  // Re-generate report when currentEmployee or selectedCutoff changes
+  useEffect(() => {
+    setReport(generateCutoffAttendance(currentEmployee, selectedCutoff, selectedPeriodType));
+  }, [currentEmployee, selectedCutoff, selectedPeriodType]);
+
+  if (isOpen === false) return null;
+
+  const dailyRate = currentEmployee.dailyRate || Number((currentEmployee.monthlyBasicSalary / 22).toFixed(2));
+  const hourlyRate = currentEmployee.hourlyRate || Number((dailyRate / 8).toFixed(2));
+
+  // Handle Cutoff Change
+  const handleCutoffChange = (newCutoff: string) => {
+    setSelectedCutoff(newCutoff);
+    let pType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly' = '2nd Half (16-30/31)';
+    if (newCutoff.includes('1-15')) pType = '1st Half (1-15)';
+    else if (newCutoff.includes('Monthly')) pType = 'Monthly';
+    setSelectedPeriodType(pType);
+  };
 
   // Handle cell edit in the attendance report
   const handleCellChange = (
@@ -70,7 +116,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
     value: any
   ) => {
     const updatedRecords = [...report.records];
-    const rec = updatedRecords[index];
+    const rec = { ...updatedRecords[index] };
 
     let amIn = rec.amIn;
     let amOut = rec.amOut;
@@ -172,6 +218,42 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
     });
   };
 
+  // Clear all time logs
+  const handleClearAllLogs = () => {
+    const updated = report.records.map(rec => {
+      return computeDailyAttendanceMetrics(
+        rec.dateStr,
+        rec.dayNum,
+        rec.dayOfWeek,
+        '',
+        '',
+        '',
+        '',
+        0,
+        rec.isRestDay,
+        false,
+        'None',
+        dailyRate,
+        hourlyRate
+      );
+    });
+
+    setReport({
+      ...report,
+      records: updated,
+      totalDaysWorked: 0,
+      totalDaysAbsent: updated.filter(r => !r.isRestDay).length,
+      totalLateMinutes: 0,
+      totalEarlyOutMinutes: 0,
+      totalOtHours: 0,
+      totalHolidayHours: 0,
+      totalHolidayPay: 0,
+      totalNightDiffHours: 0,
+      totalNightDiffPay: 0,
+      updatedAt: new Date().toISOString()
+    });
+  };
+
   // Upload Excel Attendance File
   const handleUploadExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -194,12 +276,10 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
         const updatedRecords = [...report.records];
         let matchedCount = 0;
 
-        // Iterate rows looking for dd/ww column or day numbers
         rows.forEach(row => {
           if (!row || row.length === 0) return;
           const firstCol = String(row[0] || '').trim();
           
-          // Match day number from string like "16 Th" or "16"
           const dayMatch = firstCol.match(/^(\d{1,2})/);
           if (dayMatch) {
             const dayNum = parseInt(dayMatch[1], 10);
@@ -232,7 +312,6 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
           }
         });
 
-        // Recalculate summary
         const totalDaysWorked = updatedRecords.filter(r => (r.amIn || r.pmIn) && !r.isRestDay).length;
         const totalDaysAbsent = updatedRecords.reduce((s, r) => s + r.absent, 0);
         const totalLateMinutes = updatedRecords.reduce((s, r) => s + r.lateMinutes, 0);
@@ -258,7 +337,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
           updatedAt: new Date().toISOString()
         });
 
-        alert(`Successfully imported ${matchedCount} attendance logs from Excel!`);
+        alert(`Successfully imported ${matchedCount} attendance records from Excel!`);
       } catch (err) {
         console.error('Error importing attendance Excel:', err);
         alert('Failed to parse Excel file. Please ensure it follows the standard Attendance Report format.');
@@ -278,6 +357,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
         otRegularHours: report.totalOtHours,
         otHolidayHours: report.totalHolidayHours,
         holidayPay: report.totalHolidayPay,
+        holidayPayAmount: report.totalHolidayPay,
         nightDiffHours: report.totalNightDiffHours,
         nightDiffPay: report.totalNightDiffPay
       });
@@ -290,27 +370,83 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
       <div className="bg-white rounded-2xl max-w-6xl w-full p-6 shadow-2xl space-y-5 my-auto max-h-[95vh] flex flex-col border border-slate-200">
         
         {/* Top Header & Actions Bar */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-200 pb-4 shrink-0">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl font-black text-blue-700 tracking-tight">Attendance Report</span>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-200 pb-4 shrink-0">
+          <div className="space-y-1.5 flex-1">
+            <div className="flex items-center flex-wrap gap-2">
+              <span className="text-2xl font-black text-blue-700 tracking-tight">Attendance & DTR Report</span>
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
                 DOLE & Firm Automated Timekeeping
               </span>
             </div>
-            <p className="text-xs text-slate-600 mt-0.5">
-              Staff: <strong className="text-slate-900">{employee.fullName}</strong> ({employee.employeeNo} • {employee.position}) — Cutoff: <strong className="text-blue-800">{cutoffPeriod}</strong>
-            </p>
+            
+            {/* Cutoff and Employee Selectors */}
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              {/* Employee Selector */}
+              {allEmployees && allEmployees.length > 0 && (
+                <div className="flex items-center gap-1.5 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase">Staff:</span>
+                  <select
+                    value={currentEmployee.id}
+                    onChange={(e) => {
+                      const found = allEmployees.find(emp => emp.id === e.target.value);
+                      if (found) {
+                        setCurrentEmployee(found);
+                        if (onSelectEmployee) onSelectEmployee(found);
+                      }
+                    }}
+                    className="bg-transparent font-bold text-xs text-slate-800 focus:outline-none cursor-pointer"
+                  >
+                    {allEmployees.map(emp => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.fullName} ({emp.employeeNo})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Cutoff Date Dropdown */}
+              <div className="flex items-center gap-1.5 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
+                <span className="text-[11px] font-bold text-blue-700 uppercase">Cutoff:</span>
+                <select
+                  value={selectedCutoff}
+                  onChange={(e) => handleCutoffChange(e.target.value)}
+                  className="bg-transparent font-bold text-xs text-blue-900 focus:outline-none cursor-pointer"
+                >
+                  {COMMON_CUTOFF_OPTIONS.map(opt => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                  {!COMMON_CUTOFF_OPTIONS.includes(selectedCutoff) && (
+                    <option value={selectedCutoff}>{selectedCutoff}</option>
+                  )}
+                </select>
+              </div>
+
+              <span className="text-xs text-slate-500 font-mono hidden sm:inline">
+                {currentEmployee.position} • Basic: ₱{currentEmployee.monthlyBasicSalary.toLocaleString()}
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center flex-wrap gap-2">
+          <div className="flex items-center flex-wrap gap-2 self-stretch md:self-auto justify-end">
             <button
               type="button"
               onClick={handleFillStandardShift}
-              className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
               title="Auto-fill 8:30 AM - 5:30 PM for all regular working days"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> Fill Standard Shift
+              <RefreshCw className="w-3.5 h-3.5" /> Fill Standard 8:30-5:30
+            </button>
+
+            <button
+              type="button"
+              onClick={handleClearAllLogs}
+              className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+              title="Clear all time in / time out entries"
+            >
+              Clear Logs
             </button>
 
             <button
@@ -318,7 +454,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
               onClick={() => exportAttendanceReportToExcel(report)}
               className="px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
             >
-              <Download className="w-3.5 h-3.5 text-emerald-600" /> Export Excel (.xlsx)
+              <Download className="w-3.5 h-3.5 text-emerald-600" /> Export Excel
             </button>
 
             <label className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs">

@@ -76,6 +76,8 @@ export const CompanyPayrollView: React.FC = () => {
   const [showPayslipModal, setShowPayslipModal] = useState<{ run: PayrollRun; item: PayrollItem } | null>(null);
   const [attendanceModalEmployee, setAttendanceModalEmployee] = useState<CompanyEmployee | null>(null);
   const [selectedAttEmployeeId, setSelectedAttEmployeeId] = useState<string>(employees[0]?.id || '');
+  const [selectedAttCutoff, setSelectedAttCutoff] = useState<string>('August 16-31, 2026');
+  const [selectedAttCutoffType, setSelectedAttCutoffType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>('2nd Half (16-30/31)');
   const [searchTerm, setSearchTerm] = useState('');
 
   // Form states for New Payroll Run
@@ -1217,7 +1219,7 @@ export const CompanyPayrollView: React.FC = () => {
       {/* TAB 5: ATTENDANCE & DTR REPORTS (MATCHING FFCSI ATTENDANCE FORMAT) ⭐ */}
       {activeTab === 'attendance' && (
         <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
@@ -1232,12 +1234,42 @@ export const CompanyPayrollView: React.FC = () => {
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
+              {/* Cutoff Date Dropdown */}
+              <div className="flex items-center gap-2 bg-blue-50/80 px-3 py-2 rounded-xl border border-blue-200 shadow-2xs">
+                <Calendar className="w-4 h-4 text-blue-700" />
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider">Payroll Cutoff</span>
+                  <select
+                    value={selectedAttCutoff}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSelectedAttCutoff(val);
+                      if (val.includes('1-15')) setSelectedAttCutoffType('1st Half (1-15)');
+                      else if (val.includes('Monthly')) setSelectedAttCutoffType('Monthly');
+                      else setSelectedAttCutoffType('2nd Half (16-30/31)');
+                    }}
+                    className="bg-transparent font-bold text-xs text-blue-950 focus:outline-none cursor-pointer pr-2"
+                  >
+                    <option value="August 16-31, 2026">August 16-31, 2026 (2nd Half)</option>
+                    <option value="August 1-15, 2026">August 1-15, 2026 (1st Half)</option>
+                    <option value="July 16-31, 2026">July 16-31, 2026 (2nd Half)</option>
+                    <option value="July 1-15, 2026">July 1-15, 2026 (1st Half)</option>
+                    <option value="June 16-30, 2026">June 16-30, 2026 (2nd Half)</option>
+                    <option value="June 1-15, 2026">June 1-15, 2026 (1st Half)</option>
+                    <option value="September 1-15, 2026">September 1-15, 2026 (1st Half)</option>
+                    <option value="September 16-30, 2026">September 16-30, 2026 (2nd Half)</option>
+                    <option value="October 1-15, 2026">October 1-15, 2026 (1st Half)</option>
+                    <option value="October 16-31, 2026">October 16-31, 2026 (2nd Half)</option>
+                  </select>
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={() => {
-                  const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees[0];
+                  const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees.filter(e => e.status === 'Active')[0] || employees[0];
                   if (emp) {
-                    const rep = generateCutoffAttendance(emp, newRunPeriod, newRunPeriodType);
+                    const rep = generateCutoffAttendance(emp, selectedAttCutoff, selectedAttCutoffType);
                     exportAttendanceReportToExcel(rep);
                   }
                 }}
@@ -1249,7 +1281,7 @@ export const CompanyPayrollView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => {
-                  const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees[0];
+                  const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees.filter(e => e.status === 'Active')[0] || employees[0];
                   if (emp) setAttendanceModalEmployee(emp);
                 }}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-colors"
@@ -1292,11 +1324,12 @@ export const CompanyPayrollView: React.FC = () => {
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
+                        setSelectedAttEmployeeId(emp.id);
                         setAttendanceModalEmployee(emp);
                       }}
-                      className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-0.5 text-[11px]"
+                      className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-0.5 text-[11px] cursor-pointer"
                     >
-                      View DTR <ChevronRight className="w-3 h-3" />
+                      View & Edit DTR <ChevronRight className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
@@ -1306,9 +1339,9 @@ export const CompanyPayrollView: React.FC = () => {
 
           {/* Inline Preview Table of Selected Employee */}
           {(() => {
-            const selectedEmp = employees.find(e => e.id === selectedAttEmployeeId) || employees[0];
+            const selectedEmp = employees.find(e => e.id === selectedAttEmployeeId) || employees.filter(e => e.status === 'Active')[0] || employees[0];
             if (!selectedEmp) return null;
-            const previewReport = generateCutoffAttendance(selectedEmp, newRunPeriod, newRunPeriodType);
+            const previewReport = generateCutoffAttendance(selectedEmp, selectedAttCutoff, selectedAttCutoffType);
 
             return (
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
@@ -1319,7 +1352,7 @@ export const CompanyPayrollView: React.FC = () => {
                       Attendance Sheet: <span className="text-blue-700">{selectedEmp.fullName}</span> ({selectedEmp.employeeNo})
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Cutoff: <strong className="text-slate-800">{newRunPeriod}</strong> • Standard Shift: <strong>8:30 AM - 5:30 PM</strong> (1h Break: 12:00 PM - 1:00 PM) • Grace Allowance: <strong>Up to 8:45 AM</strong>
+                      Cutoff: <strong className="text-slate-800">{selectedAttCutoff}</strong> • Standard Shift: <strong>8:30 AM - 5:30 PM</strong> (1h Break: 12:00 PM - 1:00 PM) • Grace Allowance: <strong>Up to 8:45 AM</strong>
                     </p>
                   </div>
 
@@ -1327,9 +1360,9 @@ export const CompanyPayrollView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setAttendanceModalEmployee(selectedEmp)}
-                      className="px-3.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-xs transition-colors"
                     >
-                      <Edit2 className="w-3.5 h-3.5" /> Interactive Edit Mode
+                      <Edit2 className="w-3.5 h-3.5" /> Interactive Edit Mode (Time In / Out)
                     </button>
                   </div>
                 </div>
@@ -1357,7 +1390,12 @@ export const CompanyPayrollView: React.FC = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {previewReport.records.map(r => (
-                        <tr key={r.dayNum} className={r.isRestDay ? 'bg-slate-50/70 text-slate-400' : 'hover:bg-blue-50/30'}>
+                        <tr 
+                          key={r.dayNum} 
+                          onClick={() => setAttendanceModalEmployee(selectedEmp)}
+                          className={`cursor-pointer transition-colors ${r.isRestDay ? 'bg-slate-50/70 text-slate-400' : 'hover:bg-blue-50/40'}`}
+                          title="Click row to open interactive DTR editor"
+                        >
                           <td className="py-1.5 px-3 font-mono font-bold border-r border-slate-200">{r.ddWwLabel}</td>
                           <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200">{r.amIn || '-'}</td>
                           <td className="py-1.5 px-2 text-center font-mono border-r border-slate-200">{r.amOut || '-'}</td>
@@ -2233,8 +2271,13 @@ export const CompanyPayrollView: React.FC = () => {
       {attendanceModalEmployee && (
         <AttendanceReportModal
           employee={attendanceModalEmployee}
-          cutoffPeriod={newRunPeriod}
-          cutoffPeriodType={newRunPeriodType}
+          allEmployees={employees.filter(e => e.status === 'Active')}
+          cutoffPeriod={selectedAttCutoff}
+          cutoffPeriodType={selectedAttCutoffType}
+          onSelectEmployee={(emp) => {
+            setSelectedAttEmployeeId(emp.id);
+            setAttendanceModalEmployee(emp);
+          }}
           onClose={() => setAttendanceModalEmployee(null)}
           onSyncToPayroll={(totals) => {
             const current = payrollInputs[attendanceModalEmployee.id] || {

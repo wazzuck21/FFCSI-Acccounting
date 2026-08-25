@@ -8,9 +8,7 @@ import { SmartPeriodInput } from './SmartPeriodInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
 import { PeriodCoverageModal } from './PeriodCoverageModal';
-import { HardcopyReceiptModal } from './HardcopyReceiptModal';
 import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, generatePaymentCollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
-import { printHardcopyReceiptDirectly, getHardcopyPrintConfig } from '../utils/hardcopyReceiptPrinter';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { 
   exportSOAExcel, 
@@ -254,8 +252,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showSoaModal, setShowSoaModal] = useState(false);
   const [showCrModal, setShowCrModal] = useState(false);
-  const [showHardcopyModal, setShowHardcopyModal] = useState(false);
-  const [hardcopySelectedInvoice, setHardcopySelectedInvoice] = useState<InvoiceItem | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCustomizerModal, setShowCustomizerModal] = useState(false);
@@ -2026,24 +2022,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
-            onClick={() => {
-              if (filteredInvoices.length > 0) {
-                setHardcopySelectedInvoice(filteredInvoices[0]);
-                setShowHardcopyModal(true);
-              } else if (invoices.length > 0) {
-                setHardcopySelectedInvoice(invoices[0]);
-                setShowHardcopyModal(true);
-              }
-            }}
-            title="Open Hardcopy Stationery Print & Calibration Tool (Parentheses Overlay)"
-            className="px-3.5 py-2.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
-          >
-            <Printer className="w-4 h-4 text-red-600" /> Hardcopy Print Form
-          </button>
-          <button
             onClick={() => downloadBillingSummaryReportPDF(filteredInvoices)}
             title="Download Billing Summary PDF Report"
-            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-2 transition-all"
+            className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer"
           >
             <FileDown className="w-4 h-4 text-slate-600" /> PDF Report
           </button>
@@ -4480,7 +4461,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       ? 'bg-emerald-600 text-white shadow-xs'
                       : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
                   }`}
-                  title="Default Tab (Format of Hardcopy Collection Receipt Alignment & Print Engine)"
+                  title="Standard Collection Receipt (FFCSI Format)"
                 >
                   <Receipt className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">Default Tab</span>
@@ -4537,14 +4518,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 {/* Button 5: Print */}
                 <button
                   type="button"
-                  onClick={() => {
-                    printHardcopyReceiptDirectly(selectedInvoice, {
-                      mode: 'data-only',
-                      config: getHardcopyPrintConfig()
-                    });
-                  }}
+                  onClick={() => window.print()}
                   className="h-9 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs cursor-pointer shadow-2xs transition-colors w-full text-center"
-                  title="Print on Hardcopy Stationery (Data Only)"
+                  title="Print Collection Receipt"
                 >
                   <Printer className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">Print</span>
@@ -5837,20 +5813,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               }
             }
           }}
-        />
-      )}
-
-      {/* MODAL: Hardcopy Receipt Alignment & Print Engine ⭐ */}
-      {showHardcopyModal && hardcopySelectedInvoice && (
-        <HardcopyReceiptModal
-          invoice={hardcopySelectedInvoice}
-          clientAddress={
-            clients.find(c => c.id === hardcopySelectedInvoice.clientId)?.address || 
-            (hardcopySelectedInvoice as any).clientAddress ||
-            'Gen. Aguinaldo Hi-Way Panapaan V, Bacoor City'
-          }
-          defaultPreparedBy={currentUser?.name || 'Maricris'}
-          onClose={() => setShowHardcopyModal(false)}
         />
       )}
 
