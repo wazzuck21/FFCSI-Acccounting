@@ -275,8 +275,11 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
         const matchedPayable = payables.find(p => {
           if (p.clientId !== client.id) return false;
           const cleanItemName = p.itemName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-          const isNameMatch = cleanItemName.includes(cleanRuleCode) || cleanRuleCode.includes(cleanItemName);
-          const isMonthMatch = p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || p.month.includes(`${selectedYear}`);
+          const isNameMatch = cleanItemName.includes(cleanRuleCode) || cleanRuleCode.includes(cleanItemName) || p.itemName.toLowerCase() === rule.code.toLowerCase();
+          const isMonthMatch = p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || 
+                               p.month.includes(`${selectedYear}`) ||
+                               (deadlineInfo.taxablePeriod && (p.month === deadlineInfo.taxablePeriod || p.notes?.includes(deadlineInfo.taxablePeriod) || p.remarks?.includes(deadlineInfo.taxablePeriod) || deadlineInfo.taxablePeriod.includes(p.month))) ||
+                               (deadlineInfo.finalDeadline && p.month.includes(deadlineInfo.finalDeadline.slice(0, 7)));
           return isNameMatch && isMonthMatch;
         });
 
@@ -1102,6 +1105,7 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
               const itemsForDate = groupedByDateMap[dueDateKey];
               const prettyDate = formatDatePretty(dueDateKey);
               const settledForDate = itemsForDate.filter(i => i.status === 'Already Paid').length;
+              const totalPayableForDate = itemsForDate.reduce((sum, it) => sum + (it.payableAmount && it.payableAmount > 0 ? it.payableAmount : 0), 0);
 
               return (
                 <div key={dueDateKey} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-xs space-y-4">
@@ -1122,7 +1126,12 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {totalPayableForDate > 0 && (
+                        <span className="px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-full text-xs font-bold font-mono">
+                          Total Payable: ₱{totalPayableForDate.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      )}
                       <span className="px-3 py-1 bg-slate-100 border border-slate-200 text-slate-700 rounded-full text-xs font-bold font-mono">
                         {settledForDate}/{itemsForDate.length} Settled
                       </span>
@@ -1175,6 +1184,30 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
                               <span className="truncate text-slate-700 text-[11px]" title={item.ruleName}>{item.ruleName}</span>
                             </div>
                           </div>
+                        </div>
+
+                        {/* Amount of Payable if Applicable ⭐ */}
+                        <div className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between text-xs shadow-2xs">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">Payable Amount:</span>
+                          {item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
+                            <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1">
+                              <span>📁</span> Filing Only
+                            </span>
+                          ) : item.assessmentTag === 'Assessed - Excess Input Tax' ? (
+                            <span className="font-mono font-extrabold text-purple-700 text-xs">
+                              ₱{Math.abs(item.payableAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Tax Credit)
+                            </span>
+                          ) : item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                            <span className="font-mono font-bold text-amber-800 text-xs">
+                              ₱0.00 (Zero / Filed)
+                            </span>
+                          ) : item.payableAmount !== undefined && item.payableAmount !== null && item.payableAmount > 0 ? (
+                            <span className="font-mono font-extrabold text-emerald-700 text-xs bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                              ₱{item.payableAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400 font-semibold italic">No Payable Logged</span>
+                          )}
                         </div>
 
                         {/* Details & Status */}
@@ -1298,6 +1331,30 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
                       <span className="truncate">{item.ruleName}</span>
                     </p>
                   </div>
+                </div>
+
+                {/* Amount of Payable if Applicable */}
+                <div className="bg-slate-50 p-2.5 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase">Payable Amount:</span>
+                  {item.paymentBehavior === 'NEVER_PAYABLE' || !isPayableObligation(item.ruleCode) ? (
+                    <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 flex items-center gap-1">
+                      <span>📁</span> Filing Only
+                    </span>
+                  ) : item.assessmentTag === 'Assessed - Excess Input Tax' ? (
+                    <span className="font-mono font-extrabold text-purple-700 text-xs">
+                      ₱{Math.abs(item.payableAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Tax Credit)
+                    </span>
+                  ) : item.assessmentTag === 'Assessed - Zero Return / No Payment' ? (
+                    <span className="font-mono font-bold text-amber-800 text-xs">
+                      ₱0.00 (Zero / Filed)
+                    </span>
+                  ) : item.payableAmount !== undefined && item.payableAmount !== null && item.payableAmount > 0 ? (
+                    <span className="font-mono font-extrabold text-emerald-700 text-xs bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      ₱{item.payableAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 font-semibold italic">No Payable Logged</span>
+                  )}
                 </div>
 
                 <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between text-xs">

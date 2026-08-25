@@ -47,8 +47,7 @@ import {
   Briefcase,
   Receipt,
   ShieldAlert,
-  Menu,
-  ArrowLeft
+  Menu
 } from 'lucide-react';
 
 export const TAB_LABELS: Record<NavTab, string> = {
@@ -73,7 +72,6 @@ export const TAB_LABELS: Record<NavTab, string> = {
 
 const MainAppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>('dashboard');
-  const [navHistory, setNavHistory] = useState<NavTab[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [globalSearch, setGlobalSearch] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -82,18 +80,7 @@ const MainAppContent: React.FC = () => {
   const { currentUser, isSuperAdmin } = useAuth();
 
   const handleTabChange = (nextTab: NavTab) => {
-    if (nextTab !== activeTab) {
-      setNavHistory(prev => [...prev, activeTab]);
-      setActiveTab(nextTab);
-    }
-  };
-
-  const handleReturnPrevious = () => {
-    if (navHistory.length > 0) {
-      const prevTab = navHistory[navHistory.length - 1];
-      setNavHistory(prev => prev.slice(0, -1));
-      setActiveTab(prevTab);
-    }
+    setActiveTab(nextTab);
   };
 
   if (!currentUser) {
@@ -102,7 +89,6 @@ const MainAppContent: React.FC = () => {
 
   const unpaidPayablesCount = payables.filter(p => p.status === 'Unpaid').length;
   const pendingComplianceCount = complianceItems.filter(c => c.status === 'Pending' || c.status === 'Due Today').length;
-  const previousTab = navHistory.length > 0 ? navHistory[navHistory.length - 1] : null;
 
   return (
     <div className="min-h-screen bg-[#F9FAFB] text-slate-800 font-sans flex flex-col antialiased">
@@ -125,30 +111,6 @@ const MainAppContent: React.FC = () => {
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-24 md:pb-8">
-          {/* Quick Return to Previous Core Navigation Banner */}
-          {previousTab && (
-            <div className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-2xs">
-              <button
-                type="button"
-                onClick={handleReturnPrevious}
-                className="inline-flex items-center gap-2 text-xs font-bold text-slate-700 hover:text-slate-900 transition-colors group cursor-pointer"
-                title={`Return to ${TAB_LABELS[previousTab]}`}
-              >
-                <span className="p-1.5 rounded-lg bg-slate-100 group-hover:bg-slate-200 text-slate-600 group-hover:text-slate-900 transition-colors">
-                  <ArrowLeft className="w-3.5 h-3.5" />
-                </span>
-                <span>
-                  Return to <strong className="text-slate-900 underline decoration-slate-300 underline-offset-2">{TAB_LABELS[previousTab]}</strong>
-                </span>
-              </button>
-
-              <div className="hidden sm:flex items-center gap-1.5 text-[11px] text-slate-400 font-medium">
-                <span>Current View:</span>
-                <span className="font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded-md">{TAB_LABELS[activeTab]}</span>
-              </div>
-            </div>
-          )}
-
           {activeTab === 'dashboard' && (
             <DashboardView onNavigate={handleTabChange} />
           )}
@@ -193,8 +155,6 @@ const MainAppContent: React.FC = () => {
           {activeTab === 'compliance' && (
             <ComplianceMonitoringView 
               onNavigate={handleTabChange}
-              onReturnPrevious={previousTab ? handleReturnPrevious : undefined}
-              previousTabName={previousTab ? TAB_LABELS[previousTab] : undefined}
             />
           )}
 
@@ -220,8 +180,6 @@ const MainAppContent: React.FC = () => {
                 handleTabChange('workspaces');
               }}
               onNavigate={handleTabChange}
-              onReturnPrevious={previousTab ? handleReturnPrevious : undefined}
-              previousTabName={previousTab ? TAB_LABELS[previousTab] : undefined}
             />
           )}
 

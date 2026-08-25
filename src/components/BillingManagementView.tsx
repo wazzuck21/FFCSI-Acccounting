@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile } from '../types';
+import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile, CustomDeadlineRule } from '../types';
 import { CurrencyInput } from './CurrencyInput';
 import { SmartServiceInput } from './SmartServiceInput';
 import { SmartPeriodInput } from './SmartPeriodInput';
@@ -21,6 +21,7 @@ import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { parsePeriodToMonths, getLineCoveredMonths, getMonthlyBreakdown, checkMonthPeriodOverlap } from '../utils/periodUtils';
+import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS } from '../data/masterTables';
 import { AppModal } from './AppModal';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -72,7 +73,8 @@ import {
   ChevronDown,
   Check,
   Tag,
-  PlusCircle
+  PlusCircle,
+  Zap
 } from 'lucide-react';
 
 interface CrItemPaymentConfig {
@@ -236,6 +238,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     getNextCollectionNumber,
     isCollectionNumberUsed,
     saveCustomService,
+    addPayable,
+    deletePayable,
+    resetPayableAssessment,
     billerCatalog,
     auditLogs
   } = useData();
@@ -351,6 +356,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
   // Phase 4 & Phase 5 Sub-Tab Navigation ⭐
   const [activeSubTab, setActiveSubTab] = useState<'invoices' | 'ar' | 'soa' | 'reports' | 'analytics' | 'audit'>('invoices');
+
+  // Live Set Action status per SOA line item in Generate SOA modal
+  const [lineSetActionStatus, setLineSetActionStatus] = useState<Record<number, {
+    ruleCode: string;
+    category: 'BIR' | 'Benefits';
+    periodLabel: string;
+    targetMonth: string;
+    targetYear: number;
+    amount: number;
+    clientName: string;
+    triggered: boolean;
+    statusNote?: string;
+  }>>({});
 
   // Phase 5: Client SOA Sub-Tab State ⭐
   const [soaSelectedClientId, setSoaSelectedClientId] = useState<string>('');
@@ -800,9 +818,255 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     return null;
   };
 
+  // Helper to detect if a line item matches a BIR Tax Return or Statutory Benefit in the Monthly Deadline To-Do List
+  const matchDeadlineRuleAndPeriod = (
+    desc: string, 
+    periodStr: string, 
+    client?: ClientProfile
+  ): { 
+    matchedRule: CustomDeadlineRule; 
+    targetPeriodLabel: string; 
+    targetMonthStr: string; 
+    targetYear: number;
+    category: 'BIR' | 'Benefits';
+  } | null => {
+    if (!desc || !desc.trim()) return null;
+    const cleanDesc = desc.trim().toLowerCase();
+
+    // 1. Gather all master rules
+    const allRules: CustomDeadlineRule[] = [
+      ...(masterChoices.birTaxOptions || []),
+      ...(masterChoices.benefitsOptions || []),
+      ...DEFAULT_BIR_TAX_OPTIONS,
+      ...DEFAULT_BENEFITS_OPTIONS
+    ];
+
+    // 2. Find rule that matches description
+    let matchedRule: CustomDeadlineRule | undefined = allRules.find(r => {
+      const codeLow = r.code.toLowerCase();
+      const regex = new RegExp(`\\b${codeLow.replace('+', '\\+')}\\b`, 'i');
+      return regex.test(cleanDesc);
+    });
+
+    if (!matchedRule) {
+      matchedRule = allRules.find(r => {
+        const codeLow = r.code.toLowerCase();
+        return cleanDesc.includes(codeLow) || codeLow.includes(cleanDesc);
+      });
+    }
+
+    if (!matchedRule) {
+      // Check for SSS, PhilHealth, Pag-IBIG / HDMF synonyms
+      if (cleanDesc.includes('sss salary loan')) {
+        matchedRule = allRules.find(r => r.code.toLowerCase() === 'sss salary loan');
+      } else if (cleanDesc.includes('sss calamity loan')) {
+        matchedRule = allRules.find(r => r.code.toLowerCase() === 'sss calamity loan');
+      } else if (cleanDesc.includes('sss')) {
+        matchedRule = allRules.find(r => r.code.toLowerCase() === 'sss');
+      } else if (cleanDesc.includes('philhealth') || cleanDesc.includes('phic')) {
+        matchedRule = allRules.find(r => r.code.toLowerCase() === 'philhealth');
+      } else if (cleanDesc.includes('hdmf mpl') || cleanDesc.includes('hdmf multi-purpose')) {
+        matchedRule = allRules.find(r => r.code.toLowerCase().includes('mpl') || r.code.toLowerCase().includes('multi-purpose'));
+      } else if (cleanDesc.includes('hdmf') || cleanDesc.includes('pag-ibig') || cleanDesc.includes('pagibig')) {
+        matchedRule = allRules.find(r => r.code.toLowerCase() === 'hdmf');
+      }
+    }
+
+    if (!matchedRule) return null;
+
+    // 3. Determine Target Period Label and Target Month String
+    const codeUpper = matchedRule.code.toUpperCase();
+    const periodTrim = (periodStr || '').trim();
+
+    const yrMatch = periodTrim.match(/\b(20\d{2})\b/);
+    const targetYear = yrMatch ? parseInt(yrMatch[1], 10) : (parseInt(selectedYear, 10) || 2026);
+
+    let targetPeriodLabel = periodTrim || `${selectedMonth} ${selectedYear}`;
+    let targetMonthStr = `${targetYear}-${String(monthsList.indexOf(selectedMonth) + 1).padStart(2, '0')}`;
+
+    // Handling for Quarterly Returns (1702Q, 1701Q, 2550Q, 1601EQ, 2551Q)
+    const isQuarterly = ['1702Q', '1701Q', '2550Q', '1601EQ', '2551Q', 'SAWT', 'QAP', 'SLSP'].some(q => codeUpper.includes(q)) || matchedRule.frequency === 'Quarterly';
+    
+    if (isQuarterly) {
+      const qMatch = periodTrim.match(/\b([1-4])[Qq]\b|\b[Qq]([1-4])\b|\b([1-4])(st|nd|rd|th)?\s*quarter\b/i);
+      const quarterNum = qMatch ? parseInt(qMatch[1] || qMatch[2] || qMatch[3], 10) : (monthsList.indexOf(selectedMonth) <= 2 ? 4 : monthsList.indexOf(selectedMonth) <= 5 ? 1 : monthsList.indexOf(selectedMonth) <= 8 ? 2 : 3);
+
+      targetPeriodLabel = `${quarterNum}Q - ${quarterNum === 4 ? targetYear - 1 : targetYear}`;
+
+      if (codeUpper === '1702Q' || codeUpper === '1701Q') {
+        if (quarterNum === 1) targetMonthStr = `${targetYear}-05`;
+        else if (quarterNum === 2) targetMonthStr = `${targetYear}-08`;
+        else if (quarterNum === 3) targetMonthStr = `${targetYear}-11`;
+        else targetMonthStr = `${targetYear}-08`;
+      } else if (codeUpper === '2550Q' || codeUpper === '1601EQ' || codeUpper === '2551Q') {
+        if (quarterNum === 1) targetMonthStr = `${targetYear}-04`;
+        else if (quarterNum === 2) targetMonthStr = `${targetYear}-07`;
+        else if (quarterNum === 3) targetMonthStr = `${targetYear}-10`;
+        else if (quarterNum === 4) targetMonthStr = `${targetYear}-01`;
+        else targetMonthStr = `${targetYear}-07`;
+      }
+    } else {
+      const monthRegex = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i;
+      const mMatch = periodTrim.match(monthRegex);
+      if (mMatch) {
+        const mKey = mMatch[1].toLowerCase();
+        const shortMap: Record<string, { num: string; full: string; deadlineMonthNum: string }> = {
+          jan: { num: '01', full: 'January', deadlineMonthNum: '02' },
+          feb: { num: '02', full: 'February', deadlineMonthNum: '03' },
+          mar: { num: '03', full: 'March', deadlineMonthNum: '04' },
+          apr: { num: '04', full: 'April', deadlineMonthNum: '05' },
+          may: { num: '05', full: 'May', deadlineMonthNum: '06' },
+          jun: { num: '06', full: 'June', deadlineMonthNum: '07' },
+          jul: { num: '07', full: 'July', deadlineMonthNum: '08' },
+          aug: { num: '08', full: 'August', deadlineMonthNum: '09' },
+          sep: { num: '09', full: 'September', deadlineMonthNum: '10' },
+          oct: { num: '10', full: 'October', deadlineMonthNum: '11' },
+          nov: { num: '11', full: 'November', deadlineMonthNum: '12' },
+          dec: { num: '12', full: 'December', deadlineMonthNum: '01' }
+        };
+        const info = shortMap[mKey];
+        if (info) {
+          targetPeriodLabel = `${info.full} ${targetYear}`;
+          targetMonthStr = `${targetYear}-${info.deadlineMonthNum}`;
+        }
+      }
+    }
+
+    return {
+      matchedRule,
+      targetPeriodLabel,
+      targetMonthStr,
+      targetYear,
+      category: (matchedRule.category === 'Benefits' ? 'Benefits' : 'BIR') as 'BIR' | 'Benefits'
+    };
+  };
+
+  // Helper to trigger "Set Action" when user enters an amount for a matching compliance requirement
+  const checkAndTriggerSetAction = (
+    lineIdx: number, 
+    desc: string, 
+    periodStr: string, 
+    amt: number,
+    client: ClientProfile | undefined
+  ) => {
+    if (!client) return;
+    const match = matchDeadlineRuleAndPeriod(desc, periodStr, client);
+    if (!match) {
+      setLineSetActionStatus(prev => {
+        if (!prev[lineIdx]) return prev;
+        const next = { ...prev };
+        delete next[lineIdx];
+        return next;
+      });
+      return;
+    }
+
+    const { matchedRule, targetPeriodLabel, targetMonthStr, targetYear, category } = match;
+
+    if (amt > 0) {
+      // Check if payable already exists for this client + rule + month/period
+      const existingPayable = payables.find(p => 
+        p.clientId === client.id && 
+        (p.itemName.toLowerCase() === matchedRule.code.toLowerCase() || p.itemName.toLowerCase().includes(matchedRule.code.toLowerCase())) &&
+        (
+          p.month === targetMonthStr || 
+          p.month === targetPeriodLabel || 
+          p.month.includes(targetPeriodLabel) ||
+          p.notes?.includes(targetPeriodLabel) ||
+          p.remarks?.includes(targetPeriodLabel)
+        )
+      );
+
+      // Status indicator for the line item in SOA modal
+      const isAlreadyPaid = existingPayable?.status === 'Paid';
+
+      setLineSetActionStatus(prev => ({
+        ...prev,
+        [lineIdx]: {
+          ruleCode: matchedRule.code,
+          category,
+          periodLabel: targetPeriodLabel,
+          targetMonth: targetMonthStr,
+          targetYear,
+          amount: amt,
+          clientName: client.companyName,
+          triggered: true,
+          statusNote: isAlreadyPaid ? 'Already Tagged as Paid' : 'Payable Logged'
+        }
+      }));
+    } else {
+      setLineSetActionStatus(prev => {
+        if (!prev[lineIdx]) return prev;
+        const next = { ...prev };
+        delete next[lineIdx];
+        return next;
+      });
+    }
+  };
+
+  // Helper to sync and trigger "Set Action" when invoice is successfully generated
+  const syncInvoiceServicesToPayablesAndToDo = (
+    confirmedServices: InvoiceServiceLine[],
+    client: ClientProfile,
+    collectionNumber: string
+  ) => {
+    confirmedServices.forEach((s) => {
+      const amt = Number(s.amount) || 0;
+      if (amt <= 0 || !s.description) return;
+
+      const match = matchDeadlineRuleAndPeriod(s.description, s.monthYear, client);
+      if (!match) return;
+
+      const { matchedRule, targetPeriodLabel, targetMonthStr, targetYear, category } = match;
+
+      // Check if payable already exists for this client + rule + month/period
+      const existingPayable = payables.find(p => 
+        p.clientId === client.id && 
+        (p.itemName.toLowerCase() === matchedRule.code.toLowerCase() || p.itemName.toLowerCase().includes(matchedRule.code.toLowerCase())) &&
+        (
+          p.month === targetMonthStr ||
+          p.month === targetPeriodLabel ||
+          p.month.includes(targetPeriodLabel) ||
+          p.notes?.includes(targetPeriodLabel) ||
+          p.remarks?.includes(targetPeriodLabel)
+        )
+      );
+
+      // Only create/update if not already tagged as Paid
+      if (existingPayable?.status === 'Paid') {
+        return;
+      }
+
+      // Add or update the payable record to link to this invoice and set status to Unpaid (Payable Logged)
+      addPayable({
+        clientId: client.id,
+        clientName: client.companyName,
+        category,
+        itemName: matchedRule.code,
+        month: targetMonthStr,
+        year: targetYear,
+        payableAmount: amt,
+        status: 'Unpaid',
+        notes: `⚡ Auto-linked from SOA (${collectionNumber}) for ${matchedRule.code} (${targetPeriodLabel})`,
+        remarks: `⚡ Auto-linked from SOA (${collectionNumber}) for ${matchedRule.code} (${targetPeriodLabel})`,
+        comment: `⚡ Auto-linked from SOA (${collectionNumber}) for ${matchedRule.code} (${targetPeriodLabel})`,
+        createdById: currentUser?.id || 'staff',
+        createdByName: currentUser?.fullName || 'Accountant'
+      });
+
+      addAuditLog(
+        'Set Payable Action (SOA Generated)',
+        `⚡ Auto Set Action from Generated SOA (${collectionNumber}) for ${client.companyName}: ${matchedRule.code} (${targetPeriodLabel}) -> ₱${amt.toLocaleString()} payable created & actioned in To-Do List`,
+        currentUser?.id || 'staff',
+        currentUser?.fullName || 'Accountant'
+      );
+    });
+  };
+
   // Handle Client Change in Create Modal: Only show items if there is an actual payable or fee/amount > 0 and NOT already invoiced
   const handleClientChange = (clientId: string) => {
     setSelectedClientId(clientId);
+    setLineSetActionStatus({});
     const client = clients.find(c => c.id === clientId);
     if (!client) {
       setServices([]);
@@ -1059,7 +1323,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       }
     }
 
-    setServices(prev => [...prev, pendingLine]);
+    setServices(prev => {
+      const updated = [...prev, pendingLine];
+      if (selectedClient) {
+        checkAndTriggerSetAction(updated.length - 1, pendingLine.description, pendingLine.monthYear, pendingLine.amount, selectedClient);
+      }
+      return updated;
+    });
     setIsServicePickerOpen(false);
     setServiceSearchTerm('');
   };
@@ -1109,7 +1379,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       }
     }
 
-    setServices(prev => [...prev, pendingLine]);
+    setServices(prev => {
+      const updated = [...prev, pendingLine];
+      if (selectedClient) {
+        checkAndTriggerSetAction(updated.length - 1, pendingLine.description, pendingLine.monthYear, pendingLine.amount, selectedClient);
+      }
+      return updated;
+    });
 
     if (saveCustomForFuture) {
       saveCustomService({ description: nameToUse, defaultAmount: amountToUse });
@@ -1125,6 +1401,11 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
   const handleRemoveServiceLine = (index: number) => {
     setServices(services.filter((_, i) => i !== index));
+    setLineSetActionStatus(prev => {
+      const next = { ...prev };
+      delete next[index];
+      return next;
+    });
     setDescriptionErrors(prev => {
       const next = { ...prev };
       delete next[index];
@@ -1198,6 +1479,16 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       };
     }
     setServices(updated);
+
+    // Auto-detect and trigger "Set Action" in Monthly Deadline To-Do List
+    const finalDesc = field === 'description' ? value : current.description;
+    const finalPeriod = field === 'monthYear' ? value : current.monthYear;
+    const finalAmount = field === 'amount' ? (Number(value) || 0) : (Number(current.amount) || 0);
+
+    if (selectedClientId) {
+      const cl = clients.find(c => c.id === selectedClientId);
+      checkAndTriggerSetAction(index, finalDesc, finalPeriod, finalAmount, cl);
+    }
   };
 
   // Subtotal & Total Calculations (12% VAT removed per user request)
@@ -1305,6 +1596,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         saveCustomService({ description: s.description.trim(), defaultAmount: s.amount });
       }
     });
+
+    // Ensure all compliance items in confirmedServices are linked and marked as Payable Logged in To-Do List upon successful generation
+    syncInvoiceServicesToPayablesAndToDo(confirmedServices, client, cleanColl);
 
     const createdInv = addInvoice({
       clientId: client.id,
@@ -3976,6 +4270,21 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                   <span>No previous billing record found for this item</span>
                                 </div>
                               )}
+                            </div>
+                          )}
+
+                          {/* ⚡ Set Action Triggered in To-Do List Badge */}
+                          {lineSetActionStatus[idx] && (
+                            <div className="flex items-center justify-between text-[10px] text-amber-950 bg-amber-50/95 border border-amber-300 px-2.5 py-1.5 rounded-lg animate-in fade-in slide-in-from-top-1 shadow-2xs">
+                              <div className="flex items-center gap-1.5 font-medium truncate">
+                                <Zap className="w-3.5 h-3.5 text-amber-600 shrink-0 fill-amber-500 animate-pulse" />
+                                <span>
+                                  ⚡ <strong>Set Action Triggered:</strong> <strong className="text-amber-950 font-bold">{lineSetActionStatus[idx].ruleCode}</strong> ({lineSetActionStatus[idx].periodLabel}) updated to <strong>Payable Logged</strong> (₱{Number(lineSetActionStatus[idx].amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) in To-Do List
+                                </span>
+                              </div>
+                              <span className="text-[9px] font-bold text-amber-800 bg-amber-100/90 px-1.5 py-0.5 rounded border border-amber-300 shrink-0 ml-2">
+                                To-Do List Synced ✓
+                              </span>
                             </div>
                           )}
 

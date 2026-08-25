@@ -231,8 +231,14 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
           // Check if payable already recorded
           const matchingPayable = payables.find(p => 
             p.clientId === client.id && 
-            p.itemName.toLowerCase() === rule.code.toLowerCase() &&
-            (p.month === `${selectedYear}-${monthNumStr}` || p.month === currentPeriodCode || p.month.includes(selectedMonth))
+            (p.itemName.toLowerCase() === rule.code.toLowerCase() || p.itemName.toLowerCase().includes(rule.code.toLowerCase())) &&
+            (
+              p.month === `${selectedYear}-${monthNumStr}` || 
+              p.month === currentPeriodCode || 
+              p.month.toLowerCase().includes(selectedMonth.toLowerCase()) ||
+              (dInfo.label && (p.month === dInfo.label || p.notes?.includes(dInfo.label) || p.remarks?.includes(dInfo.label) || dInfo.label.includes(p.month))) ||
+              (p.month.includes(dInfo.dueDateStr.slice(0, 7)))
+            )
           );
 
           let status: ToDoItem['status'] = 'NO_ACTION';
