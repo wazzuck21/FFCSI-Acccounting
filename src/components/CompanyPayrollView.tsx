@@ -15,7 +15,14 @@ import { DolePayrollSandbox } from './DolePayrollSandbox';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { AttendanceReportModal } from './AttendanceReportModal';
-import { generateCutoffAttendance, exportAttendanceReportToExcel } from '../utils/attendanceUtils';
+import { 
+  generateCutoffAttendance, 
+  exportAttendanceReportToExcel,
+  parseExceptionalsDTRWorkbook,
+  saveCutoffAttendanceStore,
+  downloadExceptionalsDTRTemplate,
+  ParsedDTRResult
+} from '../utils/attendanceUtils';
 import { 
   Banknote, 
   Plus, 
@@ -41,7 +48,9 @@ import {
   Download,
   Upload,
   FileSpreadsheet,
-  TableProperties
+  TableProperties,
+  Sparkles,
+  Check
 } from 'lucide-react';
 
 export const CompanyPayrollView: React.FC = () => {
@@ -55,6 +64,7 @@ export const CompanyPayrollView: React.FC = () => {
     deleteEmployee,
     addLeaveRecord,
     updateLeaveStatus,
+    deleteLeaveRecord,
     addValeRecord,
     addValeRepayment,
     deleteValeRecord,
@@ -79,6 +89,19 @@ export const CompanyPayrollView: React.FC = () => {
   const [selectedAttCutoff, setSelectedAttCutoff] = useState<string>('August 16-31, 2026');
   const [selectedAttCutoffType, setSelectedAttCutoffType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>('2nd Half (16-30/31)');
   const [searchTerm, setSearchTerm] = useState('');
+
+  // 360° Employee Profile & Cross-Tab Modals ⭐
+  const [profileModalEmployee, setProfileModalEmployee] = useState<CompanyEmployee | null>(null);
+  const [profileModalTab, setProfileModalTab] = useState<'overview' | 'leaves' | 'vale' | 'payroll'>('overview');
+  const [repaymentModalVale, setRepaymentModalVale] = useState<ValeRecord | null>(null);
+  const [manualRepaymentAmount, setManualRepaymentAmount] = useState<number>(500);
+  const [manualRepaymentRemarks, setManualRepaymentRemarks] = useState<string>('Direct Cash Return / Repayment');
+  const [syncSuccessMsg, setSyncSuccessMsg] = useState<string | null>(null);
+
+  // Biometric / Exceptionals DTR Import State ⭐
+  const [dtrReviewModalResult, setDtrReviewModalResult] = useState<ParsedDTRResult | null>(null);
+  const [dtrReviewSelectedEmpIdx, setDtrReviewSelectedEmpIdx] = useState<number>(0);
+  const [dtrUploadSuccessMsg, setDtrUploadSuccessMsg] = useState<string | null>(null);
 
   // Form states for New Payroll Run
   const [newRunPeriod, setNewRunPeriod] = useState('August 1-15, 2026');
@@ -216,7 +239,86 @@ export const CompanyPayrollView: React.FC = () => {
     XLSX.writeFile(workbook, `Timekeeping_Template_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // Upload & Parse Timekeeping Excel / CSV File
+  // Upload and parse Exceptionals/Biometric DTR Excel File (supports raw DTR.png format with multi-employee sheets/tables) ⭐
+  const handleUploadBiometricDTRFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+
+        const parsedResult = parseExceptionalsDTRWorkbook(wb, employees, leaveRecords);
+        if (parsedResult.matchedReports.length > 0) {
+          setDtrReviewModalResult(parsedResult);
+          setDtrReviewSelectedEmpIdx(0);
+        } else {
+          alert('Could not detect Exceptionals DTR logs in the uploaded file. Please ensure it contains attendance logs with date/time stamps or employee names.');
+        }
+      } catch (err) {
+        console.error('Error parsing Exceptionals DTR file:', err);
+        alert('Failed to parse DTR file. Please verify file format (.xlsx, .xls, or .csv).');
+      }
+    };
+    reader.readAsBinaryString(file);
+    e.target.value = '';
+  };
+
+  // Apply parsed DTR result to Cutoff Attendance & Live Payroll Run inputs
+  const handleApplyDTRReview = () => {
+    if (!dtrReviewModalResult) return;
+
+    // 1. Set cutoff period and type
+    setSelectedAttCutoff(dtrReviewModalResult.detectedCutoffPeriod);
+    setSelectedAttCutoffType(dtrReviewModalResult.periodType);
+    setNewRunPeriod(dtrReviewModalResult.detectedCutoffPeriod);
+    setNewRunPeriodType(dtrReviewModalResult.periodType);
+
+    // 2. Select first matched employee
+    if (dtrReviewModalResult.matchedReports[0]) {
+      setSelectedAttEmployeeId(dtrReviewModalResult.matchedReports[0].employeeId);
+    }
+
+    // 3. Save into cutoff attendance store
+    saveCutoffAttendanceStore(dtrReviewModalResult.matchedReports);
+
+    // 4. Update payrollInputs map so the payroll run reflects these exact DTR numbers
+    const updatedInputs = { ...payrollInputs };
+    dtrReviewModalResult.matchedReports.forEach(rep => {
+      const activeVale = valeRecords.find(v => v.employeeId === rep.employeeId && v.status === 'Active');
+      const emp = employees.find(e => e.id === rep.employeeId);
+      const valeDed = activeVale 
+        ? Math.min(activeVale.remainingBalance, (emp?.defaultValeDeduction) || activeVale.cutoffDeductionAmount || 500) 
+        : 0;
+
+      updatedInputs[rep.employeeId] = {
+        daysWorked: rep.totalDaysWorked,
+        daysAbsent: rep.totalDaysAbsent,
+        tardinessMinutes: rep.totalLateMinutes,
+        undertimeMinutes: rep.totalEarlyOutMinutes,
+        otRegularHours: rep.totalOtHours,
+        otRestDayHours: 0,
+        otHolidayHours: rep.totalHolidayHours,
+        nightDiffHours: rep.totalNightDiffHours,
+        otherAllowances: Number(rep.totalHolidayPay.toFixed(2)),
+        valeDeduction: valeDed,
+        otherDeductions: 0,
+        timeIn: '08:30 AM',
+        timeOut: '05:30 PM'
+      };
+    });
+    setPayrollInputs(updatedInputs);
+
+    const msg = `⚡ DTR Timesheets successfully applied! Detected Cutoff: ${dtrReviewModalResult.detectedCutoffPeriod}. Synced ${dtrReviewModalResult.matchedReports.length} employee records with DOLE rules (8:45 AM grace period, overtime, undertime, absences).`;
+    setDtrUploadSuccessMsg(msg);
+    setTimeout(() => setDtrUploadSuccessMsg(null), 8000);
+
+    setDtrReviewModalResult(null);
+  };
+
+  // Upload & Parse Timekeeping Excel / CSV File (supports Exceptionals DTR & Standard Formats)
   const handleUploadTimekeepingExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -226,6 +328,47 @@ export const CompanyPayrollView: React.FC = () => {
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
+
+        // First check if it matches Exceptionals DTR layout
+        const parsedDTR = parseExceptionalsDTRWorkbook(wb, employees, leaveRecords);
+        if (parsedDTR.matchedReports.length > 0) {
+          saveCutoffAttendanceStore(parsedDTR.matchedReports);
+          setNewRunPeriod(parsedDTR.detectedCutoffPeriod);
+          setNewRunPeriodType(parsedDTR.periodType);
+          setSelectedAttCutoff(parsedDTR.detectedCutoffPeriod);
+          setSelectedAttCutoffType(parsedDTR.periodType);
+
+          const updatedInputs = { ...payrollInputs };
+          parsedDTR.matchedReports.forEach(rep => {
+            const activeVale = valeRecords.find(v => v.employeeId === rep.employeeId && v.status === 'Active');
+            const emp = employees.find(e => e.id === rep.employeeId);
+            const valeDed = activeVale 
+              ? Math.min(activeVale.remainingBalance, (emp?.defaultValeDeduction) || activeVale.cutoffDeductionAmount || 500) 
+              : 0;
+
+            updatedInputs[rep.employeeId] = {
+              daysWorked: rep.totalDaysWorked,
+              daysAbsent: rep.totalDaysAbsent,
+              tardinessMinutes: rep.totalLateMinutes,
+              undertimeMinutes: rep.totalEarlyOutMinutes,
+              otRegularHours: rep.totalOtHours,
+              otRestDayHours: 0,
+              otHolidayHours: rep.totalHolidayHours,
+              nightDiffHours: rep.totalNightDiffHours,
+              otherAllowances: Number(rep.totalHolidayPay.toFixed(2)),
+              valeDeduction: valeDed,
+              otherDeductions: 0,
+              timeIn: '08:30 AM',
+              timeOut: '05:30 PM'
+            };
+          });
+
+          setPayrollInputs(updatedInputs);
+          alert(`Successfully imported Exceptionals DTR for ${parsedDTR.matchedReports.length} employee(s)! Cutoff: ${parsedDTR.detectedCutoffPeriod}`);
+          return;
+        }
+
+        // Fallback: Standard tabular sheet
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json<Record<string, any>>(ws);
@@ -310,31 +453,58 @@ export const CompanyPayrollView: React.FC = () => {
     e.target.value = '';
   };
 
-  // Initialize Payroll Input map when opening modal
-  const handleOpenNewRunModal = () => {
-    const initialMap: Record<string, any> = {};
-    employees.filter(e => e.status === 'Active').forEach(emp => {
-      // Find default vale deduction if active vale exists
-      const activeVale = valeRecords.find(v => v.employeeId === emp.id && v.status === 'Active');
-      const valeDed = activeVale ? Math.min(activeVale.remainingBalance, emp.defaultValeDeduction || activeVale.cutoffDeductionAmount || 500) : 0;
+  // Synchronize Payroll Inputs directly from Timekeeping/DTR, Leaves, and Vale Ledgers ⭐
+  const syncPayrollInputsFromAttendanceAndLedgers = (
+    period: string = newRunPeriod,
+    periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly' = newRunPeriodType
+  ) => {
+    const syncedMap: Record<string, any> = {};
+    const activeEmps = employees.filter(e => e.status === 'Active');
 
-      initialMap[emp.id] = {
-        daysWorked: 11,
-        daysAbsent: 0,
-        tardinessMinutes: 0,
-        undertimeMinutes: 0,
-        otRegularHours: 0,
+    activeEmps.forEach(emp => {
+      // Pull live computed cutoff attendance incorporating leave records
+      const attReport = generateCutoffAttendance(emp, period, periodType, undefined, undefined, leaveRecords);
+      
+      // Pull active vale record and current cutoff deduction
+      const activeVale = valeRecords.find(v => v.employeeId === emp.id && v.status === 'Active');
+      const valeDed = activeVale 
+        ? Math.min(activeVale.remainingBalance, emp.defaultValeDeduction || activeVale.cutoffDeductionAmount || 500) 
+        : 0;
+
+      syncedMap[emp.id] = {
+        daysWorked: attReport.totalDaysWorked,
+        daysAbsent: attReport.totalDaysAbsent,
+        tardinessMinutes: attReport.totalLateMinutes,
+        undertimeMinutes: attReport.totalEarlyOutMinutes,
+        otRegularHours: attReport.totalOtHours,
         otRestDayHours: 0,
-        otHolidayHours: 0,
-        nightDiffHours: 0,
-        otherAllowances: 0,
+        otHolidayHours: attReport.totalHolidayHours,
+        nightDiffHours: attReport.totalNightDiffHours,
+        otherAllowances: Number(attReport.totalHolidayPay.toFixed(2)),
         valeDeduction: valeDed,
         otherDeductions: 0,
-        timeIn: '08:00 AM',
-        timeOut: '05:00 PM'
+        timeIn: '08:30 AM',
+        timeOut: '05:30 PM'
       };
     });
-    setPayrollInputs(initialMap);
+
+    setPayrollInputs(syncedMap);
+    setSyncSuccessMsg(`⚡ Successfully synchronized data for ${activeEmps.length} employee(s) from Timekeeping DTR, Approved Leaves, and Vale Ledgers!`);
+    setTimeout(() => setSyncSuccessMsg(null), 6000);
+    return activeEmps.length;
+  };
+
+  // Initialize Payroll Input map when opening modal with auto-sync
+  const handleOpenNewRunModal = () => {
+    syncPayrollInputsFromAttendanceAndLedgers(newRunPeriod, newRunPeriodType);
+    setShowNewRunModal(true);
+  };
+
+  // Push Attendance tab selection directly to create a new payroll run
+  const handlePushAttendanceToPayrollRun = () => {
+    setNewRunPeriod(selectedAttCutoff);
+    setNewRunPeriodType(selectedAttCutoffType);
+    syncPayrollInputsFromAttendanceAndLedgers(selectedAttCutoff, selectedAttCutoffType);
     setShowNewRunModal(true);
   };
 
@@ -431,6 +601,23 @@ export const CompanyPayrollView: React.FC = () => {
       items: computedRunItems
     });
 
+    // Auto-record vale repayment if run is Approved or Paid and employee has a vale deduction
+    if (status !== 'Draft') {
+      computedRunItems.forEach(item => {
+        if (item.valeDeduction > 0) {
+          const activeVale = valeRecords.find(v => v.employeeId === item.employeeId && v.status === 'Active');
+          if (activeVale) {
+            addValeRepayment(
+              activeVale.id,
+              item.valeDeduction,
+              `Cutoff payroll deduction (${newRunPeriod})`,
+              newRunPeriod
+            );
+          }
+        }
+      });
+    }
+
     if (currentUser) {
       addAuditLog(
         'Created Internal Payroll Run',
@@ -472,10 +659,26 @@ export const CompanyPayrollView: React.FC = () => {
       isPaid: leaveForm.isPaid
     });
 
-    // Auto-update leave status to trigger deduction
-    updateLeaveStatus(`leave_${Date.now()}`, 'Approved', currentUser?.fullName);
-
     setShowLeaveModal(false);
+  };
+
+  const handleSaveManualRepayment = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!repaymentModalVale) return;
+
+    const amt = Number(manualRepaymentAmount);
+    if (amt <= 0) {
+      alert('Please enter a valid repayment amount greater than 0.');
+      return;
+    }
+
+    addValeRepayment(
+      repaymentModalVale.id,
+      Math.min(amt, repaymentModalVale.remainingBalance),
+      manualRepaymentRemarks || 'Manual Direct Repayment'
+    );
+
+    setRepaymentModalVale(null);
   };
 
   const handleSaveVale = (e: React.FormEvent) => {
@@ -1007,17 +1210,66 @@ export const CompanyPayrollView: React.FC = () => {
 
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
                   <span className="text-amber-700 font-bold">Vale Balance: ₱{(emp.currentValeBalance || 0).toLocaleString()}</span>
-                  <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setProfileModalEmployee(emp);
+                      setProfileModalTab('overview');
+                    }}
+                    className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold rounded-lg border border-blue-200 flex items-center gap-1 cursor-pointer"
+                  >
+                    <UserCheck className="w-3.5 h-3.5 text-blue-600" /> 360° Profile
+                  </button>
+                </div>
+
+                {/* Cross-Tab Quick Actions Bar ⭐ */}
+                <div className="grid grid-cols-4 gap-1.5 pt-2 border-t border-slate-100 text-[10px]">
+                  <button
+                    onClick={() => {
+                      setSelectedAttEmployeeId(emp.id);
+                      setActiveTab('attendance');
+                    }}
+                    className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
+                    title="View Cutoff DTR Timesheet"
+                  >
+                    <TableProperties className="w-3.5 h-3.5 text-blue-600" />
+                    <span>DTR Sheet</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setLeaveForm(prev => ({ ...prev, employeeId: emp.id }));
+                      setShowLeaveModal(true);
+                    }}
+                    className="p-1.5 bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
+                    title="File Leave for this Employee"
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>File Leave</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setValeForm(prev => ({ ...prev, employeeId: emp.id }));
+                      setShowValeModal(true);
+                    }}
+                    className="p-1.5 bg-slate-50 hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
+                    title="Issue Vale Cash Advance"
+                  >
+                    <DollarSign className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Issue Vale</span>
+                  </button>
+
+                  <div className="flex items-center justify-center gap-1 bg-slate-50 rounded border border-slate-200">
                     <button
                       onClick={() => {
                         setEditingEmployee(emp);
                         setEmpForm(emp);
                         setShowEmployeeModal(true);
                       }}
-                      className="p-1.5 text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
-                      title="Edit Employee"
+                      className="p-1 text-blue-600 hover:bg-blue-100 rounded cursor-pointer"
+                      title="Edit Salary & Info"
                     >
-                      <Edit2 className="w-4 h-4" />
+                      <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => {
@@ -1025,10 +1277,10 @@ export const CompanyPayrollView: React.FC = () => {
                           deleteEmployee(emp.id);
                         }
                       }}
-                      className="p-1.5 text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                      className="p-1 text-rose-600 hover:bg-rose-100 rounded cursor-pointer"
                       title="Delete Employee"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -1114,6 +1366,17 @@ export const CompanyPayrollView: React.FC = () => {
                         </button>
                       </>
                     )}
+                    <button
+                      onClick={() => {
+                        if (confirm(`Cancel/Delete this leave record for ${leave.employeeName}? Any deducted days will be refunded.`)) {
+                          deleteLeaveRecord(leave.id);
+                        }
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
+                      title="Delete & Refund Leave"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -1159,11 +1422,24 @@ export const CompanyPayrollView: React.FC = () => {
                     <h4 className="font-bold text-slate-900 text-base">{vale.employeeName}</h4>
                     <p className="text-xs text-slate-500">Issued Date: <span className="font-mono text-slate-700">{vale.dateGiven}</span></p>
                   </div>
-                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                    vale.status === 'Active' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                  }`}>
-                    {vale.status}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      vale.status === 'Active' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    }`}>
+                      {vale.status}
+                    </span>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Delete this vale record for ${vale.employeeName}?`)) {
+                          deleteValeRecord(vale.id);
+                        }
+                      }}
+                      className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
+                      title="Delete Vale"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded italic">" {vale.purpose} "</p>
@@ -1183,9 +1459,24 @@ export const CompanyPayrollView: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Quick Repayment Button ⭐ */}
+                {vale.status === 'Active' && (
+                  <div className="flex justify-end pt-1">
+                    <button
+                      onClick={() => {
+                        setRepaymentModalVale(vale);
+                        setManualRepaymentAmount(Math.min(vale.remainingBalance, vale.cutoffDeductionAmount || 500));
+                      }}
+                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-lg border border-emerald-300 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <DollarSign className="w-3.5 h-3.5 text-emerald-600" /> Record Manual Repayment
+                    </button>
+                  </div>
+                )}
+
                 {/* Repayments History */}
                 {vale.repayments.length > 0 && (
-                  <div className="space-y-1.5 pt-2">
+                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Repayment Log ({vale.repayments.length})</span>
                     <div className="max-h-24 overflow-y-auto space-y-1 pr-1">
                       {vale.repayments.map(rep => (
@@ -1264,18 +1555,48 @@ export const CompanyPayrollView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Upload Biometric / Exceptionals DTR Excel ⭐ */}
+              <label className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-all">
+                <Upload className="w-4 h-4" /> Upload Biometric DTR (Excel)
+                <input
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  className="hidden"
+                  onChange={handleUploadBiometricDTRFile}
+                />
+              </label>
+
+              {/* Download Exceptionals Template (.xlsx) */}
+              <button
+                type="button"
+                onClick={downloadExceptionalsDTRTemplate}
+                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                title="Download sample Excel matching biometric/exceptionals DTR structure"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Download DTR Template
+              </button>
+
+              {/* Sync to Payroll Button ⭐ */}
+              <button
+                type="button"
+                onClick={handlePushAttendanceToPayrollRun}
+                className="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-all"
+              >
+                <Plus className="w-4 h-4" /> Create Payroll Run from this DTR
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
                   const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees.filter(e => e.status === 'Active')[0] || employees[0];
                   if (emp) {
-                    const rep = generateCutoffAttendance(emp, selectedAttCutoff, selectedAttCutoffType);
+                    const rep = generateCutoffAttendance(emp, selectedAttCutoff, selectedAttCutoffType, undefined, undefined, leaveRecords);
                     exportAttendanceReportToExcel(rep);
                   }
                 }}
-                className="px-4 py-2 bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors shadow-2xs"
+                className="px-3 py-2 bg-emerald-50 border border-emerald-300 text-emerald-800 hover:bg-emerald-100 rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer transition-colors shadow-2xs"
               >
-                <Download className="w-4 h-4 text-emerald-600" /> Export Excel (.xlsx)
+                <Download className="w-4 h-4 text-emerald-600" /> Export Excel
               </button>
 
               <button
@@ -1284,12 +1605,29 @@ export const CompanyPayrollView: React.FC = () => {
                   const emp = employees.find(e => e.id === selectedAttEmployeeId) || employees.filter(e => e.status === 'Active')[0] || employees[0];
                   if (emp) setAttendanceModalEmployee(emp);
                 }}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-colors"
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-colors"
               >
-                <TableProperties className="w-4 h-4" /> Open Full DTR Grid Modal
+                <TableProperties className="w-4 h-4" /> Full DTR Grid Modal
               </button>
             </div>
           </div>
+
+          {/* DTR Upload Success Notification Banner */}
+          {dtrUploadSuccessMsg && (
+            <div className="bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-300 p-4 rounded-xl flex items-center justify-between text-xs text-emerald-900 shadow-sm animate-fadeIn">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span>{dtrUploadSuccessMsg}</span>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setDtrUploadSuccessMsg(null)}
+                className="text-emerald-700 hover:text-emerald-900 font-bold ml-4 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {/* Quick Staff Selector Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
@@ -1497,18 +1835,27 @@ export const CompanyPayrollView: React.FC = () => {
               </div>
             </div>
 
-            {/* Timekeeping & Excel Upload Header Toolbar */}
-            <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+            {/* Timekeeping, Sync & Excel Upload Header Toolbar */}
+            <div className="bg-indigo-50 border border-indigo-200 p-4 rounded-xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 text-xs">
               <div className="space-y-0.5">
                 <span className="font-bold text-indigo-950 flex items-center gap-1.5 text-sm">
-                  <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Timekeeping & Excel Attendance Upload
+                  <FileSpreadsheet className="w-4 h-4 text-indigo-600" /> Integrated Timekeeping, Leave, & Vale Auto-Sync
                 </span>
                 <p className="text-slate-600 text-[11px]">
-                  Upload an Excel/CSV file with time-in/out logs, or enter shift times below to auto-calculate tardiness and overtime based on DOLE rules.
+                  Values are synchronized with DTR attendance timesheets, approved leaves, and active vale loan installment deductions.
                 </p>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => syncPayrollInputsFromAttendanceAndLedgers(newRunPeriod, newRunPeriodType)}
+                  className="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-lg flex items-center gap-1.5 cursor-pointer text-[11px] shadow-xs transition-all"
+                  title="Pull latest hours, leaves, and vale deductions from all tabs"
+                >
+                  <Clock className="w-3.5 h-3.5" /> ⚡ Auto-Sync All Tabs
+                </button>
+
                 <button
                   type="button"
                   onClick={handleDownloadExcelTemplate}
@@ -1518,7 +1865,7 @@ export const CompanyPayrollView: React.FC = () => {
                 </button>
 
                 <label className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg flex items-center gap-1.5 cursor-pointer text-[11px] shadow-2xs transition-colors">
-                  <Upload className="w-3.5 h-3.5" /> Upload Excel Timekeeping
+                  <Upload className="w-3.5 h-3.5" /> Upload Excel DTR
                   <input
                     type="file"
                     accept=".xlsx, .xls, .csv"
@@ -1528,6 +1875,14 @@ export const CompanyPayrollView: React.FC = () => {
                 </label>
               </div>
             </div>
+
+            {/* Sync Confirmation Banner ⭐ */}
+            {syncSuccessMsg && (
+              <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 p-3 rounded-xl text-xs font-semibold flex items-center justify-between">
+                <span>{syncSuccessMsg}</span>
+                <button type="button" onClick={() => setSyncSuccessMsg(null)} className="text-emerald-700 hover:text-emerald-900 ml-2">✕</button>
+              </div>
+            )}
 
             {/* Employee Timekeeping & Calculations Grid */}
             <div className="space-y-4">
@@ -2117,6 +2472,31 @@ export const CompanyPayrollView: React.FC = () => {
                 </select>
               </div>
 
+              {/* Live Leave Balance Preview ⭐ */}
+              {(() => {
+                const selectedEmp = employees.find(e => e.id === leaveForm.employeeId);
+                if (!selectedEmp) return null;
+                return (
+                  <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3 space-y-1">
+                    <span className="text-[11px] font-bold text-blue-900 block">Current Available Leave Credits:</span>
+                    <div className="grid grid-cols-3 gap-2 text-center text-[10px]">
+                      <div className="bg-white p-1.5 rounded border border-blue-100 font-mono">
+                        <span className="text-slate-500 font-sans block">SIL</span>
+                        <strong className="text-blue-700">{selectedEmp.silBalance} days</strong>
+                      </div>
+                      <div className="bg-white p-1.5 rounded border border-blue-100 font-mono">
+                        <span className="text-slate-500 font-sans block">VL</span>
+                        <strong className="text-purple-700">{selectedEmp.vlBalance} days</strong>
+                      </div>
+                      <div className="bg-white p-1.5 rounded border border-blue-100 font-mono">
+                        <span className="text-slate-500 font-sans block">SL</span>
+                        <strong className="text-emerald-700">{selectedEmp.slBalance} days</strong>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Leave Type</label>
                 <select
@@ -2124,9 +2504,9 @@ export const CompanyPayrollView: React.FC = () => {
                   onChange={e => setLeaveForm({ ...leaveForm, leaveType: e.target.value as any })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                 >
-                  <option value="Service Incentive Leave (SIL)">Service Incentive Leave (SIL)</option>
-                  <option value="Vacation Leave">Vacation Leave</option>
-                  <option value="Sick Leave">Sick Leave</option>
+                  <option value="Service Incentive Leave (SIL)">Service Incentive Leave (SIL - DOLE 5 Days)</option>
+                  <option value="Vacation Leave">Vacation Leave (VL)</option>
+                  <option value="Sick Leave">Sick Leave (SL)</option>
                   <option value="Emergency Leave">Emergency Leave</option>
                   <option value="Maternity Leave">Maternity Leave</option>
                   <option value="Paternity Leave">Paternity Leave</option>
@@ -2152,6 +2532,31 @@ export const CompanyPayrollView: React.FC = () => {
                     onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                   />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Total Days</label>
+                  <input
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    value={leaveForm.totalDays}
+                    onChange={e => setLeaveForm({ ...leaveForm, totalDays: Number(e.target.value) })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Compensation</label>
+                  <select
+                    value={leaveForm.isPaid ? 'paid' : 'unpaid'}
+                    onChange={e => setLeaveForm({ ...leaveForm, isPaid: e.target.value === 'paid' })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
+                  >
+                    <option value="paid">Paid Leave (Deducts Balance)</option>
+                    <option value="unpaid">Unpaid Leave</option>
+                  </select>
                 </div>
               </div>
 
@@ -2264,6 +2669,573 @@ export const CompanyPayrollView: React.FC = () => {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* MODAL: MANUAL VALE REPAYMENT ⭐ */}
+      {repaymentModalVale && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <form onSubmit={handleSaveManualRepayment} className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto my-auto">
+            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="font-bold text-base text-slate-900">Record Vale Repayment</h3>
+                <p className="text-xs text-slate-500">{repaymentModalVale.employeeName}</p>
+              </div>
+              <button type="button" onClick={() => setRepaymentModalVale(null)} className="text-slate-400 hover:text-slate-600">
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-amber-800">Original Advance:</span>
+                <span className="font-bold font-mono">₱{repaymentModalVale.amountGiven.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-amber-800">Remaining Balance:</span>
+                <span className="font-bold font-mono text-rose-700 text-sm">₱{repaymentModalVale.remainingBalance.toLocaleString()}</span>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Repayment Amount (₱)</label>
+                <input
+                  type="number"
+                  required
+                  min="1"
+                  max={repaymentModalVale.remainingBalance}
+                  value={manualRepaymentAmount}
+                  onChange={e => setManualRepaymentAmount(Number(e.target.value))}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-emerald-700 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Remarks / Note</label>
+                <input
+                  type="text"
+                  value={manualRepaymentRemarks}
+                  onChange={e => setManualRepaymentRemarks(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  placeholder="e.g. Direct cash return, check payment"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
+              <button
+                type="button"
+                onClick={() => setRepaymentModalVale(null)}
+                className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl shadow-sm cursor-pointer"
+              >
+                Confirm Repayment
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* MODAL: 360° EMPLOYEE PROFILE (ALL-TAB SYNC VIEW) ⭐ */}
+      {profileModalEmployee && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto my-auto">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-bold text-lg shadow-sm">
+                  {profileModalEmployee.fullName.split(' ').map(n => n[0]).slice(0, 2).join('')}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">{profileModalEmployee.employeeNo}</span>
+                    <h3 className="font-bold text-lg text-slate-900">{profileModalEmployee.fullName}</h3>
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded-full">{profileModalEmployee.status}</span>
+                  </div>
+                  <p className="text-xs text-slate-500">{profileModalEmployee.position} • {profileModalEmployee.department} • Hired: {profileModalEmployee.dateHired}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setEditingEmployee(profileModalEmployee);
+                    setEmpForm(profileModalEmployee);
+                    setProfileModalEmployee(null);
+                    setShowEmployeeModal(true);
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl flex items-center gap-1 cursor-pointer"
+                >
+                  <Edit2 className="w-3.5 h-3.5" /> Edit Info
+                </button>
+                <button type="button" onClick={() => setProfileModalEmployee(null)} className="text-slate-400 hover:text-slate-600">
+                  <XCircle className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+
+            {/* Profile Tab Navigation */}
+            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+              <button
+                onClick={() => setProfileModalTab('overview')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${profileModalTab === 'overview' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                Overview & Rates
+              </button>
+              <button
+                onClick={() => setProfileModalTab('leaves')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${profileModalTab === 'leaves' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                Leaves ({leaveRecords.filter(l => l.employeeId === profileModalEmployee.id).length})
+              </button>
+              <button
+                onClick={() => setProfileModalTab('vale')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${profileModalTab === 'vale' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                Vale Ledger ({valeRecords.filter(v => v.employeeId === profileModalEmployee.id).length})
+              </button>
+              <button
+                onClick={() => setProfileModalTab('payroll')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${profileModalTab === 'payroll' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                Payslip History
+              </button>
+            </div>
+
+            {/* Profile Tab 1: Overview & Rates */}
+            {profileModalTab === 'overview' && (
+              <div className="space-y-4 text-xs">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                    <span className="text-[11px] text-slate-500 font-bold uppercase">Basic Compensation</span>
+                    <p className="font-mono text-base font-bold text-slate-900">₱{profileModalEmployee.monthlyBasicSalary.toLocaleString()}</p>
+                    <p className="text-[11px] text-slate-600 font-mono">Daily: ₱{profileModalEmployee.dailyRate.toFixed(2)}</p>
+                    <p className="text-[11px] text-slate-600 font-mono">Hourly: ₱{profileModalEmployee.hourlyRate.toFixed(2)}</p>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                    <span className="text-[11px] text-slate-500 font-bold uppercase">Government & Tax IDs</span>
+                    <p className="text-slate-700">TIN: <strong className="font-mono">{profileModalEmployee.tinNumber || 'N/A'}</strong></p>
+                    <p className="text-slate-700">SSS: <strong className="font-mono">{profileModalEmployee.sssNumber || 'N/A'}</strong></p>
+                    <p className="text-slate-700">PhilHealth: <strong className="font-mono">{profileModalEmployee.philhealthNumber || 'N/A'}</strong></p>
+                    <p className="text-slate-700">Pag-IBIG: <strong className="font-mono">{profileModalEmployee.pagibigNumber || 'N/A'}</strong></p>
+                  </div>
+
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                    <span className="text-[11px] text-slate-500 font-bold uppercase">Payout Banking</span>
+                    <p className="font-bold text-slate-800">{profileModalEmployee.bankName}</p>
+                    <p className="text-slate-600 font-mono">Acc: {profileModalEmployee.accountNumber || 'N/A'}</p>
+                    <p className="text-amber-700 font-bold pt-1">Vale Balance: ₱{(profileModalEmployee.currentValeBalance || 0).toLocaleString()}</p>
+                  </div>
+                </div>
+
+                <div className="bg-blue-50/60 p-3 rounded-xl border border-blue-200 flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <strong className="text-blue-950 font-bold">Cutoff Attendance & DTR Timesheet</strong>
+                    <p className="text-slate-600 text-[11px]">View full daily in/out records, automated overtime, tardiness, and holiday pay for this employee.</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setSelectedAttEmployeeId(profileModalEmployee.id);
+                      setProfileModalEmployee(null);
+                      setActiveTab('attendance');
+                    }}
+                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs cursor-pointer flex items-center gap-1.5"
+                  >
+                    <TableProperties className="w-3.5 h-3.5" /> Open DTR
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Profile Tab 2: Leaves */}
+            {profileModalTab === 'leaves' && (
+              <div className="space-y-4 text-xs">
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div className="bg-blue-50 p-3 rounded-xl border border-blue-200">
+                    <span className="text-slate-500 text-[11px] block font-bold">Service Incentive Leave (SIL)</span>
+                    <span className="text-lg font-bold text-blue-700">{profileModalEmployee.silBalance} days</span>
+                  </div>
+                  <div className="bg-purple-50 p-3 rounded-xl border border-purple-200">
+                    <span className="text-slate-500 text-[11px] block font-bold">Vacation Leave (VL)</span>
+                    <span className="text-lg font-bold text-purple-700">{profileModalEmployee.vlBalance} days</span>
+                  </div>
+                  <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200">
+                    <span className="text-slate-500 text-[11px] block font-bold">Sick Leave (SL)</span>
+                    <span className="text-lg font-bold text-emerald-700">{profileModalEmployee.slBalance} days</span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <strong className="text-slate-800">Leave History</strong>
+                    <button
+                      onClick={() => {
+                        setLeaveForm(prev => ({ ...prev, employeeId: profileModalEmployee.id }));
+                        setShowLeaveModal(true);
+                      }}
+                      className="px-2.5 py-1 bg-blue-600 text-white rounded-lg text-[11px] font-bold cursor-pointer"
+                    >
+                      + File Leave
+                    </button>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                    {leaveRecords.filter(l => l.employeeId === profileModalEmployee.id).map(leave => (
+                      <div key={leave.id} className="p-3 bg-white flex justify-between items-center hover:bg-slate-50">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <strong className="text-slate-800">{leave.leaveType}</strong>
+                            <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full ${leave.status === 'Approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                              {leave.status}
+                            </span>
+                            <span className="text-slate-500 font-mono text-[11px]">{leave.startDate} to {leave.endDate} ({leave.totalDays}d)</span>
+                          </div>
+                          <p className="text-slate-500 italic text-[11px] mt-0.5">"{leave.reason}"</p>
+                        </div>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Cancel/Delete this leave record? Deducted balance will be refunded.`)) {
+                              deleteLeaveRecord(leave.id);
+                            }
+                          }}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
+                          title="Delete Leave"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                    {leaveRecords.filter(l => l.employeeId === profileModalEmployee.id).length === 0 && (
+                      <div className="p-4 text-center text-slate-400 text-xs">No leave records filed yet for this employee.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Profile Tab 3: Vale */}
+            {profileModalTab === 'vale' && (
+              <div className="space-y-4 text-xs">
+                <div className="flex justify-between items-center">
+                  <strong className="text-slate-800">Cash Advances & Repayment History</strong>
+                  <button
+                    onClick={() => {
+                      setValeForm(prev => ({ ...prev, employeeId: profileModalEmployee.id }));
+                      setShowValeModal(true);
+                    }}
+                    className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[11px] font-bold cursor-pointer"
+                  >
+                    + Issue New Vale
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {valeRecords.filter(v => v.employeeId === profileModalEmployee.id).map(vale => (
+                    <div key={vale.id} className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-slate-800">Advance: ₱{vale.amountGiven.toLocaleString()} (Issued: {vale.dateGiven})</span>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${vale.status === 'Active' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                            {vale.status} (Bal: ₱{vale.remainingBalance.toLocaleString()})
+                          </span>
+                          {vale.status === 'Active' && (
+                            <button
+                              onClick={() => {
+                                setRepaymentModalVale(vale);
+                                setManualRepaymentAmount(Math.min(vale.remainingBalance, vale.cutoffDeductionAmount || 500));
+                              }}
+                              className="px-2 py-1 bg-emerald-600 text-white text-[10px] font-bold rounded cursor-pointer"
+                            >
+                              Repay
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-600 italic">Purpose: "{vale.purpose}" • Cutoff Deduction: ₱{vale.cutoffDeductionAmount.toLocaleString()}</p>
+                      
+                      {vale.repayments.length > 0 && (
+                        <div className="border-t border-slate-200 pt-1.5 space-y-1">
+                          <span className="text-[10px] font-bold text-slate-500 uppercase">Repayment Log:</span>
+                          {vale.repayments.map(rep => (
+                            <div key={rep.id} className="flex justify-between text-[11px] text-slate-700 font-mono">
+                              <span>{rep.date} • {rep.remarks}</span>
+                              <strong className="text-emerald-700">-₱{rep.amountPaid.toLocaleString()}</strong>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {valeRecords.filter(v => v.employeeId === profileModalEmployee.id).length === 0 && (
+                    <div className="p-4 text-center text-slate-400 text-xs border border-slate-200 rounded-xl">No vale advances recorded for this employee.</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Profile Tab 4: Payslip History */}
+            {profileModalTab === 'payroll' && (
+              <div className="space-y-3 text-xs">
+                <strong className="text-slate-800 block">Historical Processed Payslips</strong>
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden">
+                  {payrollRuns.map(run => {
+                    const item = run.items.find(i => i.employeeId === profileModalEmployee.id);
+                    if (!item) return null;
+                    return (
+                      <div key={run.id} className="p-3 bg-white flex justify-between items-center hover:bg-slate-50">
+                        <div>
+                          <strong className="text-slate-800">{run.cutoffPeriod}</strong>
+                          <span className="text-slate-500 ml-2">Pay Date: {run.payDate} • Status: {run.status}</span>
+                          <div className="text-[11px] text-slate-600 font-mono mt-0.5">
+                            Gross: ₱{item.grossPay.toLocaleString()} | Ded: ₱{item.totalDeductions.toLocaleString()} | <strong className="text-emerald-700">Net: ₱{item.netPay.toLocaleString()}</strong>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            setShowPayslipModal({ run, item });
+                            setProfileModalEmployee(null);
+                          }}
+                          className="px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 font-bold rounded-lg text-xs hover:bg-blue-100 cursor-pointer"
+                        >
+                          View Payslip
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* DTR IMPORT & SYNC REVIEW MODAL ⭐ */}
+      {dtrReviewModalResult && (
+        <div className="fixed inset-0 bg-slate-900/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl max-w-5xl w-full p-6 shadow-2xl space-y-5 my-auto max-h-[92vh] flex flex-col border border-slate-200">
+            
+            {/* Modal Header */}
+            <div className="flex justify-between items-start border-b border-slate-200 pb-4 shrink-0">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800 border border-indigo-200 flex items-center gap-1">
+                    <Sparkles className="w-3.5 h-3.5" /> Biometric Excel Import Engine
+                  </span>
+                  <span className="text-xs text-slate-500 font-mono">
+                    DOLE Grace Period Applied (Up to 8:45 AM) • Standard 8:30 AM - 5:30 PM
+                  </span>
+                </div>
+                <h3 className="text-xl font-black text-slate-900">
+                  DTR Import & Timesheet Review
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Detected Cutoff: <strong className="text-blue-700">{dtrReviewModalResult.detectedCutoffPeriod}</strong> • Processed <strong className="text-slate-800">{dtrReviewModalResult.totalParsedRows}</strong> log entries across <strong className="text-slate-800">{dtrReviewModalResult.matchedReports.length}</strong> employee(s).
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setDtrReviewModalResult(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Employee Tabs */}
+            <div className="flex gap-2 border-b border-slate-200 pb-2 overflow-x-auto shrink-0">
+              {dtrReviewModalResult.matchedReports.map((rep, idx) => (
+                <button
+                  key={rep.employeeId || idx}
+                  type="button"
+                  onClick={() => setDtrReviewSelectedEmpIdx(idx)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer ${
+                    dtrReviewSelectedEmpIdx === idx
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                  }`}
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>{rep.employeeName}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded font-mono ${
+                    dtrReviewSelectedEmpIdx === idx ? 'bg-blue-700 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {rep.employeeNo}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            {/* Selected Employee Timesheet Preview */}
+            {(() => {
+              const currentRep = dtrReviewModalResult.matchedReports[dtrReviewSelectedEmpIdx] || dtrReviewModalResult.matchedReports[0];
+              if (!currentRep) return null;
+
+              return (
+                <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+                  {/* Summary Metric Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                    <div className="bg-blue-50/70 border border-blue-200 p-3 rounded-xl">
+                      <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">Days Worked</span>
+                      <span className="text-lg font-black text-blue-900">{currentRep.totalDaysWorked} days</span>
+                    </div>
+                    <div className="bg-amber-50/70 border border-amber-200 p-3 rounded-xl">
+                      <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wider block">Late (Tardiness)</span>
+                      <span className="text-lg font-black text-amber-900">{currentRep.totalLateMinutes} mins</span>
+                      <span className="text-[9px] text-amber-700 block">After 8:45 AM grace</span>
+                    </div>
+                    <div className="bg-rose-50/70 border border-rose-200 p-3 rounded-xl">
+                      <span className="text-[10px] font-bold text-rose-700 uppercase tracking-wider block">Absences</span>
+                      <span className="text-lg font-black text-rose-900">{currentRep.totalDaysAbsent} day(s)</span>
+                    </div>
+                    <div className="bg-purple-50/70 border border-purple-200 p-3 rounded-xl">
+                      <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">Undertime</span>
+                      <span className="text-lg font-black text-purple-900">{currentRep.totalEarlyOutMinutes} mins</span>
+                    </div>
+                    <div className="bg-emerald-50/70 border border-emerald-200 p-3 rounded-xl">
+                      <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider block">Regular OT</span>
+                      <span className="text-lg font-black text-emerald-900">{currentRep.totalOtHours} hrs</span>
+                      <span className="text-[9px] text-emerald-700 block">Past 5:30 PM</span>
+                    </div>
+                    <div className="bg-indigo-50/70 border border-indigo-200 p-3 rounded-xl">
+                      <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wider block">Holiday Pay</span>
+                      <span className="text-lg font-black text-indigo-900">₱{currentRep.totalHolidayPay.toFixed(2)}</span>
+                    </div>
+                  </div>
+
+                  {/* Daily Records Grid */}
+                  <div className="border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-800 text-white text-[11px] font-bold">
+                          <th className="py-2 px-3 border-r border-slate-700">Date / Day</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">AM In</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">AM Out</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">PM In</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">PM Out</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">Late (Mins)</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">Early Out</th>
+                          <th className="py-2 px-2 text-center border-r border-slate-700">OT (Hrs)</th>
+                          <th className="py-2 px-2 text-center">Status / Remarks</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-mono">
+                        {currentRep.records.map((r, rIdx) => {
+                          const isAbsent = !r.isRestDay && !r.amIn && !r.pmIn;
+                          const isLate = r.lateMinutes > 0;
+                          const isOT = r.otHours > 0;
+
+                          return (
+                            <tr 
+                              key={r.dayNum || rIdx} 
+                              className={`hover:bg-slate-50 transition-colors ${
+                                r.isRestDay ? 'bg-slate-50/50 text-slate-400' : ''
+                              }`}
+                            >
+                              <td className="py-1.5 px-3 font-sans font-bold border-r border-slate-100 text-slate-800">
+                                {r.dateStr} ({r.dayOfWeek})
+                                {r.isHoliday && <span className="ml-1 text-[10px] text-amber-600 font-bold">★ Holiday</span>}
+                              </td>
+                              <td className={`py-1.5 px-2 text-center border-r border-slate-100 ${isLate ? 'text-amber-700 font-bold' : 'text-slate-700'}`}>
+                                {r.amIn || '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-center border-r border-slate-100 text-slate-600">
+                                {r.amOut || '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-center border-r border-slate-100 text-slate-600">
+                                {r.pmIn || '-'}
+                              </td>
+                              <td className={`py-1.5 px-2 text-center border-r border-slate-100 ${isOT ? 'text-emerald-700 font-bold' : 'text-slate-700'}`}>
+                                {r.pmOut || '-'}
+                              </td>
+                              <td className="py-1.5 px-2 text-center border-r border-slate-100">
+                                {r.lateMinutes > 0 ? (
+                                  <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold text-[10px]">
+                                    +{r.lateMinutes}m
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">0</span>
+                                )}
+                              </td>
+                              <td className="py-1.5 px-2 text-center border-r border-slate-100">
+                                {r.earlyOutMinutes > 0 ? (
+                                  <span className="px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 font-bold text-[10px]">
+                                    +{r.earlyOutMinutes}m
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">0</span>
+                                )}
+                              </td>
+                              <td className="py-1.5 px-2 text-center border-r border-slate-100">
+                                {r.otHours > 0 ? (
+                                  <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 font-bold text-[10px]">
+                                    +{r.otHours}h
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-300">0</span>
+                                )}
+                              </td>
+                              <td className="py-1.5 px-2 text-center font-sans text-[11px]">
+                                {r.isRestDay ? (
+                                  <span className="text-slate-400">Rest Day</span>
+                                ) : isAbsent ? (
+                                  <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-800 font-bold text-[10px]">
+                                    Absent
+                                  </span>
+                                ) : isLate ? (
+                                  <span className="text-amber-700 font-semibold">
+                                    Late ({r.lateMinutes}m)
+                                  </span>
+                                ) : isOT ? (
+                                  <span className="text-emerald-700 font-semibold">
+                                    Overtime ({r.otHours}h)
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 font-medium">Regular</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Modal Footer Actions */}
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-3 border-t border-slate-200 shrink-0">
+              <span className="text-xs text-slate-500">
+                Clicking apply will update Attendance Sheets, DTR Grid, and sync metrics directly to the New Payroll Run batch.
+              </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDtrReviewModalResult(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleApplyDTRReview}
+                  className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-md transition-all"
+                >
+                  <Check className="w-4 h-4" /> Apply & Sync All Attendance Tabs
+                </button>
+              </div>
+            </div>
+
+          </div>
         </div>
       )}
 

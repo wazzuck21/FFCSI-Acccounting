@@ -160,6 +160,7 @@ interface DataContextType {
   isCollectionNumberUsed: (num: string) => boolean;
   usedCrNumbers: string[];
   updateInvoiceStatus: (invoiceId: string, status: InvoiceItem['status']) => void;
+  cancelInvoice: (invoiceId: string, reason: string, userId?: string, userName?: string) => { success: boolean; message: string };
   deleteInvoice: (invoiceId: string) => void;
 
   // Credentials Vault
@@ -229,6 +230,7 @@ interface DataContextType {
   // Leave Tracker Actions ⭐
   addLeaveRecord: (leave: Omit<LeaveRecord, 'id' | 'createdAt'>) => void;
   updateLeaveStatus: (id: string, status: LeaveRecord['status'], approvedBy?: string) => void;
+  deleteLeaveRecord: (id: string) => void;
 
   // Vale (Cash Advance) Actions ⭐
   addValeRecord: (vale: Omit<ValeRecord, 'id' | 'createdAt' | 'repayments' | 'status'>) => void;
@@ -2167,6 +2169,128 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     persistState('afms_invoices', updated);
   };
 
+  const cancelInvoice = (
+    invoiceId: string,
+    reason: string,
+    userId: string = 'system',
+    userName: string = 'Super Admin'
+  ) => {
+    const targetInv = invoices.find(i => i.id === invoiceId);
+    if (!targetInv) {
+      return { success: false, message: 'SOA invoice not found.' };
+    }
+    if (targetInv.status === 'Cancelled') {
+      return { success: false, message: 'This transaction is already cancelled.' };
+    }
+
+    const now = new Date().toISOString();
+    const nowTimestamp = now.replace('T', ' ').substring(0, 19);
+
+    // 1. Cancel all linked payment records for this invoice
+    const updatedPayments = payments.map(p => {
+      if (p.invoiceId === invoiceId && p.status === 'Active') {
+        return {
+          ...p,
+          status: 'Cancelled' as const,
+          cancelledAt: now,
+          cancelledById: userId,
+          cancelledByName: userName,
+          cancellationReason: `SOA Invoice #${targetInv.collectionNumber || targetInv.invoiceNumber} Cancelled: ${reason}`,
+          updatedAt: now
+        };
+      }
+      return p;
+    });
+    setPayments(updatedPayments);
+    persistState('afms_payments', updatedPayments);
+
+    // 2. Undo all service line items
+    const undoneServices = targetInv.services.map(s => ({
+      ...s,
+      isPaid: false,
+      paymentMode: undefined,
+      chequeNumber: undefined,
+      chequePayee: undefined,
+      paymentMethod: undefined
+    }));
+
+    // 3. Prepare amendment history
+    const amendmentRecord = {
+      date: nowTimestamp,
+      modifiedBy: userName,
+      details: `SOA Transaction Cancelled: All items undone and invoice status set to Cancelled. Reason: "${reason}"`,
+      previousTotal: targetInv.totalAmount,
+      newTotal: 0
+    };
+    const updatedAmendedHistory = [amendmentRecord, ...(targetInv.amendedHistory || [])];
+
+    // 4. Update the invoice status and reset paid amounts
+    const updatedInvoices = invoices.map(inv => {
+      if (inv.id === invoiceId) {
+        return {
+          ...inv,
+          status: 'Cancelled' as const,
+          paidAmount: 0,
+          cancelledAt: now,
+          cancelledBy: userName,
+          cancellationReason: reason,
+          services: undoneServices,
+          amendedHistory: updatedAmendedHistory,
+          payments: (inv.payments || []).map(p => ({
+            ...p,
+            status: 'Cancelled' as const,
+            cancelledAt: now,
+            cancelledById: userId,
+            cancelledByName: userName,
+            cancellationReason: `SOA Invoice #${targetInv.collectionNumber || targetInv.invoiceNumber} Cancelled: ${reason}`
+          }))
+        };
+      }
+      return inv;
+    });
+
+    setInvoices(updatedInvoices);
+    persistState('afms_invoices', updatedInvoices);
+
+    // 5. Unlink/revert auto-linked payables created from this SOA
+    const collectionNum = targetInv.collectionNumber || '';
+    if (collectionNum) {
+      const updatedPayables = payables.map(p => {
+        if (
+          p.clientId === targetInv.clientId &&
+          (
+            p.notes?.includes(`SOA (${collectionNum})`) ||
+            p.remarks?.includes(`SOA (${collectionNum})`) ||
+            p.comment?.includes(`SOA (${collectionNum})`)
+          )
+        ) {
+          return {
+            ...p,
+            notes: (p.notes || '').replace(`⚡ Auto-linked from SOA (${collectionNum})`, 'Reverted from Cancelled SOA').trim(),
+            remarks: (p.remarks || '').replace(`⚡ Auto-linked from SOA (${collectionNum})`, 'Reverted from Cancelled SOA').trim(),
+            comment: (p.comment || '').replace(`⚡ Auto-linked from SOA (${collectionNum})`, 'Reverted from Cancelled SOA').trim()
+          };
+        }
+        return p;
+      });
+      setPayables(updatedPayables);
+      persistState('afms_payables', updatedPayables);
+    }
+
+    // 6. Record financial audit log
+    addAuditLog(
+      'SOA Transaction Cancelled',
+      `Cancelled SOA Invoice ${targetInv.invoiceNumber} (Collection #${targetInv.collectionNumber || '1001'}) for ${targetInv.clientName} amounting to ₱${targetInv.totalAmount.toLocaleString()}. All items undone and payments reversed. Reason: "${reason}".`,
+      userId,
+      userName
+    );
+
+    return {
+      success: true,
+      message: `SOA Transaction #${targetInv.collectionNumber || targetInv.invoiceNumber} has been successfully cancelled and all items undone.`
+    };
+  };
+
   const deleteInvoice = (invoiceId: string) => {
     const updated = invoices.filter(i => i.id !== invoiceId);
     setInvoices(updated);
@@ -2987,18 +3111,46 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = [newLeave, ...leaveRecords];
     setLeaveRecords(updated);
     persistState('afms_leave_records', updated);
+
+    // If approved and isPaid immediately, deduct from employee leave balance
+    if (newLeave.status === 'Approved' && newLeave.isPaid) {
+      setEmployees(prev => {
+        const updatedEmps = prev.map(emp => {
+          if (emp.id === newLeave.employeeId) {
+            let sil = emp.silBalance;
+            let vl = emp.vlBalance;
+            let sl = emp.slBalance;
+            const days = newLeave.totalDays;
+
+            if (newLeave.leaveType === 'Service Incentive Leave (SIL)') {
+              sil = Math.max(0, sil - days);
+            } else if (newLeave.leaveType === 'Vacation Leave') {
+              vl = Math.max(0, vl - days);
+            } else if (newLeave.leaveType === 'Sick Leave') {
+              sl = Math.max(0, sl - days);
+            }
+
+            return { ...emp, silBalance: sil, vlBalance: vl, slBalance: sl };
+          }
+          return emp;
+        });
+        persistState('afms_employees', updatedEmps);
+        return updatedEmps;
+      });
+    }
   };
 
   const updateLeaveStatus = (id: string, status: LeaveRecord['status'], approvedBy?: string) => {
     const leaveToUpdate = leaveRecords.find(l => l.id === id);
     if (!leaveToUpdate) return;
 
+    const prevStatus = leaveToUpdate.status;
     const updatedLeaves = leaveRecords.map(l => l.id === id ? { ...l, status, approvedBy: approvedBy || l.approvedBy } : l);
     setLeaveRecords(updatedLeaves);
     persistState('afms_leave_records', updatedLeaves);
 
-    // If approved and isPaid, deduct from employee leave balance
-    if (status === 'Approved' && leaveToUpdate.isPaid) {
+    // If transitioned to Approved and isPaid, deduct from employee leave balance
+    if (status === 'Approved' && prevStatus !== 'Approved' && leaveToUpdate.isPaid) {
       setEmployees(prev => {
         const updatedEmps = prev.map(emp => {
           if (emp.id === leaveToUpdate.employeeId) {
@@ -3023,6 +3175,67 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return updatedEmps;
       });
     }
+
+    // If transitioned from Approved to Rejected/Pending, refund
+    if (prevStatus === 'Approved' && status !== 'Approved' && leaveToUpdate.isPaid) {
+      setEmployees(prev => {
+        const updatedEmps = prev.map(emp => {
+          if (emp.id === leaveToUpdate.employeeId) {
+            let sil = emp.silBalance;
+            let vl = emp.vlBalance;
+            let sl = emp.slBalance;
+            const days = leaveToUpdate.totalDays;
+
+            if (leaveToUpdate.leaveType === 'Service Incentive Leave (SIL)') {
+              sil = sil + days;
+            } else if (leaveToUpdate.leaveType === 'Vacation Leave') {
+              vl = vl + days;
+            } else if (leaveToUpdate.leaveType === 'Sick Leave') {
+              sl = sl + days;
+            }
+
+            return { ...emp, silBalance: sil, vlBalance: vl, slBalance: sl };
+          }
+          return emp;
+        });
+        persistState('afms_employees', updatedEmps);
+        return updatedEmps;
+      });
+    }
+  };
+
+  const deleteLeaveRecord = (id: string) => {
+    const target = leaveRecords.find(l => l.id === id);
+    if (target && target.status === 'Approved' && target.isPaid) {
+      // Refund leave days
+      setEmployees(prev => {
+        const updatedEmps = prev.map(emp => {
+          if (emp.id === target.employeeId) {
+            let sil = emp.silBalance;
+            let vl = emp.vlBalance;
+            let sl = emp.slBalance;
+            const days = target.totalDays;
+
+            if (target.leaveType === 'Service Incentive Leave (SIL)') {
+              sil = sil + days;
+            } else if (target.leaveType === 'Vacation Leave') {
+              vl = vl + days;
+            } else if (target.leaveType === 'Sick Leave') {
+              sl = sl + days;
+            }
+
+            return { ...emp, silBalance: sil, vlBalance: vl, slBalance: sl };
+          }
+          return emp;
+        });
+        persistState('afms_employees', updatedEmps);
+        return updatedEmps;
+      });
+    }
+
+    const updated = leaveRecords.filter(l => l.id !== id);
+    setLeaveRecords(updated);
+    persistState('afms_leave_records', updated);
   };
 
   // ==========================================
@@ -3409,6 +3622,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isCollectionNumberUsed,
         usedCrNumbers,
         updateInvoiceStatus,
+        cancelInvoice,
         deleteInvoice,
         addCredential,
         updateCredential,
@@ -3455,6 +3669,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteEmployee,
         addLeaveRecord,
         updateLeaveStatus,
+        deleteLeaveRecord,
         addValeRecord,
         addValeRepayment,
         updateValeRecord,

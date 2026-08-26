@@ -1,4 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 import { 
   Calculator, 
   Clock, 
@@ -16,7 +18,10 @@ import {
   Layers,
   ChevronDown,
   ChevronUp,
-  FileText
+  FileText,
+  Users,
+  Save,
+  RefreshCw
 } from 'lucide-react';
 import { 
   calculateSSSContribution, 
@@ -31,9 +36,21 @@ import {
   DoleWorkingFactor
 } from '../lib/dolePayroll';
 
-export const DolePayrollSandbox: React.FC = () => {
+interface DolePayrollSandboxProps {
+  initialEmployeeId?: string;
+}
+
+export const DolePayrollSandbox: React.FC<DolePayrollSandboxProps> = ({ initialEmployeeId }) => {
+  const { employees, updateEmployee, addAuditLog } = useData();
+  const { currentUser } = useAuth();
+
   // Mode selection: 'shift_ot' (Shift & Overtime) or 'salary_tax' (Statutory Contributions & BIR Tax) or 'both'
   const [activeSubTab, setActiveSubTab] = useState<'both' | 'shift_ot' | 'contributions'>('both');
+
+  // Employee Sync Selection
+  const activeEmployees = useMemo(() => employees.filter(e => e.status === 'Active'), [employees]);
+  const [selectedEmpId, setSelectedEmpId] = useState<string>(initialEmployeeId || activeEmployees[0]?.id || '');
+  const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
 
   // Input states
   const [monthlySalary, setMonthlySalary] = useState<number>(20000);
@@ -50,6 +67,56 @@ export const DolePayrollSandbox: React.FC = () => {
 
   // Reference tables expanded toggle
   const [showReferenceTables, setShowReferenceTables] = useState<boolean>(false);
+
+  // Handle Load from Selected Employee
+  const handleLoadEmployeeData = (empId: string) => {
+    setSelectedEmpId(empId);
+    const target = employees.find(e => e.id === empId);
+    if (target) {
+      setMonthlySalary(target.monthlyBasicSalary);
+      setValeDeduction(target.defaultValeDeduction || target.currentValeBalance || 0);
+      setSyncStatusMsg(`Loaded ${target.fullName}'s setup (₱${target.monthlyBasicSalary.toLocaleString()}/mo)`);
+      setTimeout(() => setSyncStatusMsg(null), 4000);
+    }
+  };
+
+  // Sync initial employee if prop provided
+  useEffect(() => {
+    if (initialEmployeeId) {
+      handleLoadEmployeeData(initialEmployeeId);
+    }
+  }, [initialEmployeeId]);
+
+  // Apply Calculated Rates Back to Employee Profile in Directory
+  const handleApplyRatesToEmployee = () => {
+    const target = employees.find(e => e.id === selectedEmpId);
+    if (!target) {
+      alert('Please select an active employee first.');
+      return;
+    }
+
+    const calculatedDaily = shiftResult.dailyRate;
+    const calculatedHourly = shiftResult.hourlyRate;
+
+    updateEmployee(target.id, {
+      monthlyBasicSalary: monthlySalary,
+      dailyRate: calculatedDaily,
+      hourlyRate: calculatedHourly,
+      defaultValeDeduction: valeDeduction
+    });
+
+    if (currentUser) {
+      addAuditLog(
+        'Updated Staff Salary from DOLE Sandbox',
+        `Adjusted salary and rates for ${target.fullName} (${target.employeeNo}): Monthly: ₱${monthlySalary.toLocaleString()}, Daily: ₱${calculatedDaily.toFixed(2)}, Hourly: ₱${calculatedHourly.toFixed(2)}`,
+        currentUser.id,
+        currentUser.fullName
+      );
+    }
+
+    setSyncStatusMsg(`✅ Saved rates directly to ${target.fullName}'s profile in Employee Directory!`);
+    setTimeout(() => setSyncStatusMsg(null), 4000);
+  };
 
   // Quick Preset Handlers
   const handleApplyPreset = (salary: number, inTime: string, outTime: string, day: DoleDayType) => {
@@ -186,6 +253,58 @@ export const DolePayrollSandbox: React.FC = () => {
             className="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-blue-200 border border-blue-300/30 rounded-lg font-semibold transition-all cursor-pointer"
           >
             ₱50k Salary • TRAIN Law Tax Bracket 4 & WISP
+          </button>
+        </div>
+      </div>
+
+      {/* Cross-Tab Sync: Employee Directory Connector Bar */}
+      <div className="bg-white border border-blue-200 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3 w-full md:w-auto">
+          <div className="p-2.5 bg-blue-50 text-blue-700 rounded-xl border border-blue-100 shrink-0">
+            <Users className="w-5 h-5" />
+          </div>
+          <div className="space-y-0.5 grow">
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700">Sync with Staff Directory</span>
+              <span className="px-2 py-0.2 bg-emerald-100 text-emerald-800 rounded text-[10px] font-bold">Live Synced</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={selectedEmpId}
+                onChange={(e) => handleLoadEmployeeData(e.target.value)}
+                className="bg-slate-50 border border-slate-300 font-bold text-xs text-slate-800 rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                {activeEmployees.map(emp => (
+                  <option key={emp.id} value={emp.id}>
+                    {emp.fullName} ({emp.employeeNo}) — ₱{emp.monthlyBasicSalary.toLocaleString()}/mo • {emp.position}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                onClick={() => handleLoadEmployeeData(selectedEmpId)}
+                className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                title="Reload this employee's basic salary and vale balance"
+              >
+                <RefreshCw className="w-3.5 h-3.5 text-slate-600" /> Reload Data
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+          {syncStatusMsg && (
+            <span className="text-xs font-bold text-emerald-700 animate-pulse">
+              {syncStatusMsg}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleApplyRatesToEmployee}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors shrink-0"
+          >
+            <Save className="w-4 h-4" /> Save Rates to Employee Directory
           </button>
         </div>
       </div>

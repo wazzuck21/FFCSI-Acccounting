@@ -948,7 +948,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                         <th className="py-2.5 px-3 text-right">Paid (-)</th>
                         <th className="py-2.5 px-3 text-center">C.R. #</th>
                         <th className="py-2.5 px-3 text-right">Running Balance</th>
-                        <th className="py-2.5 px-3 text-center">Actions</th>
+                        <th className="py-2.5 px-3 text-left">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -988,21 +988,23 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                             <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 text-xs">
                               ₱{entry.runningBalance.toLocaleString()}
                             </td>
-                            <td className="py-3 px-3 text-center">
+                            <td className="py-3 px-3 text-left">
                               {entry.originalInvoiceId && (
-                                <button
-                                  onClick={() => {
-                                    const inv = invoices.find(i => i.id === entry.originalInvoiceId);
-                                    if (inv) {
-                                      setSelectedInvoice(inv);
-                                      setShowSoaModal(true);
-                                    }
-                                  }}
-                                  className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
-                                  title="View Invoice Statement"
-                                >
-                                  <Eye className="w-3.5 h-3.5" /> View
-                                </button>
+                                <div className="flex items-center justify-start">
+                                  <button
+                                    onClick={() => {
+                                      const inv = invoices.find(i => i.id === entry.originalInvoiceId);
+                                      if (inv) {
+                                        setSelectedInvoice(inv);
+                                        setShowSoaModal(true);
+                                      }
+                                    }}
+                                    className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                    title="View Invoice Statement"
+                                  >
+                                    <Eye className="w-3.5 h-3.5" /> View
+                                  </button>
+                                </div>
                               )}
                             </td>
                           </tr>

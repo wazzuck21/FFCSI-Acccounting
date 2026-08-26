@@ -38,6 +38,7 @@ import {
   Trash2, 
   CreditCard,
   X,
+  Ban,
   Building2,
   Receipt,
   Eye,
@@ -231,6 +232,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     addCollectionLog,
     generateRecurringInvoices,
     updateInvoiceStatus, 
+    cancelInvoice,
     deleteInvoice, 
     addAuditLog,
     getNextCrNumber,
@@ -319,6 +321,17 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   }>({
     isOpen: false,
     payment: null,
+    reason: ''
+  });
+
+  // Cancel SOA Transaction Confirmation & Reason Modal ⭐
+  const [cancelInvoiceModal, setCancelInvoiceModal] = useState<{
+    isOpen: boolean;
+    invoice: InvoiceItem | null;
+    reason: string;
+  }>({
+    isOpen: false,
+    invoice: null,
     reason: ''
   });
 
@@ -2110,6 +2123,59 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     });
   };
 
+  // Open Cancel SOA Transaction Modal
+  const handleOpenCancelModal = (inv: InvoiceItem) => {
+    setCancelInvoiceModal({
+      isOpen: true,
+      invoice: inv,
+      reason: ''
+    });
+  };
+
+  // Confirm and Execute Cancel SOA Transaction
+  const handleConfirmCancelInvoice = () => {
+    if (!cancelInvoiceModal.invoice) return;
+    if (!cancelInvoiceModal.reason.trim()) {
+      setAlertModal({
+        isOpen: true,
+        title: 'Cancellation Reason Required',
+        message: 'Please provide a reason for cancelling this SOA transaction.',
+        type: 'warning'
+      });
+      return;
+    }
+
+    const target = cancelInvoiceModal.invoice;
+    const res = cancelInvoice(
+      target.id,
+      cancelInvoiceModal.reason.trim(),
+      currentUser?.id || 'system',
+      currentUser?.fullName || 'Super Admin'
+    );
+
+    setCancelInvoiceModal({ isOpen: false, invoice: null, reason: '' });
+    setShowEditModal(false);
+
+    if (selectedInvoice && selectedInvoice.id === target.id) {
+      setSelectedInvoice(prev => prev ? {
+        ...prev,
+        status: 'Cancelled',
+        paidAmount: 0,
+        cancelledAt: new Date().toISOString(),
+        cancelledBy: currentUser?.fullName || 'Super Admin',
+        cancellationReason: cancelInvoiceModal.reason.trim(),
+        services: prev.services.map(s => ({ ...s, isPaid: false }))
+      } : null);
+    }
+
+    setAlertModal({
+      isOpen: true,
+      title: res.success ? 'SOA Transaction Cancelled' : 'Cancellation Failed',
+      message: res.message,
+      type: res.success ? 'success' : 'error'
+    });
+  };
+
   // Open History Modal
   const handleOpenHistoryModal = (inv: InvoiceItem) => {
     setSelectedInvoice(inv);
@@ -2480,7 +2546,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           <span className="text-xs font-semibold text-slate-500 flex items-center gap-1 shrink-0">
             <Filter className="w-3.5 h-3.5" /> Filter:
           </span>
-          {['ALL', 'For Collection', 'Partially Paid', 'Paid', 'Overdue', 'Draft'].map(status => (
+          {['ALL', 'For Collection', 'Partially Paid', 'Paid', 'Overdue', 'Draft', 'Cancelled'].map(status => (
             <button
               key={status}
               onClick={() => setStatusFilter(status)}
@@ -2509,7 +2575,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 <th className="py-3 px-4 text-right">Paid Amount</th>
                 <th className="py-3 px-4 text-right">Balance Due</th>
                 <th className="py-3 px-4 text-center">Status</th>
-                <th className="py-3 px-4 text-center">Actions</th>
+                <th className="py-3 px-4 text-left">Actions</th>
               </tr>
             </thead>
 
@@ -2523,9 +2589,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               ) : (
                 paginatedInvoices.map(inv => {
                   const balance = inv.totalAmount - (inv.paidAmount || 0);
-                  const isPastDue = new Date(inv.dueDate) < new Date() && balance > 0;
+                  const isCancelled = inv.status === 'Cancelled';
+                  const isPastDue = !isCancelled && new Date(inv.dueDate) < new Date() && balance > 0;
                   const normalizedStatus = inv.status === 'Sent' ? 'For Collection' : inv.status;
-                  const displayStatus = isPastDue ? 'Overdue' : normalizedStatus;
+                  const displayStatus = isCancelled ? 'Cancelled' : isPastDue ? 'Overdue' : normalizedStatus;
 
                   return (
                     <tr key={inv.id} className="hover:bg-slate-50/80 transition-colors">
@@ -2560,11 +2627,15 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
                       <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px] whitespace-nowrap">
                         <div>Issue: {inv.issueDate}</div>
-                        <div className={isPastDue ? 'text-rose-600 font-bold' : 'text-slate-400'}>Due: {inv.dueDate}</div>
+                        <div className={isCancelled ? 'text-rose-600 italic font-bold' : isPastDue ? 'text-rose-600 font-bold' : 'text-slate-400'}>
+                          {isCancelled ? `Cancelled (${inv.cancelledAt?.substring(0, 10) || 'Void'})` : `Due: ${inv.dueDate}`}
+                        </div>
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900">
-                        ₱{inv.totalAmount.toLocaleString()}
+                        <span className={isCancelled ? 'line-through text-slate-400' : ''}>
+                          ₱{inv.totalAmount.toLocaleString()}
+                        </span>
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono font-bold text-emerald-600">
@@ -2572,11 +2643,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono font-bold text-amber-700">
-                        ₱{balance.toLocaleString()}
+                        <span className={isCancelled ? 'text-slate-400' : ''}>
+                          ₱{isCancelled ? '0' : balance.toLocaleString()}
+                        </span>
                       </td>
 
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase whitespace-nowrap inline-block ${
+                          displayStatus === 'Cancelled' ? 'bg-rose-100 text-rose-800 border border-rose-300 font-extrabold' :
                           displayStatus === 'Paid' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                           displayStatus === 'Partially Paid' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                           displayStatus === 'Overdue' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
@@ -2587,8 +2661,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                         </span>
                       </td>
 
-                      <td className="py-3.5 px-4 text-center">
-                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                      <td className="py-3.5 px-4 text-left">
+                        <div className="flex items-center justify-start gap-1.5 flex-wrap">
                           {/* Modify Transaction for Assigned Staff / Super Admin */}
                           <button
                             onClick={() => handleOpenEditModal(inv)}
@@ -2870,7 +2944,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     <th className="py-3 px-4 text-right">Balance</th>
                     <th className="py-3 px-4 text-center">Collection Status</th>
                     <th className="py-3 px-4 text-center">Next Follow-Up</th>
-                    <th className="py-3 px-4 text-center">Actions</th>
+                    <th className="py-3 px-4 text-left">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2945,8 +3019,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             {inv.nextFollowUpDate || '—'}
                           </td>
 
-                          <td className="py-3.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                          <td className="py-3.5 px-4 text-left">
+                            <div className="flex items-center justify-start gap-1.5 flex-wrap">
                               <button
                                 onClick={() => handleOpenCollectionModal(inv)}
                                 title="Log Collection Follow-Up Contact"
@@ -3219,7 +3293,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           <th className="py-2.5 px-3 text-right">Paid (-)</th>
                           <th className="py-2.5 px-3 text-center">C.R. #</th>
                           <th className="py-2.5 px-3 text-right">Running Balance</th>
-                          <th className="py-2.5 px-3 text-center">Actions</th>
+                          <th className="py-2.5 px-3 text-left">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -3237,9 +3311,11 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase whitespace-nowrap inline-block ${
                                   entry.type === 'Invoice' ? 'bg-blue-50 text-blue-700 border border-blue-200' :
                                   entry.type === 'Payment' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                                  entry.type === 'Voided Invoice' || entry.status === 'Cancelled' ? 'bg-rose-100 text-rose-800 border border-rose-300 font-extrabold' :
+                                  entry.type === 'Payment Reversal' ? 'bg-rose-50 text-rose-700 border border-rose-200' :
                                   'bg-amber-50 text-amber-800 border border-amber-200'
                                 }`}>
-                                  {entry.type}
+                                  {entry.type === 'Voided Invoice' ? 'Cancelled / Voided' : entry.type}
                                 </span>
                               </td>
                               <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">#{entry.collectionNo}</td>
@@ -3248,7 +3324,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 {entry.servicesDescription}
                               </td>
                               <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                                {entry.billedAmount > 0 ? `₱${entry.billedAmount.toLocaleString()}` : '-'}
+                                {entry.billedAmount > 0 ? `₱${entry.billedAmount.toLocaleString()}` : entry.type === 'Voided Invoice' ? <span className="line-through text-slate-400">₱0</span> : '-'}
                               </td>
                               <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600">
                                 {entry.paidAmount > 0 ? `₱${entry.paidAmount.toLocaleString()}` : '-'}
@@ -3259,21 +3335,35 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                               <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 text-xs">
                                 ₱{entry.runningBalance.toLocaleString()}
                               </td>
-                              <td className="py-3 px-3 text-center">
+                              <td className="py-3 px-3 text-left">
                                 {entry.originalInvoiceId && (
-                                  <button
-                                    onClick={() => {
-                                      const inv = invoices.find(i => i.id === entry.originalInvoiceId);
-                                      if (inv) {
-                                        setSelectedInvoice(inv);
-                                        setShowCrModal(true);
-                                      }
-                                    }}
-                                    className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
-                                    title="View Official Collection Receipt (FFCSI Format)"
-                                  >
-                                    <Receipt className="w-3.5 h-3.5 text-emerald-700" /> View
-                                  </button>
+                                  <div className="flex items-center justify-start gap-1">
+                                    <button
+                                      onClick={() => {
+                                        const inv = invoices.find(i => i.id === entry.originalInvoiceId);
+                                        if (inv) {
+                                          setSelectedInvoice(inv);
+                                          setShowCrModal(true);
+                                        }
+                                      }}
+                                      className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                      title="View Official Collection Receipt (FFCSI Format)"
+                                    >
+                                      <Receipt className="w-3.5 h-3.5 text-emerald-700" /> View
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const inv = invoices.find(i => i.id === entry.originalInvoiceId);
+                                        if (inv) {
+                                          handleOpenEditModal(inv);
+                                        }
+                                      }}
+                                      className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                      title="Modify Transaction or Cancel"
+                                    >
+                                      <Edit className="w-3.5 h-3.5 text-indigo-600" /> Modify
+                                    </button>
+                                  </div>
                                 )}
                               </td>
                             </tr>
@@ -4862,7 +4952,28 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             )}
 
             {/* Exact 1:1 FFCSI Collection Receipt Replicated Document Canvas */}
-            <div className="p-6 bg-white border border-slate-300 rounded-2xl space-y-4 font-sans text-slate-900 shadow-inner">
+            <div className="p-6 bg-white border border-slate-300 rounded-2xl space-y-4 font-sans text-slate-900 shadow-inner relative overflow-hidden">
+              
+              {/* Prominent Void / Cancelled Stamp for Cancelled Invoices */}
+              {selectedInvoice.status === 'Cancelled' && (
+                <div className="p-3 bg-rose-50 border-2 border-rose-300 rounded-xl text-rose-900 flex items-center justify-between gap-2 shadow-xs">
+                  <div className="flex items-center gap-2">
+                    <Ban className="w-5 h-5 text-rose-600 shrink-0" />
+                    <div>
+                      <span className="font-extrabold uppercase tracking-wider text-rose-700">
+                        VOID / CANCELLED TRANSACTION
+                      </span>
+                      <p className="text-[11px] text-rose-800">
+                        Cancelled on {selectedInvoice.cancelledAt?.substring(0, 10) || 'N/A'} by {selectedInvoice.cancelledBy || 'Staff'}.
+                        {selectedInvoice.cancellationReason && ` Reason: "${selectedInvoice.cancellationReason}"`}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 bg-rose-600 text-white font-extrabold text-[10px] uppercase rounded-md tracking-widest shrink-0">
+                    CANCELLED
+                  </span>
+                </div>
+              )}
               
               {/* Top Header */}
               <div className="text-center pt-1 space-y-1">
@@ -5423,12 +5534,32 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             </div>
 
             <form onSubmit={handleSaveEditInvoice} className="space-y-4">
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px]">
-                <p className="font-bold flex items-center gap-1">
-                  <AlertCircle className="w-4 h-4 text-amber-600" /> Audit Trail Enforcement:
-                </p>
-                <p className="mt-0.5">Assigned staff can modify line items, but all modifications are permanently logged in an <strong>Amended History</strong> trail.</p>
-              </div>
+              {selectedInvoice.status === 'Cancelled' ? (
+                <div className="p-3.5 bg-rose-50 border border-rose-300 rounded-xl text-rose-900 text-[11px] space-y-1">
+                  <p className="font-bold flex items-center gap-1.5 text-rose-700 text-xs">
+                    <Ban className="w-4 h-4 text-rose-600 shrink-0" />
+                    This SOA Transaction is CANCELLED (Voided)
+                  </p>
+                  <p className="text-slate-700">
+                    Cancelled on <strong>{selectedInvoice.cancelledAt?.substring(0, 10) || 'N/A'}</strong> by <strong>{selectedInvoice.cancelledBy || 'Staff'}</strong>.
+                  </p>
+                  {selectedInvoice.cancellationReason && (
+                    <p className="text-slate-600 italic">
+                      Reason: "{selectedInvoice.cancellationReason}"
+                    </p>
+                  )}
+                  <p className="text-slate-500 text-[10px] pt-0.5">
+                    All transaction items, billable locks, and linked payments have been undone.
+                  </p>
+                </div>
+              ) : (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px]">
+                  <p className="font-bold flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4 text-amber-600" /> Audit Trail Enforcement:
+                  </p>
+                  <p className="mt-0.5">Assigned staff can modify line items, but all modifications are permanently logged in an <strong>Amended History</strong> trail.</p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-slate-700 font-bold mb-2">Itemized Services & Deliverables</label>
@@ -5661,20 +5792,40 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowEditModal(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-2xs"
-                >
-                  Save & Log Amendment
-                </button>
+              <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100">
+                {selectedInvoice.status !== 'Cancelled' ? (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenCancelModal(selectedInvoice)}
+                    className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:text-rose-800 border border-rose-200 rounded-xl font-bold flex items-center gap-1.5 transition-colors cursor-pointer text-xs"
+                    title="Cancel SOA Transaction: Revert all items, undo payments, and mark as Cancelled"
+                  >
+                    <Ban className="w-4 h-4 text-rose-600" />
+                    <span>Cancel SOA Transaction</span>
+                  </button>
+                ) : (
+                  <span className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-xl font-bold text-xs flex items-center gap-1.5">
+                    <Ban className="w-4 h-4 text-rose-600" />
+                    Transaction Cancelled
+                  </span>
+                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditModal(false)}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold cursor-pointer"
+                  >
+                    Close
+                  </button>
+                  {selectedInvoice.status !== 'Cancelled' && (
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-2xs cursor-pointer"
+                    >
+                      Save & Log Amendment
+                    </button>
+                  )}
+                </div>
               </div>
             </form>
           </div>
@@ -6258,6 +6409,73 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               >
                 <CheckCircle2 className="w-4 h-4" />
                 Confirm & Issue C.R. #{confirmCrPaymentModal.finalCr}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Cancel SOA Transaction Prompt */}
+      {cancelInvoiceModal.isOpen && cancelInvoiceModal.invoice && (
+        <div className="fixed inset-0 z-60 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-rose-200 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-slate-800 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-rose-100 text-rose-700 rounded-xl shrink-0 border border-rose-200">
+                <Ban className="w-6 h-6 text-rose-600" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="font-bold text-slate-900 text-base">
+                  Cancel SOA Transaction
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  Cancel transaction for <strong className="text-slate-900">{cancelInvoiceModal.invoice.clientName}</strong> (Collection #{cancelInvoiceModal.invoice.collectionNumber || cancelInvoiceModal.invoice.invoiceNumber}, <strong className="font-mono text-slate-900">₱{cancelInvoiceModal.invoice.totalAmount.toLocaleString()}</strong>).
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-900 space-y-1 text-xs">
+              <p className="font-bold flex items-center gap-1 text-rose-800">
+                <AlertCircle className="w-3.5 h-3.5" /> Full Transaction Reversal Effect:
+              </p>
+              <ul className="list-disc list-inside space-y-0.5 text-slate-600 text-[11px] pl-0.5">
+                <li>Sets invoice status to <strong>Cancelled</strong></li>
+                <li>Undoes all line items and releases month billing locks</li>
+                <li>Reverts running balance to ₱0 and marks linked payments as cancelled</li>
+                <li>Permanently logs entry into <strong>Amended Audit History</strong></li>
+              </ul>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Reason for Cancellation *
+              </label>
+              <textarea
+                rows={3}
+                required
+                value={cancelInvoiceModal.reason}
+                onChange={e => setCancelInvoiceModal(prev => ({ ...prev, reason: e.target.value }))}
+                placeholder="Enter detailed reason (e.g. Erroneous double billing, client requested cancellation, superseded by revised SOA)..."
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 text-xs focus:bg-white focus:ring-2 focus:ring-rose-200 focus:outline-none"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCancelInvoiceModal({ isOpen: false, invoice: null, reason: '' })}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold text-xs transition-colors cursor-pointer"
+              >
+                No, Keep Active
+              </button>
+              <button
+                type="button"
+                disabled={!cancelInvoiceModal.reason.trim()}
+                onClick={handleConfirmCancelInvoice}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <Ban className="w-4 h-4" />
+                Confirm & Cancel Transaction
               </button>
             </div>
           </div>

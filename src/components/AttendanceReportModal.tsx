@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { useData } from '../context/DataContext';
 import { 
   XCircle, 
   Download, 
@@ -19,7 +20,10 @@ import { CompanyEmployee, DailyAttendanceRecord, CutoffAttendanceReport } from '
 import { 
   computeDailyAttendanceMetrics, 
   generateCutoffAttendance, 
-  exportAttendanceReportToExcel 
+  exportAttendanceReportToExcel,
+  parseExceptionalsDTRWorkbook,
+  saveCutoffAttendanceStore,
+  downloadExceptionalsDTRTemplate
 } from '../utils/attendanceUtils';
 
 interface AttendanceReportModalProps {
@@ -69,6 +73,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
   onSelectEmployee,
   onSyncToPayroll
 }) => {
+  const { leaveRecords } = useData();
   const [currentEmployee, setCurrentEmployee] = useState<CompanyEmployee>(employee);
   const [selectedCutoff, setSelectedCutoff] = useState<string>(initialCutoffPeriod || 'August 16-31, 2026');
   const [selectedPeriodType, setSelectedPeriodType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>(
@@ -76,7 +81,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
   );
 
   const [report, setReport] = useState<CutoffAttendanceReport>(() => {
-    return generateCutoffAttendance(employee, initialCutoffPeriod, initialPeriodType || initialCutoffPeriodType);
+    return generateCutoffAttendance(employee, initialCutoffPeriod, initialPeriodType || initialCutoffPeriodType, undefined, undefined, leaveRecords);
   });
 
   // Sync state if employee or initialCutoffPeriod prop changes
@@ -90,10 +95,10 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
     }
   }, [initialCutoffPeriod]);
 
-  // Re-generate report when currentEmployee or selectedCutoff changes
+  // Re-generate report when currentEmployee or selectedCutoff or leaveRecords changes
   useEffect(() => {
-    setReport(generateCutoffAttendance(currentEmployee, selectedCutoff, selectedPeriodType));
-  }, [currentEmployee, selectedCutoff, selectedPeriodType]);
+    setReport(generateCutoffAttendance(currentEmployee, selectedCutoff, selectedPeriodType, undefined, undefined, leaveRecords));
+  }, [currentEmployee, selectedCutoff, selectedPeriodType, leaveRecords]);
 
   if (isOpen === false) return null;
 
@@ -254,7 +259,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
     });
   };
 
-  // Upload Excel Attendance File
+  // Upload Excel Attendance File (supports both Exceptionals multi-employee DTR and single-sheet reports)
   const handleUploadExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -264,6 +269,27 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
       try {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
+
+        // 1. Try parsing using the Exceptionals DTR parser
+        const parsedDTR = parseExceptionalsDTRWorkbook(wb, allEmployees && allEmployees.length > 0 ? allEmployees : [employee], leaveRecords);
+        if (parsedDTR.matchedReports.length > 0) {
+          // Look for this employee's report
+          const matched = parsedDTR.matchedReports.find(r => 
+            r.employeeId === employee.id ||
+            r.employeeNo.toLowerCase() === employee.employeeNo.toLowerCase() ||
+            r.employeeName.toLowerCase().includes(employee.fullName.toLowerCase()) ||
+            employee.fullName.toLowerCase().includes(r.employeeName.toLowerCase())
+          ) || parsedDTR.matchedReports[0];
+
+          if (matched) {
+            setReport(matched);
+            saveCutoffAttendanceStore(parsedDTR.matchedReports);
+            alert(`Successfully imported Exceptionals DTR for ${matched.employeeName} (${matched.cutoffPeriod})! Processed ${matched.records.filter(r => r.amIn || r.pmIn).length} logged working days.`);
+            return;
+          }
+        }
+
+        // 2. Fallback: Parse row-by-row day matching
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const rows: any[] = XLSX.utils.sheet_to_json(ws, { header: 1 });
@@ -322,7 +348,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
         const totalNightDiffHours = Number(updatedRecords.reduce((s, r) => s + r.nightDiffHours, 0).toFixed(2));
         const totalNightDiffPay = Number(updatedRecords.reduce((s, r) => s + r.nightDiffPay, 0).toFixed(2));
 
-        setReport({
+        const updatedReport: CutoffAttendanceReport = {
           ...report,
           records: updatedRecords,
           totalDaysWorked,
@@ -335,7 +361,10 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
           totalNightDiffHours,
           totalNightDiffPay,
           updatedAt: new Date().toISOString()
-        });
+        };
+
+        setReport(updatedReport);
+        saveCutoffAttendanceStore([updatedReport]);
 
         alert(`Successfully imported ${matchedCount} attendance records from Excel!`);
       } catch (err) {
