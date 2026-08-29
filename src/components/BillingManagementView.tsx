@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile, CustomDeadlineRule } from '../types';
@@ -75,7 +75,8 @@ import {
   Check,
   Tag,
   PlusCircle,
-  Zap
+  Zap,
+  Stamp
 } from 'lucide-react';
 
 interface CrItemPaymentConfig {
@@ -207,9 +208,12 @@ export const downloadCollectionReceiptPDF = (inv: InvoiceItem) => {
   generateFFCSICollectionReceiptPDF(inv, { preparedBy: cfg.signatoryName || 'Maricris' });
 };
 
-export const downloadPaymentCollectionReceiptPDF = (inv: InvoiceItem) => {
+export const downloadPaymentCollectionReceiptPDF = (inv: InvoiceItem, options?: { showWatermark?: boolean }) => {
   const cfg = getBillingTemplateConfig();
-  generatePaymentCollectionReceiptPDF(inv, { preparedBy: cfg.signatoryName || 'Maricris' });
+  generatePaymentCollectionReceiptPDF(inv, {
+    preparedBy: cfg.signatoryName || 'Maricris',
+    showWatermark: options?.showWatermark ?? true
+  });
 };
 
 export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: string) => void }> = ({ onNavigateToClient }) => {
@@ -253,6 +257,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
   // CR Format View State: 'default' (2-column FFCSI) vs 'payment' (3-column PARTICULARS | AMOUNT | Payment info)
   const [crViewFormat, setCrViewFormat] = useState<'default' | 'payment'>('default');
+  // Watermark toggle in Collection Receipt Modal (Default ON) ⭐
+  const [showCrWatermark, setShowCrWatermark] = useState<boolean>(true);
 
   // Modals state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -421,7 +427,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     currentPeriod: string;
     currentAmount: number;
     defaultMonthlyRate?: number;
-    targetList?: 'create' | 'edit' | 'custom';
+    initialDivideToMonths?: boolean;
+    targetList?: 'create' | 'edit' | 'custom' | 'edit-custom';
   } | null>(null);
 
   // Phase 5: Financial Reports Sub-Tab State ⭐
@@ -478,7 +485,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [monthYearErrors, setMonthYearErrors] = useState<Record<number, string>>({});
   const [amountErrors, setAmountErrors] = useState<Record<number, string>>({});
 
-  // Unified Service Picker Dropdown State ⭐
+  // Unified Service Picker Dropdown State for Generate SOA Modal ⭐
   const [isServicePickerOpen, setIsServicePickerOpen] = useState(false);
   const [serviceSearchTerm, setServiceSearchTerm] = useState('');
   const [showCreateCustomSection, setShowCreateCustomSection] = useState(false);
@@ -488,7 +495,41 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [saveCustomForFuture, setSaveCustomForFuture] = useState(true);
   const servicePickerRef = useRef<HTMLDivElement>(null);
 
-  // Close service picker when clicking outside
+  // Unified Service Picker Dropdown State for Modify SOA Modal ⭐
+  const [isEditServicePickerOpen, setIsEditServicePickerOpen] = useState(false);
+  const [editServiceSearchTerm, setEditServiceSearchTerm] = useState('');
+  const [showEditCreateCustomSection, setShowEditCreateCustomSection] = useState(false);
+  const [editCustomItemName, setEditCustomItemName] = useState('');
+  const [editCustomItemPeriod, setEditCustomItemPeriod] = useState('');
+  const [editCustomItemAmount, setEditCustomItemAmount] = useState<number>(0);
+  const [saveEditCustomForFuture, setSaveEditCustomForFuture] = useState(true);
+  const editServicePickerRef = useRef<HTMLDivElement>(null);
+
+  // Analytics Tab Filter & Catalog Picker States ⭐
+  const [analyticsSelectedServices, setAnalyticsSelectedServices] = useState<string[]>([]);
+  const [isAnalyticsServicePickerOpen, setIsAnalyticsServicePickerOpen] = useState(false);
+  const [analyticsServiceSearchTerm, setAnalyticsServiceSearchTerm] = useState('');
+  const [analyticsClientFilter, setAnalyticsClientFilter] = useState<string>('ALL');
+  const [analyticsYearFilter, setAnalyticsYearFilter] = useState<string>('ALL');
+  const [analyticsStatusFilter, setAnalyticsStatusFilter] = useState<string>('ALL');
+  const analyticsServicePickerRef = useRef<HTMLDivElement>(null);
+
+  // Close service picker when clicking outside (Analytics)
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (analyticsServicePickerRef.current && !analyticsServicePickerRef.current.contains(event.target as Node)) {
+        setIsAnalyticsServicePickerOpen(false);
+      }
+    };
+    if (isAnalyticsServicePickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isAnalyticsServicePickerOpen]);
+
+  // Close service picker when clicking outside (Generate SOA)
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (servicePickerRef.current && !servicePickerRef.current.contains(event.target as Node)) {
@@ -502,6 +543,28 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isServicePickerOpen]);
+
+  // Close service picker when clicking outside (Modify SOA)
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (editServicePickerRef.current && !editServicePickerRef.current.contains(event.target as Node)) {
+        setIsEditServicePickerOpen(false);
+      }
+    };
+    if (isEditServicePickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isEditServicePickerOpen]);
+
+  // Collection Receipt Modal: Reset Watermark to Default ON when opened ⭐
+  useEffect(() => {
+    if (showCrModal) {
+      setShowCrWatermark(true);
+    }
+  }, [showCrModal]);
 
   // Edit SOA Form state
   const [editServices, setEditServices] = useState<InvoiceServiceLine[]>([]);
@@ -1243,61 +1306,142 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     }
   };
 
-  // Master combined items for the searchable dropdown
-  const unifiedServiceCatalog = [
-    // BIR Section
-    { code: '0619E', name: '0619E (Monthly Remittance Withheld (Expanded))', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '1601C', name: '1601C (Monthly Remittance of Income Taxes Withheld - Compensation)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '1601EQ', name: '1601EQ (Quarterly Remittance Withheld (Expanded))', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '2550Q', name: '2550Q (Quarterly Value-Added Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '2551Q', name: '2551Q (Quarterly Percentage Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '1701Q', name: '1701Q (Quarterly Income Tax Return - Individual)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '1702Q', name: '1702Q (Quarterly Income Tax Return - Corporate)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: 'ITR', name: 'ITR (Annual Income Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '0605', name: '0605 (Payment Form / Annual Registration Fee)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: 'SAWT', name: 'SAWT (Summary Alphalist of Withholding Taxes)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: 'QAP', name: 'QAP (Quarterly Alphabetical List of Payees)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: 'SLSP', name: 'SLSP (Summary List of Sales and Purchases)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '1604C', name: '1604C (Annual Information Return - Compensation)', category: 'BIR' as const, defaultAmount: 0 },
-    { code: '1604E', name: '1604E (Annual Information Return - Expanded)', category: 'BIR' as const, defaultAmount: 0 },
-    ...(masterChoices.birTaxOptions || []).filter(b => !['0619E', '1601C', '1601EQ', '2550Q', '2551Q', '1701Q', '1702Q', 'ITR', '0605', 'SAWT', 'QAP', 'SLSP', '1604C', '1604E'].includes(b.code.toUpperCase())).map(b => ({
-      code: b.code,
-      name: getCleanBirDescription(b.code, b.name),
-      category: 'BIR' as const,
-      defaultAmount: 0
-    })),
+  interface EnrichedCatalogItem {
+    code: string;
+    name: string;
+    category: 'BIR' | 'Benefits' | 'Others';
+    defaultAmount: number;
+    amountSource?: 'Client Payables' | 'Client Retainer Profile' | 'Saved Preset' | 'Default Preset';
+    sourceDetail?: string;
+  }
 
-    // Benefits & Loans Section
-    { code: 'SSS', name: 'SSS (Social Security System Contribution)', category: 'Benefits' as const, defaultAmount: 0 },
-    { code: 'SSS Salary Loan', name: 'SSS Salary Loan (SSS Salary Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
-    { code: 'SSS Calamity Loan', name: 'SSS Calamity Loan (SSS Calamity Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
-    { code: 'PhilHealth', name: 'PhilHealth (Philippine Health Insurance Corp)', category: 'Benefits' as const, defaultAmount: 0 },
-    { code: 'HDMF', name: 'HDMF (Pag-IBIG Fund Contribution)', category: 'Benefits' as const, defaultAmount: 0 },
-    { code: 'HDMF Multi-Purpose Loan', name: 'HDMF Multi-Purpose Loan (Pag-IBIG MPL Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
-    { code: 'HDMF Calamity Loan', name: 'HDMF Calamity Loan (Pag-IBIG Calamity Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
-    ...(masterChoices.benefitsOptions || []).filter(b => !['SSS', 'SSS SALARY LOAN', 'SSS CALAMITY LOAN', 'PHILHEALTH', 'HDMF', 'HDMF MULTI-PURPOSE LOAN', 'HDMF CALAMITY LOAN'].some(x => b.code.toUpperCase().includes(x))).map(b => ({
-      code: b.code,
-      name: b.name,
-      category: 'Benefits' as const,
-      defaultAmount: 0
-    })),
+  // Master combined items with smart dynamic amounts and origin resolution
+  const getEnrichedUnifiedCatalog = (targetClient?: ClientProfile | null): EnrichedCatalogItem[] => {
+    const baseCatalog = [
+      // BIR Section
+      { code: '0619E', name: '0619E (Monthly Remittance Withheld (Expanded))', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '1601C', name: '1601C (Monthly Remittance of Income Taxes Withheld - Compensation)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '1601EQ', name: '1601EQ (Quarterly Remittance Withheld (Expanded))', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '2550Q', name: '2550Q (Quarterly Value-Added Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '2551Q', name: '2551Q (Quarterly Percentage Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '1701Q', name: '1701Q (Quarterly Income Tax Return - Individual)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '1702Q', name: '1702Q (Quarterly Income Tax Return - Corporate)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: 'ITR', name: 'ITR (Annual Income Tax Return)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '0605', name: '0605 (Payment Form / Annual Registration Fee)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: 'SAWT', name: 'SAWT (Summary Alphalist of Withholding Taxes)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: 'QAP', name: 'QAP (Quarterly Alphabetical List of Payees)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: 'SLSP', name: 'SLSP (Summary List of Sales and Purchases)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '1604C', name: '1604C (Annual Information Return - Compensation)', category: 'BIR' as const, defaultAmount: 0 },
+      { code: '1604E', name: '1604E (Annual Information Return - Expanded)', category: 'BIR' as const, defaultAmount: 0 },
+      ...(masterChoices.birTaxOptions || []).filter(b => !['0619E', '1601C', '1601EQ', '2550Q', '2551Q', '1701Q', '1702Q', 'ITR', '0605', 'SAWT', 'QAP', 'SLSP', '1604C', '1604E'].includes(b.code.toUpperCase())).map(b => ({
+        code: b.code,
+        name: getCleanBirDescription(b.code, b.name),
+        category: 'BIR' as const,
+        defaultAmount: 0
+      })),
 
-    // Others Section (Retainers Fee, Service Charge, Custom saved)
-    { code: 'RETAINERS_FEE', name: 'Retainers Fee', category: 'Others' as const, defaultAmount: selectedClient?.retainersFee || 0 },
-    { code: 'SERVICE_CHARGE', name: 'Service Charge', category: 'Others' as const, defaultAmount: 0 },
-    { code: 'BOOKKEEPING_FEE', name: 'Accounting & Bookkeeping Fee', category: 'Others' as const, defaultAmount: 0 },
-    { code: 'CONSULTATION_FEE', name: 'Consultation & Tax Advisory Fee', category: 'Others' as const, defaultAmount: 0 },
-    { code: 'BUSINESS_PERMIT', name: 'Business Permit / Mayor\'s Permit Renewal', category: 'Others' as const, defaultAmount: 0 },
-    { code: 'SEC_DTI_COMPLIANCE', name: 'SEC / DTI Annual Compliance & Registration', category: 'Others' as const, defaultAmount: 0 },
-    { code: 'LATE_FILING_ASSISTANCE', name: 'Late Filing & Penalty Assistance Charge', category: 'Others' as const, defaultAmount: 0 },
-    { code: 'DOC_PROCESSING', name: 'Document Processing & Courier Charge', category: 'Others' as const, defaultAmount: 0 },
-    ...(masterChoices.savedCustomServices || []).map(s => ({
-      code: s.description,
-      name: s.description,
-      category: 'Others' as const,
-      defaultAmount: s.defaultAmount || 0
-    }))
-  ];
+      // Benefits & Loans Section
+      { code: 'SSS', name: 'SSS (Social Security System Contribution)', category: 'Benefits' as const, defaultAmount: 0 },
+      { code: 'SSS Salary Loan', name: 'SSS Salary Loan (SSS Salary Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+      { code: 'SSS Calamity Loan', name: 'SSS Calamity Loan (SSS Calamity Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+      { code: 'PhilHealth', name: 'PhilHealth (Philippine Health Insurance Corp)', category: 'Benefits' as const, defaultAmount: 0 },
+      { code: 'HDMF', name: 'HDMF (Pag-IBIG Fund Contribution)', category: 'Benefits' as const, defaultAmount: 0 },
+      { code: 'HDMF Multi-Purpose Loan', name: 'HDMF Multi-Purpose Loan (Pag-IBIG MPL Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+      { code: 'HDMF Calamity Loan', name: 'HDMF Calamity Loan (Pag-IBIG Calamity Loan Remittance)', category: 'Benefits' as const, defaultAmount: 0 },
+      ...(masterChoices.benefitsOptions || []).filter(b => !['SSS', 'SSS SALARY LOAN', 'SSS CALAMITY LOAN', 'PHILHEALTH', 'HDMF', 'HDMF MULTI-PURPOSE LOAN', 'HDMF CALAMITY LOAN'].some(x => b.code.toUpperCase().includes(x))).map(b => ({
+        code: b.code,
+        name: b.name,
+        category: 'Benefits' as const,
+        defaultAmount: 0
+      })),
+
+      // Others Section (Retainers Fee, Service Charge, Custom saved)
+      { code: 'RETAINERS_FEE', name: 'Retainers Fee', category: 'Others' as const, defaultAmount: targetClient?.retainersFee || 0 },
+      { code: 'SERVICE_CHARGE', name: 'Service Charge', category: 'Others' as const, defaultAmount: 0 },
+      { code: 'BOOKKEEPING_FEE', name: 'Accounting & Bookkeeping Fee', category: 'Others' as const, defaultAmount: 0 },
+      { code: 'CONSULTATION_FEE', name: 'Consultation & Tax Advisory Fee', category: 'Others' as const, defaultAmount: 0 },
+      { code: 'BUSINESS_PERMIT', name: 'Business Permit / Mayor\'s Permit Renewal', category: 'Others' as const, defaultAmount: 0 },
+      { code: 'SEC_DTI_COMPLIANCE', name: 'SEC / DTI Annual Compliance & Registration', category: 'Others' as const, defaultAmount: 0 },
+      { code: 'LATE_FILING_ASSISTANCE', name: 'Late Filing & Penalty Assistance Charge', category: 'Others' as const, defaultAmount: 0 },
+      { code: 'DOC_PROCESSING', name: 'Document Processing & Courier Charge', category: 'Others' as const, defaultAmount: 0 },
+      ...(masterChoices.savedCustomServices || []).map(s => ({
+        code: s.description,
+        name: s.description,
+        category: 'Others' as const,
+        defaultAmount: s.defaultAmount || 0
+      }))
+    ];
+
+    return baseCatalog.map(item => {
+      let resolvedAmount = item.defaultAmount || 0;
+      let amountSource: 'Client Payables' | 'Client Retainer Profile' | 'Saved Preset' | 'Default Preset' | undefined = undefined;
+      let sourceDetail: string | undefined = undefined;
+
+      // 1. Check if there's an active unpaid payable for this client
+      if (targetClient) {
+        const matchedPayable = payables.find(p => 
+          p.clientId === targetClient.id && 
+          p.status === 'Unpaid' && 
+          p.payableAmount > 0 &&
+          (
+            p.itemName.toLowerCase().includes(item.code.toLowerCase()) || 
+            item.code.toLowerCase().includes(p.itemName.toLowerCase().replace(/^bir form\s+/i, '').trim()) ||
+            (p.remarks && p.remarks.toLowerCase().includes(item.code.toLowerCase())) ||
+            (p.itemName && item.name.toLowerCase().includes(p.itemName.toLowerCase()))
+          )
+        );
+
+        if (matchedPayable) {
+          resolvedAmount = matchedPayable.payableAmount;
+          amountSource = 'Client Payables';
+          sourceDetail = `Auto-matched from Client Payables (Unpaid Balance: ₱${matchedPayable.payableAmount.toLocaleString()}${matchedPayable.month ? ` for ${matchedPayable.month}` : ''})`;
+        }
+      }
+
+      // 2. Retainers Fee
+      if (!amountSource && item.code === 'RETAINERS_FEE') {
+        const retainer = targetClient?.retainersFee || 0;
+        if (retainer > 0) {
+          resolvedAmount = retainer;
+          amountSource = 'Client Retainer Profile';
+          sourceDetail = `Configured Monthly Retainer Fee from ${targetClient?.companyName || 'Client'} Profile (₱${retainer.toLocaleString()})`;
+        }
+      }
+
+      // 3. Saved Custom Presets
+      if (!amountSource && item.defaultAmount > 0) {
+        const isSavedCustom = (masterChoices.savedCustomServices || []).some(s => s.description.toLowerCase() === item.name.toLowerCase() || s.description.toLowerCase() === item.code.toLowerCase());
+        if (isSavedCustom) {
+          amountSource = 'Saved Preset';
+          sourceDetail = `Preset amount saved from previous invoice entries (₱${item.defaultAmount.toLocaleString()})`;
+        } else {
+          amountSource = 'Default Preset';
+          sourceDetail = `Standard service catalog preset rate (₱${item.defaultAmount.toLocaleString()})`;
+        }
+      }
+
+      return {
+        ...item,
+        defaultAmount: resolvedAmount,
+        amountSource,
+        sourceDetail
+      };
+    });
+  };
+
+  const unifiedServiceCatalog = useMemo(() => {
+    return getEnrichedUnifiedCatalog(selectedClient);
+  }, [selectedClient, payables, masterChoices]);
+
+  const editUnifiedServiceCatalog = useMemo(() => {
+    const currentClient = clients.find(c => c.id === selectedInvoice?.clientId);
+    return getEnrichedUnifiedCatalog(currentClient);
+  }, [selectedInvoice, clients, payables, masterChoices]);
+
+  const analyticsUnifiedCatalog = useMemo(() => {
+    const currentClient = analyticsClientFilter !== 'ALL' ? clients.find(c => c.id === analyticsClientFilter) : null;
+    return getEnrichedUnifiedCatalog(currentClient);
+  }, [analyticsClientFilter, clients, payables, masterChoices]);
 
   // Select Item from Unified Dropdown (with Duplicate Check Warning)
   const handleSelectUnifiedItem = (item: { code: string; name: string; category: 'BIR' | 'Benefits' | 'Others'; defaultAmount?: number }) => {
@@ -1410,6 +1554,75 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setServiceSearchTerm('');
     setShowCreateCustomSection(false);
     setIsServicePickerOpen(false);
+  };
+
+  // Select Item from Unified Dropdown for Modify SOA Modal ⭐
+  const handleSelectEditUnifiedItem = (item: { code: string; name: string; category: 'BIR' | 'Benefits' | 'Others'; defaultAmount?: number }) => {
+    let cleanDesc = item.name;
+    if (item.category === 'BIR') {
+      cleanDesc = getCleanBirDescription(item.code, item.name);
+    } else if (item.code === 'RETAINERS_FEE') {
+      cleanDesc = 'Retainers Fee';
+    }
+    const currentClient = clients.find(c => c.id === selectedInvoice?.clientId);
+    const invYear = selectedInvoice?.issueDate ? new Date(selectedInvoice.issueDate).getFullYear() : parseInt(selectedYear, 10);
+    const invMonth = selectedInvoice?.issueDate ? new Date(selectedInvoice.issueDate).toLocaleString('default', { month: 'long' }) : selectedMonth;
+    const period = getPeriodForForm(item.code, invMonth, invYear, currentClient);
+    const amount = item.defaultAmount || (item.code === 'RETAINERS_FEE' ? (currentClient?.monthlyRetainerFee || currentClient?.retainersFee || 0) : 0);
+
+    const pendingLine: InvoiceServiceLine = {
+      description: cleanDesc,
+      monthYear: period,
+      unitPrice: amount,
+      quantity: 1,
+      amount: amount,
+      itemType: item.code === 'RETAINERS_FEE' ? 'Service' : 'One-Time'
+    };
+
+    setEditServices(prev => [...prev, pendingLine]);
+    setIsEditServicePickerOpen(false);
+    setEditServiceSearchTerm('');
+    setShowEditCreateCustomSection(false);
+  };
+
+  // Create Custom Item from Unified Dropdown for Modify SOA Modal ⭐
+  const handleCreateEditCustomItem = (nameOverride?: string) => {
+    const nameToUse = (nameOverride || editCustomItemName || editServiceSearchTerm).trim();
+    if (!nameToUse) {
+      setAlertModal({
+        isOpen: true,
+        title: 'Description Required',
+        message: 'Please enter an item or service description.',
+        type: 'warning'
+      });
+      return;
+    }
+    const currentClient = clients.find(c => c.id === selectedInvoice?.clientId);
+    const invYear = selectedInvoice?.issueDate ? new Date(selectedInvoice.issueDate).getFullYear() : parseInt(selectedYear, 10);
+    const invMonth = selectedInvoice?.issueDate ? new Date(selectedInvoice.issueDate).toLocaleString('default', { month: 'long' }) : selectedMonth;
+    const periodToUse = editCustomItemPeriod.trim() || getPeriodForForm(nameToUse, invMonth, invYear, currentClient);
+    const amountToUse = Number(editCustomItemAmount) || 0;
+
+    const pendingLine: InvoiceServiceLine = {
+      description: nameToUse,
+      monthYear: periodToUse,
+      unitPrice: amountToUse,
+      quantity: 1,
+      amount: amountToUse,
+      itemType: 'One-Time'
+    };
+
+    if (saveEditCustomForFuture) {
+      saveCustomService({ description: nameToUse, defaultAmount: amountToUse });
+    }
+
+    setEditServices(prev => [...prev, pendingLine]);
+    setIsEditServicePickerOpen(false);
+    setEditServiceSearchTerm('');
+    setEditCustomItemName('');
+    setEditCustomItemPeriod('');
+    setEditCustomItemAmount(0);
+    setShowEditCreateCustomSection(false);
   };
 
   const handleRemoveServiceLine = (index: number) => {
@@ -1653,7 +1866,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setShowCrModal(true);
   };
 
-  // Helper to update per-item payment configurations and auto-save payment remittance
+  // Helper to update per-item payment configurations in UI state (No premature database writes)
   const handleUpdateItemPayment = (serviceIdx: number, updates: Partial<CrItemPaymentConfig>) => {
     if (!selectedInvoice) return;
 
@@ -1684,128 +1897,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       0
     );
     setPaymentAmount(totalFromPaidConfigs);
-
-    // If this item's paid status or payment configuration was updated, auto-sync and persist to DataContext immediately
-    if (updates.isPaid !== undefined || updates.mode !== undefined || updates.amount !== undefined || updates.bank !== undefined || updates.chequeNo !== undefined || updates.payee !== undefined) {
-      saveItemPaymentToDatabase(serviceIdx, updated, newConfigs);
-    }
-  };
-
-  // Auto-sync and persist payment remittance when item is marked as paid
-  const saveItemPaymentToDatabase = (
-    serviceIdx: number,
-    updatedConfig: CrItemPaymentConfig,
-    allConfigs: Record<number, CrItemPaymentConfig>
-  ) => {
-    if (!selectedInvoice) return;
-
-    const targetInv = invoices.find(i => i.id === selectedInvoice.id) || selectedInvoice;
-    const finalCr = (orNumber || targetInv.collectionNumber || targetInv.collectionReceiptNumber || targetInv.invoiceNumber || '1001').replace(/\D/g, '') || '1001';
-
-    const updatedServices = targetInv.services.map((s, idx) => {
-      const cfg: CrItemPaymentConfig = allConfigs[idx] || (idx === serviceIdx ? updatedConfig : {
-        mode: s.paymentMode === 'Cheque' ? 'Cheque' : 'Cash',
-        amount: s.amount,
-        bank: 'BDO (Banco de Oro)',
-        customBank: '',
-        chequeNo: s.chequeNumber || '',
-        payee: s.chequePayee || 'FFCSI',
-        customPayee: '',
-        isPaid: Boolean(s.isPaid)
-      });
-
-      const finalBank = cfg.bank === 'Other Bank' ? (cfg.customBank || 'Bank') : cfg.bank.split(' ')[0];
-      const finalPayee = cfg.payee === 'Other' ? (cfg.customPayee || 'Other') : cfg.payee;
-      const finalChequeStr = `${finalBank} ${cfg.chequeNo}`.trim();
-      const methodLabel = cfg.mode === 'Cheque'
-        ? `Cheque (${finalChequeStr || 'No #'}) to ${finalPayee || 'FFCSI'}`
-        : 'Cash Payment';
-
-      return {
-        ...s,
-        isPaid: Boolean(cfg.isPaid),
-        amount: Number(cfg.amount) > 0 ? Number(cfg.amount) : s.amount,
-        paymentMode: cfg.mode,
-        chequeNumber: cfg.mode === 'Cheque' ? finalChequeStr : undefined,
-        chequePayee: cfg.mode === 'Cheque' ? finalPayee : undefined,
-        paymentMethod: methodLabel
-      };
-    });
-
-    const configsList = Object.values(allConfigs) as CrItemPaymentConfig[];
-    const paidConfigs = configsList.filter((c: CrItemPaymentConfig) => c.isPaid);
-    const hasCheque = paidConfigs.some((c: CrItemPaymentConfig) => c.mode === 'Cheque');
-    const hasCash = paidConfigs.some((c: CrItemPaymentConfig) => c.mode === 'Cash');
-    const overallMethod = hasCheque && hasCash ? 'Mixed (Cash & Cheque)' : hasCheque ? 'Cheque Payment' : hasCash ? 'Cash Collection' : (targetInv.paymentMethod || 'Cash');
-
-    const chequeRefs = paidConfigs
-      .filter((c: CrItemPaymentConfig) => c.mode === 'Cheque' && c.chequeNo)
-      .map((c: CrItemPaymentConfig) => {
-        const b = c.bank === 'Other Bank' ? (c.customBank || 'Cheque') : c.bank.split(' ')[0];
-        const p = c.payee === 'Other' ? c.customPayee : c.payee;
-        return `${b} #${c.chequeNo} (${p})`;
-      })
-      .join(', ');
-
-    // Total paid from items that have isPaid === true
-    const totalPaidAmount = updatedServices.reduce((sum, s, idx) => {
-      const c = allConfigs[idx];
-      return sum + ((c && c.isPaid) ? (Number(c.amount) || s.amount) : 0);
-    }, 0);
-
-    const isFullyPaid = totalPaidAmount >= targetInv.totalAmount;
-    const newStatus = isFullyPaid ? 'Paid' : (totalPaidAmount > 0 ? 'Partially Paid' : 'Pending');
-
-    const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
-    const auditDetails = updatedConfig.isPaid
-      ? `Payment Remittance Recorded: Item #${serviceIdx + 1} (${updatedServices[serviceIdx]?.description || ''}) marked as Paid (₱${(Number(updatedConfig.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}) via ${updatedConfig.mode}`
-      : `Payment Status Reverted: Item #${serviceIdx + 1} (${updatedServices[serviceIdx]?.description || ''}) marked as Unpaid / Pending`;
-
-    const amendmentRecord = {
-      date: nowTimestamp,
-      modifiedBy: currentUser?.fullName || 'Super Admin',
-      details: auditDetails,
-      previousTotal: targetInv.paidAmount || 0,
-      newTotal: totalPaidAmount
-    };
-
-    const updatedAmendedHistory = [amendmentRecord, ...(targetInv.amendedHistory || [])];
-
-    const updatedTargetInv: InvoiceItem = {
-      ...targetInv,
-      paidAmount: totalPaidAmount,
-      status: newStatus,
-      collectionReceiptNumber: finalCr,
-      officialReceiptNumber: finalCr,
-      paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
-      paymentMethod: overallMethod,
-      services: updatedServices,
-      amendedHistory: updatedAmendedHistory
-    };
-
-    // Save directly to DataContext and LocalStorage
-    editInvoicePayment(
-      targetInv.id,
-      {
-        amount: totalPaidAmount,
-        paymentDate: paymentDate || new Date().toISOString().substring(0, 10),
-        paymentMethod: overallMethod,
-        referenceNumber: chequeRefs || paymentRefNum,
-        officialReceiptNumber: finalCr,
-        collectionReceiptNumber: finalCr,
-        notes: paymentNotes,
-        updatedServices,
-        amendedHistory: updatedAmendedHistory
-      },
-      currentUser?.id || 'system',
-      currentUser?.fullName || 'Super Admin'
-    );
-
-    setSelectedInvoice(updatedTargetInv);
   };
 
   // Open Payment Remittance in Official Collection Receipt (FFCSI Format) - Super Admin Only
   const handleOpenPayment = (inv: InvoiceItem) => {
+    if (inv.status === 'Cancelled') {
+      setAlertModal({
+        isOpen: true,
+        title: 'Transaction Cancelled',
+        message: 'Processing or modifying payments on cancelled SOA transactions is not allowed.',
+        type: 'warning'
+      });
+      return;
+    }
     if (!isSuperAdmin) {
       setAlertModal({
         isOpen: true,
@@ -1852,7 +1956,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
       initialConfigs[idx] = {
         mode: isCheque ? 'Cheque' : 'Cash',
-        amount: s.amount || 0,
+        amount: itemIsPaid ? (s.amount || 0) : 0,
         bank: bank,
         customBank: customBank,
         chequeNo: chequeNo,
@@ -2070,11 +2174,26 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
   // Open Edit SOA Modal for Assigned Staff / Super Admin
   const handleOpenEditModal = (inv: InvoiceItem) => {
+    if (inv.status === 'Cancelled') {
+      setAlertModal({
+        isOpen: true,
+        title: 'Transaction Cancelled',
+        message: 'Modifying or amending cancelled SOA transactions is not allowed.',
+        type: 'warning'
+      });
+      return;
+    }
     setSelectedInvoice(inv);
     setEditServices(inv.services.map(s => ({ ...s })));
     setEditReason('');
     setEditBillingNotes(inv.billingNotes || '');
     setShowEditNotesBox(Boolean(inv.billingNotes && inv.billingNotes.trim()));
+    setIsEditServicePickerOpen(false);
+    setEditServiceSearchTerm('');
+    setShowEditCreateCustomSection(false);
+    setEditCustomItemName('');
+    setEditCustomItemPeriod('');
+    setEditCustomItemAmount(0);
     setShowEditModal(true);
   };
 
@@ -2664,13 +2783,24 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       <td className="py-3.5 px-4 text-left">
                         <div className="flex items-center justify-start gap-1.5 flex-wrap">
                           {/* Modify Transaction for Assigned Staff / Super Admin */}
-                          <button
-                            onClick={() => handleOpenEditModal(inv)}
-                            title="Modify Transaction / SOA Items"
-                            className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
-                          >
-                            <Edit className="w-4 h-4" />
-                          </button>
+                          {inv.status === 'Cancelled' ? (
+                            <button
+                              type="button"
+                              disabled
+                              title="Modify SOA is disabled: Transaction is Cancelled"
+                              className="p-1.5 text-slate-300 rounded-lg cursor-not-allowed opacity-60"
+                            >
+                              <Edit className="w-4 h-4 text-slate-300" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handleOpenEditModal(inv)}
+                              title="Modify Transaction / SOA Items"
+                              className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </button>
+                          )}
 
                           {/* Modify History Log Button (Icon-only) ⭐ */}
                           {inv.amendedHistory && inv.amendedHistory.length > 0 && (
@@ -2687,12 +2817,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             </button>
                           )}
 
-                          {balance > 0 && (
+                          {balance > 0 && inv.status !== 'Cancelled' && (
                             isSuperAdmin ? (
                               <button
                                 onClick={() => handleOpenPayment(inv)}
                                 title="Record Payment (Super Admin)"
-                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors shadow-2xs"
+                                className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-[11px] flex items-center gap-1 transition-colors shadow-2xs cursor-pointer"
                               >
                                 <CreditCard className="w-3.5 h-3.5" /> Pay
                               </button>
@@ -2707,7 +2837,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             )
                           )}
 
-                          {(inv.status === 'Paid' || (inv.paidAmount || 0) > 0 || inv.collectionReceiptNumber || inv.officialReceiptNumber) && (
+                          {(inv.status === 'Paid' || inv.status === 'Partially Paid' || (inv.paidAmount || 0) > 0) && (
                             <button
                               onClick={() => {
                                 setSelectedInvoice(inv);
@@ -3044,7 +3174,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 </button>
                               )}
 
-                              {balance > 0 && isSuperAdmin && (
+                              {balance > 0 && inv.status !== 'Cancelled' && isSuperAdmin && (
                                 <button
                                   onClick={() => handleOpenPayment(inv)}
                                   title="Record Payment"
@@ -3054,7 +3184,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 </button>
                               )}
 
-                              {(inv.status === 'Paid' || (inv.paidAmount || 0) > 0 || inv.collectionReceiptNumber || inv.officialReceiptNumber) && (
+                              {(inv.status === 'Paid' || inv.status === 'Partially Paid' || (inv.paidAmount || 0) > 0) && (
                                 <button
                                   onClick={() => {
                                     setSelectedInvoice(inv);
@@ -3092,77 +3222,856 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         </div>
       )}
 
-      {/* SUB-TAB 4: REVENUE & COLLECTION ANALYTICS */}
-      {activeSubTab === 'analytics' && (
-        <div className="space-y-6">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
-            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-blue-600" />
-              Revenue & Collections Distribution Analytics
-            </h3>
+      {/* SUB-TAB 4: REVENUE & COLLECTION ANALYTICS ⭐ */}
+      {activeSubTab === 'analytics' && (() => {
+        // Available invoice years for period filter
+        const availableYears = Array.from(new Set(
+          invoices.filter(i => i.date).map(i => i.date.substring(0, 4))
+        )).sort().reverse();
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Service Categories Breakdown */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
-                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider text-slate-500">
-                  Revenue Billed by Service Category
-                </h4>
-                <div className="space-y-2">
-                  {['BIR Tax Compliance', 'Accounting Retainers', 'External Audit', 'Payroll Management', 'SEC & Corporate', 'Other Services'].map(cat => {
-                    const catInvoices = invoices.filter(i => i.status !== 'Cancelled' && i.services.some(s => (s.serviceCategory || 'Other').toLowerCase().includes(cat.toLowerCase().split(' ')[0])));
-                    const catAmount = catInvoices.reduce((acc, i) => acc + i.totalAmount, 0);
-                    const percentage = totalBilled > 0 ? (catAmount / totalBilled) * 100 : 0;
+        // Helper to match service description against a target code or name
+        const isServiceMatch = (serviceDesc: string, targetCodeOrName: string) => {
+          const s = (serviceDesc || '').toLowerCase().trim();
+          const t = (targetCodeOrName || '').toLowerCase().trim();
+          if (t === 'retainers_fee' || t === 'retainers fee') return s.includes('retainer');
+          if (t === 'service_charge' || t === 'service charge') return s.includes('service charge');
+          if (t === 'bookkeeping_fee' || t.includes('bookkeeping')) return s.includes('bookkeeping');
+          if (t === 'consultation_fee' || t.includes('consultation')) return s.includes('consultation');
+          if (t === 'business_permit' || t.includes('permit')) return s.includes('permit');
+          if (t === 'sec_dti_compliance' || t.includes('sec / dti') || t.includes('sec')) return s.includes('sec') || s.includes('dti');
+          if (t === 'late_filing_assistance' || t.includes('penalty')) return s.includes('penalty') || s.includes('late filing');
+          if (t === 'doc_processing' || t.includes('courier')) return s.includes('courier') || s.includes('processing');
+          return s.includes(t) || t.includes(s);
+        };
 
-                    return (
-                      <div key={cat} className="space-y-1">
-                        <div className="flex justify-between text-xs">
-                          <span className="font-semibold text-slate-800">{cat}</span>
-                          <span className="font-mono font-bold text-slate-900">₱{catAmount.toLocaleString()} ({percentage.toFixed(1)}%)</span>
-                        </div>
-                        <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
-                          <div className="bg-blue-600 h-full rounded-full transition-all" style={{ width: `${percentage}%` }} />
-                        </div>
-                      </div>
-                    );
-                  })}
+        // Filter invoices by client, year, status
+        const filteredInvoices = invoices.filter(inv => {
+          if (inv.status === 'Cancelled') return false;
+          if (analyticsClientFilter !== 'ALL' && inv.clientId !== analyticsClientFilter) return false;
+          if (analyticsYearFilter !== 'ALL' && !inv.date.startsWith(analyticsYearFilter)) return false;
+          if (analyticsStatusFilter !== 'ALL' && inv.status !== analyticsStatusFilter) return false;
+          return true;
+        });
+
+        // Global total billed across filtered invoices for proportion calculation
+        const globalFilteredBilled = filteredInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+
+        // Compute metrics for selected services
+        let totalBilled = 0;
+        let totalCollected = 0;
+        let totalOccurrences = 0;
+
+        const clientBreakdownMap = new Map<string, {
+          clientId: string;
+          companyName: string;
+          billed: number;
+          collected: number;
+          count: number;
+        }>();
+
+        const itemBreakdownMap = new Map<string, {
+          code: string;
+          name: string;
+          category: 'BIR' | 'Benefits' | 'Others';
+          billed: number;
+          collected: number;
+          count: number;
+          clientNames: Set<string>;
+        }>();
+
+        const matchedLinesList: {
+          invoiceId: string;
+          invoiceNumber: string;
+          clientId: string;
+          clientName: string;
+          date: string;
+          dueDate: string;
+          status: string;
+          description: string;
+          period: string;
+          amount: number;
+          linePaid: number;
+        }[] = [];
+
+        filteredInvoices.forEach(inv => {
+          const invTotal = inv.totalAmount || 0;
+          const invPaid = inv.paidAmount || 0;
+          const paidRatio = invTotal > 0 ? Math.min(1, Math.max(0, invPaid / invTotal)) : 0;
+
+          inv.services.forEach(srv => {
+            const isIncluded = analyticsSelectedServices.length === 0 || 
+              analyticsSelectedServices.some(sel => isServiceMatch(srv.description, sel));
+
+            if (isIncluded) {
+              const lineAmount = srv.amount || 0;
+              const linePaid = lineAmount * paidRatio;
+
+              totalBilled += lineAmount;
+              totalCollected += linePaid;
+              totalOccurrences += 1;
+
+              // Client breakdown
+              const cEntry = clientBreakdownMap.get(inv.clientId) || {
+                clientId: inv.clientId,
+                companyName: inv.clientName || 'Unknown Client',
+                billed: 0,
+                collected: 0,
+                count: 0
+              };
+              cEntry.billed += lineAmount;
+              cEntry.collected += linePaid;
+              cEntry.count += 1;
+              clientBreakdownMap.set(inv.clientId, cEntry);
+
+              // Service Item breakdown
+              let matchedCatalogItem = analyticsUnifiedCatalog.find(cat => 
+                isServiceMatch(srv.description, cat.code) || isServiceMatch(srv.description, cat.name)
+              );
+              const itemKey = matchedCatalogItem?.code || srv.description;
+              const itemName = matchedCatalogItem?.name || srv.description;
+              const itemCat = matchedCatalogItem?.category || (
+                (srv.serviceCategory || '').toLowerCase().includes('bir') ? 'BIR' :
+                (srv.serviceCategory || '').toLowerCase().includes('benefit') ? 'Benefits' : 'Others'
+              );
+
+              const iEntry = itemBreakdownMap.get(itemKey) || {
+                code: itemKey,
+                name: itemName,
+                category: itemCat,
+                billed: 0,
+                collected: 0,
+                count: 0,
+                clientNames: new Set<string>()
+              };
+              iEntry.billed += lineAmount;
+              iEntry.collected += linePaid;
+              iEntry.count += 1;
+              iEntry.clientNames.add(inv.clientName);
+              itemBreakdownMap.set(itemKey, iEntry);
+
+              matchedLinesList.push({
+                invoiceId: inv.id,
+                invoiceNumber: inv.invoiceNumber,
+                clientId: inv.clientId,
+                clientName: inv.clientName,
+                date: inv.date,
+                dueDate: inv.dueDate,
+                status: inv.status,
+                description: srv.description,
+                period: srv.monthYear || '—',
+                amount: lineAmount,
+                linePaid: linePaid
+              });
+            }
+          });
+        });
+
+        const totalOutstanding = Math.max(0, totalBilled - totalCollected);
+        const realizationRate = totalBilled > 0 ? (totalCollected / totalBilled) * 100 : 0;
+        const clientList = Array.from(clientBreakdownMap.values()).sort((a, b) => b.billed - a.billed);
+        const itemList = Array.from(itemBreakdownMap.values()).sort((a, b) => b.billed - a.billed);
+
+        // Category Totals
+        const birTotal = itemList.filter(i => i.category === 'BIR').reduce((sum, i) => sum + i.billed, 0);
+        const benefitsTotal = itemList.filter(i => i.category === 'Benefits').reduce((sum, i) => sum + i.billed, 0);
+        const othersTotal = itemList.filter(i => i.category === 'Others').reduce((sum, i) => sum + i.billed, 0);
+
+        // Toggle service selection in analytics filter
+        const toggleServiceFilter = (code: string) => {
+          if (analyticsSelectedServices.includes(code)) {
+            setAnalyticsSelectedServices(analyticsSelectedServices.filter(c => c !== code));
+          } else {
+            setAnalyticsSelectedServices([...analyticsSelectedServices, code]);
+          }
+        };
+
+        // Quick Category Selectors
+        const selectAllCategory = (cat: 'BIR' | 'Benefits' | 'Others') => {
+          const catCodes = analyticsUnifiedCatalog.filter(i => i.category === cat).map(i => i.code);
+          const newSet = new Set([...analyticsSelectedServices, ...catCodes]);
+          setAnalyticsSelectedServices(Array.from(newSet));
+        };
+
+        const deselectCategory = (cat: 'BIR' | 'Benefits' | 'Others') => {
+          const catCodes = new Set(analyticsUnifiedCatalog.filter(i => i.category === cat).map(i => i.code));
+          setAnalyticsSelectedServices(analyticsSelectedServices.filter(code => !catCodes.has(code)));
+        };
+
+        return (
+          <div className="space-y-6">
+            {/* Header & Filter Control Card */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-blue-600" />
+                    Revenue & Collections Distribution Analytics
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Multi-dimensional financial realization, accounts receivable performance, and client distribution broken down by specific BIR forms, statutory benefits, and services.
+                  </p>
+                </div>
+
+                {/* Scope Status Badge */}
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-50 border border-blue-200 text-blue-800 text-xs font-semibold">
+                    <PieChart className="w-3.5 h-3.5 text-blue-600" />
+                    {analyticsSelectedServices.length === 0 ? 'Analyzing: All Services & Tax Forms (Global)' : `Filtered: ${analyticsSelectedServices.length} Selected Item${analyticsSelectedServices.length > 1 ? 's' : ''}`}
+                  </span>
+                  {analyticsSelectedServices.length > 0 && (
+                    <button
+                      onClick={() => setAnalyticsSelectedServices([])}
+                      className="px-2.5 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                    >
+                      Reset Filter
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {/* Client Collections Summary */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-3">
-                <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider text-slate-500">
-                  Top Clients Accounts Receivable Leaderboard
-                </h4>
-                <div className="space-y-2.5 max-h-64 overflow-y-auto">
-                  {clients.map(c => {
-                    const clientInvs = invoices.filter(i => i.clientId === c.id && i.status !== 'Cancelled');
-                    const cBilled = clientInvs.reduce((acc, i) => acc + i.totalAmount, 0);
-                    const cPaid = clientInvs.reduce((acc, i) => acc + (i.paidAmount || 0), 0);
-                    const cBalance = cBilled - cPaid;
-
-                    if (cBilled === 0) return null;
-
-                    return (
-                      <div key={c.id} className="bg-white p-3 rounded-lg border border-slate-200 flex items-center justify-between text-xs">
-                        <div>
-                          <p className="font-bold text-slate-900">{c.companyName}</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">Billed: ₱{cBilled.toLocaleString()} • Paid: ₱{cPaid.toLocaleString()}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-mono font-bold text-amber-600">₱{cBalance.toLocaleString()}</p>
-                          <p className="text-[10px] font-bold text-emerald-700">
-                            {cBilled > 0 ? `${((cPaid / cBilled) * 100).toFixed(0)}% paid` : '0%'}
-                          </p>
-                        </div>
+              {/* FILTERS TOOLBAR */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                {/* 1. Searchable + Add BIR Form, Benefit, or Service... Dropdown */}
+                <div className="md:col-span-6 relative" ref={analyticsServicePickerRef}>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Filter by Specific Form / Benefit / Service:
+                  </label>
+                  
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsAnalyticsServicePickerOpen(!isAnalyticsServicePickerOpen)}
+                      className="w-full px-3.5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center justify-between shadow-2xs transition-all cursor-pointer"
+                    >
+                      <div className="flex items-center gap-2 truncate">
+                        <Plus className="w-4 h-4 shrink-0" />
+                        <span className="truncate">
+                          {analyticsSelectedServices.length === 0 
+                            ? '+ Add BIR Form, Benefit, or Service to Filter...' 
+                            : `+ Add More Items (${analyticsSelectedServices.length} active)`}
+                        </span>
                       </div>
+                      <ChevronDown className={`w-3.5 h-3.5 shrink-0 transition-transform duration-200 ${isAnalyticsServicePickerOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                  </div>
+
+                  {/* Dropdown Menu */}
+                  {isAnalyticsServicePickerOpen && (
+                    <div className="absolute left-0 top-full mt-2 w-full sm:w-[460px] max-h-[480px] bg-white border border-slate-200 rounded-2xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                      {/* Search Bar */}
+                      <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                        <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                        <input
+                          type="text"
+                          placeholder="Search 0619E, SSS, Retainers, 2550Q, PhilHealth..."
+                          value={analyticsServiceSearchTerm}
+                          onChange={e => setAnalyticsServiceSearchTerm(e.target.value)}
+                          className="w-full bg-transparent text-xs text-slate-800 placeholder-slate-400 focus:outline-hidden"
+                          autoFocus
+                        />
+                        {analyticsServiceSearchTerm && (
+                          <button
+                            type="button"
+                            onClick={() => setAnalyticsServiceSearchTerm('')}
+                            className="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-600 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Quick Category Action Buttons */}
+                      <div className="px-3 py-2 bg-slate-100/70 border-b border-slate-200 flex flex-wrap items-center gap-1.5 text-[10px]">
+                        <span className="font-bold text-slate-500 mr-1">Quick Select:</span>
+                        <button
+                          type="button"
+                          onClick={() => selectAllCategory('BIR')}
+                          className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold rounded-lg transition-colors cursor-pointer"
+                        >
+                          + All BIR
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectAllCategory('Benefits')}
+                          className="px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-lg transition-colors cursor-pointer"
+                        >
+                          + All Benefits
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => selectAllCategory('Others')}
+                          className="px-2 py-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-900 font-bold rounded-lg transition-colors cursor-pointer"
+                        >
+                          + All Professional Fees
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAnalyticsSelectedServices([])}
+                          className="px-2 py-1 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-lg transition-colors ml-auto cursor-pointer"
+                        >
+                          Clear All
+                        </button>
+                      </div>
+
+                      {/* Scrollable Item Categories */}
+                      <div className="overflow-y-auto flex-1 p-2.5 space-y-3 divide-y divide-slate-100 text-xs">
+                        
+                        {/* SECTION 1: BIR Tax Returns & Forms */}
+                        {analyticsUnifiedCatalog.filter(item => 
+                          item.category === 'BIR' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()))
+                        ).length > 0 && (
+                          <div>
+                            <div className="flex items-center justify-between px-2 py-1.5 font-bold text-amber-800 text-[10px] uppercase tracking-wider bg-amber-50/60 rounded-md mb-1">
+                              <span>BIR Tax Returns & Forms</span>
+                              <span className="font-mono text-[9px] font-bold text-amber-700">
+                                {analyticsUnifiedCatalog.filter(item => item.category === 'BIR' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()))).length} items
+                              </span>
+                            </div>
+                            <div className="space-y-0.5">
+                              {analyticsUnifiedCatalog
+                                .filter(item => item.category === 'BIR' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase())))
+                                .map(item => {
+                                  const isSelected = analyticsSelectedServices.includes(item.code);
+                                  return (
+                                    <button
+                                      key={item.code}
+                                      type="button"
+                                      onClick={() => toggleServiceFilter(item.code)}
+                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                        isSelected ? 'bg-amber-100/80 font-bold text-amber-900 border border-amber-300' : 'hover:bg-amber-50/60 text-slate-800'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <div className={`w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold border ${isSelected ? 'bg-amber-600 border-amber-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}>
+                                          ✓
+                                        </div>
+                                        <span className="truncate text-[11px]">{item.name}</span>
+                                      </div>
+                                      <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                        {item.code}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SECTION 2: Statutory Benefits & Loans */}
+                        {analyticsUnifiedCatalog.filter(item => 
+                          item.category === 'Benefits' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()))
+                        ).length > 0 && (
+                          <div className="pt-2">
+                            <div className="flex items-center justify-between px-2 py-1.5 font-bold text-emerald-800 text-[10px] uppercase tracking-wider bg-emerald-50/60 rounded-md mb-1">
+                              <span>Statutory Benefits & Loans</span>
+                              <span className="font-mono text-[9px] font-bold text-emerald-700">
+                                {analyticsUnifiedCatalog.filter(item => item.category === 'Benefits' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()))).length} items
+                              </span>
+                            </div>
+                            <div className="space-y-0.5">
+                              {analyticsUnifiedCatalog
+                                .filter(item => item.category === 'Benefits' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase())))
+                                .map(item => {
+                                  const isSelected = analyticsSelectedServices.includes(item.code);
+                                  return (
+                                    <button
+                                      key={item.code}
+                                      type="button"
+                                      onClick={() => toggleServiceFilter(item.code)}
+                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                        isSelected ? 'bg-emerald-100/80 font-bold text-emerald-900 border border-emerald-300' : 'hover:bg-emerald-50/60 text-slate-800'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <div className={`w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold border ${isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}>
+                                          ✓
+                                        </div>
+                                        <span className="truncate text-[11px]">{item.name}</span>
+                                      </div>
+                                      <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                        {item.code}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* SECTION 3: Others (Retainers Fee, Service Charge, Bookkeeping, etc.) */}
+                        {analyticsUnifiedCatalog.filter(item => 
+                          item.category === 'Others' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()))
+                        ).length > 0 && (
+                          <div className="pt-2">
+                            <div className="flex items-center justify-between px-2 py-1.5 font-bold text-indigo-800 text-[10px] uppercase tracking-wider bg-indigo-50/60 rounded-md mb-1">
+                              <span>Others & Professional Fees</span>
+                              <span className="font-mono text-[9px] font-bold text-indigo-700">
+                                {analyticsUnifiedCatalog.filter(item => item.category === 'Others' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()))).length} items
+                              </span>
+                            </div>
+                            <div className="space-y-0.5">
+                              {analyticsUnifiedCatalog
+                                .filter(item => item.category === 'Others' && (!analyticsServiceSearchTerm.trim() || item.name.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(analyticsServiceSearchTerm.toLowerCase())))
+                                .map(item => {
+                                  const isSelected = analyticsSelectedServices.includes(item.code);
+                                  return (
+                                    <button
+                                      key={item.code}
+                                      type="button"
+                                      onClick={() => toggleServiceFilter(item.code)}
+                                      className={`w-full text-left px-2.5 py-1.5 rounded-lg flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                                        isSelected ? 'bg-indigo-100/80 font-bold text-indigo-900 border border-indigo-300' : 'hover:bg-indigo-50/60 text-slate-800'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <div className={`w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold border ${isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white text-transparent'}`}>
+                                          ✓
+                                        </div>
+                                        <span className="truncate text-[11px]">{item.name}</span>
+                                      </div>
+                                      <span className="shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                        {item.code}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Dropdown Footer */}
+                      <div className="p-2.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between text-[11px]">
+                        <span className="text-slate-500">
+                          {analyticsSelectedServices.length} item(s) selected
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIsAnalyticsServicePickerOpen(false)}
+                          className="px-3 py-1.5 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
+                        >
+                          Done Selecting
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Client Filter */}
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Client Scope:
+                  </label>
+                  <select
+                    value={analyticsClientFilter}
+                    onChange={e => setAnalyticsClientFilter(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="ALL">All Clients ({clients.length})</option>
+                    {clients.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.companyName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 3. Year Filter */}
+                <div className="md:col-span-3">
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Billing Year:
+                  </label>
+                  <select
+                    value={analyticsYearFilter}
+                    onChange={e => setAnalyticsYearFilter(e.target.value)}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="ALL">All Recorded Years</option>
+                    {availableYears.map(yr => (
+                      <option key={yr} value={yr}>
+                        Year {yr}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* ACTIVE FILTER CHIPS ROW */}
+              {analyticsSelectedServices.length > 0 && (
+                <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-500 mr-1 flex items-center gap-1">
+                    <Filter className="w-3 h-3 text-slate-400" /> Active Item Filters:
+                  </span>
+                  {analyticsSelectedServices.map(code => {
+                    const item = analyticsUnifiedCatalog.find(i => i.code === code);
+                    const isBir = item?.category === 'BIR';
+                    const isBen = item?.category === 'Benefits';
+                    return (
+                      <span
+                        key={code}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold shadow-2xs border ${
+                          isBir
+                            ? 'bg-amber-50 text-amber-900 border-amber-200'
+                            : isBen
+                            ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+                            : 'bg-indigo-50 text-indigo-900 border-indigo-200'
+                        }`}
+                      >
+                        <span>{item?.name || code}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleServiceFilter(code)}
+                          className="p-0.5 hover:bg-black/10 rounded-full cursor-pointer transition-colors"
+                          title="Remove filter"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
                     );
                   })}
+                  <button
+                    type="button"
+                    onClick={() => setAnalyticsSelectedServices([])}
+                    className="text-[11px] font-bold text-slate-500 hover:text-rose-600 underline ml-2 cursor-pointer"
+                  >
+                    Clear all ({analyticsSelectedServices.length})
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* EXECUTIVE METRIC CARDS (Filtered) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Total Billed */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                  <span>Filtered Billed Revenue</span>
+                  <DollarSign className="w-4 h-4 text-blue-600" />
+                </div>
+                <div className="text-2xl font-black font-mono text-slate-900">
+                  ₱{totalBilled.toLocaleString()}
+                </div>
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Across {totalOccurrences} invoiced lines</span>
+                  {globalFilteredBilled > 0 && (
+                    <span className="font-bold text-blue-600">
+                      {((totalBilled / globalFilteredBilled) * 100).toFixed(1)}% of all billing
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Total Collected / Realized */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                  <span>Realized Collections</span>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                </div>
+                <div className="text-2xl font-black font-mono text-emerald-600">
+                  ₱{totalCollected.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </div>
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Realization Rate:</span>
+                  <span className={`font-bold px-1.5 py-0.5 rounded text-[10px] ${
+                    realizationRate >= 80 ? 'bg-emerald-100 text-emerald-800' : realizationRate >= 50 ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'
+                  }`}>
+                    {realizationRate.toFixed(1)}% Collected
+                  </span>
+                </div>
+              </div>
+
+              {/* Outstanding AR */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                  <span>Uncollected Balance (AR)</span>
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="text-2xl font-black font-mono text-amber-600">
+                  ₱{totalOutstanding.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {totalBilled > 0 ? `${((totalOutstanding / totalBilled) * 100).toFixed(1)}% pending realization` : 'No pending receivables'}
+                </div>
+              </div>
+
+              {/* Volume & Client Reach */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-1">
+                <div className="flex items-center justify-between text-slate-500 text-xs font-semibold">
+                  <span>Client Reach</span>
+                  <Building2 className="w-4 h-4 text-purple-600" />
+                </div>
+                <div className="text-2xl font-black font-mono text-purple-700">
+                  {clientList.length} Clients
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Avg ₱{clientList.length > 0 ? (totalBilled / clientList.length).toLocaleString(undefined, { maximumFractionDigits: 0 }) : 0} billed / client
                 </div>
               </div>
             </div>
+
+            {/* CATEGORY REVENUE PROPORTIONS BAR */}
+            {totalBilled > 0 && (
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                  <h4 className="font-bold text-slate-900">
+                    Category Distribution Split
+                  </h4>
+                  <div className="flex items-center gap-4 text-[11px] font-semibold">
+                    <span className="flex items-center gap-1 text-amber-800">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 inline-block" />
+                      BIR Taxes: ₱{birTotal.toLocaleString()} ({((birTotal / totalBilled) * 100).toFixed(1)}%)
+                    </span>
+                    <span className="flex items-center gap-1 text-emerald-800">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block" />
+                      Benefits: ₱{benefitsTotal.toLocaleString()} ({((benefitsTotal / totalBilled) * 100).toFixed(1)}%)
+                    </span>
+                    <span className="flex items-center gap-1 text-indigo-800">
+                      <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 inline-block" />
+                      Professional Fees: ₱{othersTotal.toLocaleString()} ({((othersTotal / totalBilled) * 100).toFixed(1)}%)
+                    </span>
+                  </div>
+                </div>
+
+                <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
+                  {birTotal > 0 && (
+                    <div 
+                      className="bg-amber-500 h-full transition-all" 
+                      style={{ width: `${(birTotal / totalBilled) * 100}%` }}
+                      title={`BIR Taxes: ₱${birTotal.toLocaleString()}`}
+                    />
+                  )}
+                  {benefitsTotal > 0 && (
+                    <div 
+                      className="bg-emerald-500 h-full transition-all" 
+                      style={{ width: `${(benefitsTotal / totalBilled) * 100}%` }}
+                      title={`Benefits: ₱${benefitsTotal.toLocaleString()}`}
+                    />
+                  )}
+                  {othersTotal > 0 && (
+                    <div 
+                      className="bg-indigo-500 h-full transition-all" 
+                      style={{ width: `${(othersTotal / totalBilled) * 100}%` }}
+                      title={`Professional Fees: ₱${othersTotal.toLocaleString()}`}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* TWO MAIN VISUAL PANELS */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Panel 1: Revenue by Service / Tax Form */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4 text-blue-600" />
+                    Revenue & Collection by Form / Service Item ({itemList.length})
+                  </h4>
+                  <span className="text-[10px] font-bold text-slate-500">
+                    Ranked by Billed Amount
+                  </span>
+                </div>
+
+                {itemList.length === 0 ? (
+                  <div className="text-center py-10 text-slate-400 text-xs">
+                    No billing records found matching the selected items or filters.
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-[440px] overflow-y-auto pr-1">
+                    {itemList.map(item => {
+                      const sharePct = totalBilled > 0 ? (item.billed / totalBilled) * 100 : 0;
+                      const itemRealization = item.billed > 0 ? (item.collected / item.billed) * 100 : 0;
+                      const isBir = item.category === 'BIR';
+                      const isBen = item.category === 'Benefits';
+
+                      return (
+                        <div key={item.code} className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 space-y-2 text-xs">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  isBir ? 'bg-amber-100 text-amber-900 border border-amber-200' :
+                                  isBen ? 'bg-emerald-100 text-emerald-900 border border-emerald-200' :
+                                  'bg-indigo-100 text-indigo-900 border border-indigo-200'
+                                }`}>
+                                  {item.category}
+                                </span>
+                                <span className="font-bold text-slate-900">{item.name}</span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 mt-1">
+                                Billed across {item.count} invoice lines • {item.clientNames.size} client{item.clientNames.size > 1 ? 's' : ''}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="font-mono font-black text-slate-900 text-sm">
+                                ₱{item.billed.toLocaleString()}
+                              </span>
+                              <div className="text-[10px] font-bold text-emerald-700">
+                                Paid: ₱{item.collected.toLocaleString(undefined, { maximumFractionDigits: 0 })} ({itemRealization.toFixed(0)}%)
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Progress bar */}
+                          <div className="space-y-1">
+                            <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden flex">
+                              <div 
+                                className={`h-full rounded-full transition-all ${
+                                  isBir ? 'bg-amber-500' : isBen ? 'bg-emerald-500' : 'bg-indigo-600'
+                                }`} 
+                                style={{ width: `${sharePct}%` }} 
+                              />
+                            </div>
+                            <div className="flex justify-between text-[10px] text-slate-400">
+                              <span>Revenue Share: {sharePct.toFixed(1)}%</span>
+                              <span>Outstanding: ₱{(item.billed - item.collected).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Panel 2: Top Clients AR & Collections Leaderboard */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-indigo-600" />
+                    Client Distribution Leaderboard ({clientList.length})
+                  </h4>
+                  <span className="text-[10px] font-bold text-slate-500">
+                    Billed vs Realized
+                  </span>
+                </div>
+
+                {clientList.length === 0 ? (
+                  <div className="text-center py-10 text-slate-400 text-xs">
+                    No client billing records match the selected items or filters.
+                  </div>
+                ) : (
+                  <div className="space-y-2.5 max-h-[440px] overflow-y-auto pr-1">
+                    {clientList.map(c => {
+                      const cBalance = Math.max(0, c.billed - c.collected);
+                      const cPaidPct = c.billed > 0 ? (c.collected / c.billed) * 100 : 0;
+
+                      return (
+                        <div key={c.clientId} className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="font-bold text-slate-900">{c.companyName}</p>
+                              <p className="text-[10px] text-slate-500 mt-0.5">
+                                {c.count} filtered line items • Paid: ₱{c.collected.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="font-mono font-bold text-slate-900">₱{c.billed.toLocaleString()}</p>
+                              <p className="text-[10px] font-mono font-bold text-amber-600">
+                                AR: ₱{cBalance.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                            <div 
+                              className="bg-emerald-500 h-full rounded-full transition-all" 
+                              style={{ width: `${Math.min(100, cPaidPct)}%` }} 
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* TABULAR DETAILED BREAKDOWN OF MATCHING INVOICE LINES */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-2">
+                    <Receipt className="w-4 h-4 text-emerald-600" />
+                    Itemized Invoiced Line Items ({matchedLinesList.length})
+                  </h4>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Individual SOA invoice transactions matching your selected service, BIR form, and benefit filters.
+                  </p>
+                </div>
+                <div className="text-xs font-semibold text-slate-600">
+                  Sum Total: <span className="font-mono font-bold text-slate-900">₱{totalBilled.toLocaleString()}</span>
+                </div>
+              </div>
+
+              {matchedLinesList.length === 0 ? (
+                <div className="text-center py-12 text-slate-400 text-xs">
+                  No line items found for the current filter criteria.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                        <th className="py-2.5 px-3">Invoice #</th>
+                        <th className="py-2.5 px-3">Date</th>
+                        <th className="py-2.5 px-3">Client Name</th>
+                        <th className="py-2.5 px-3">Item / Service Description</th>
+                        <th className="py-2.5 px-3">Period</th>
+                        <th className="py-2.5 px-3 text-right">Line Amount</th>
+                        <th className="py-2.5 px-3 text-right">Realized Paid</th>
+                        <th className="py-2.5 px-3 text-center">SOA Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {matchedLinesList.slice(0, 50).map((line, idx) => (
+                        <tr key={`${line.invoiceId}_${idx}`} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="py-2.5 px-3 font-mono font-bold text-blue-600">
+                            {line.invoiceNumber}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600">
+                            {line.date}
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-800">
+                            {line.clientName}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-900 font-medium">
+                            {line.description}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-500 font-mono text-[11px]">
+                            {line.period}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900">
+                            ₱{line.amount.toLocaleString()}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-700">
+                            ₱{line.linePaid.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              line.status === 'Paid' ? 'bg-emerald-100 text-emerald-800' :
+                              line.status === 'Partial' ? 'bg-blue-100 text-blue-800' :
+                              line.status === 'Overdue' ? 'bg-rose-100 text-rose-800' :
+                              'bg-amber-100 text-amber-800'
+                            }`}>
+                              {line.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {matchedLinesList.length > 50 && (
+                    <p className="text-center text-[11px] text-slate-400 mt-3 italic">
+                      Showing first 50 of {matchedLinesList.length} matching line items.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* SUB-TAB: STATEMENT OF ACCOUNT (SOA LEDGER) ⭐ */}
       {activeSubTab === 'soa' && (() => {
@@ -3336,35 +4245,43 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 ₱{entry.runningBalance.toLocaleString()}
                               </td>
                               <td className="py-3 px-3 text-left">
-                                {entry.originalInvoiceId && (
-                                  <div className="flex items-center justify-start gap-1">
-                                    <button
-                                      onClick={() => {
-                                        const inv = invoices.find(i => i.id === entry.originalInvoiceId);
-                                        if (inv) {
-                                          setSelectedInvoice(inv);
-                                          setShowCrModal(true);
-                                        }
-                                      }}
-                                      className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
-                                      title="View Official Collection Receipt (FFCSI Format)"
-                                    >
-                                      <Receipt className="w-3.5 h-3.5 text-emerald-700" /> View
-                                    </button>
-                                    <button
-                                      onClick={() => {
-                                        const inv = invoices.find(i => i.id === entry.originalInvoiceId);
-                                        if (inv) {
-                                          handleOpenEditModal(inv);
-                                        }
-                                      }}
-                                      className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
-                                      title="Modify Transaction or Cancel"
-                                    >
-                                      <Edit className="w-3.5 h-3.5 text-indigo-600" /> Modify
-                                    </button>
-                                  </div>
-                                )}
+                                {entry.originalInvoiceId && (() => {
+                                  const targetInv = invoices.find(i => i.id === entry.originalInvoiceId);
+                                  return (
+                                    <div className="flex items-center justify-start gap-1">
+                                      <button
+                                        onClick={() => {
+                                          if (targetInv) {
+                                            setSelectedInvoice(targetInv);
+                                            setShowCrModal(true);
+                                          }
+                                        }}
+                                        className="p-1 text-slate-600 hover:text-emerald-700 hover:bg-slate-100 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                        title="View Official Collection Receipt (FFCSI Format)"
+                                      >
+                                        <Receipt className="w-3.5 h-3.5 text-emerald-700" /> View
+                                      </button>
+                                      {targetInv && targetInv.status === 'Cancelled' ? (
+                                        <span
+                                          className="p-1 text-slate-300 rounded-md inline-flex items-center gap-1 font-semibold text-[11px] cursor-not-allowed opacity-60"
+                                          title="Modifications not allowed on Cancelled transactions"
+                                        >
+                                          <Edit className="w-3.5 h-3.5 text-slate-300" /> Modify
+                                        </span>
+                                      ) : targetInv ? (
+                                        <button
+                                          onClick={() => {
+                                            handleOpenEditModal(targetInv);
+                                          }}
+                                          className="p-1 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-md cursor-pointer inline-flex items-center gap-1 font-semibold text-[11px]"
+                                          title="Modify Transaction or Cancel"
+                                        >
+                                          <Edit className="w-3.5 h-3.5 text-indigo-600" /> Modify
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })()}
                               </td>
                             </tr>
                           ))
@@ -3954,11 +4871,30 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                         key={item.code}
                                         type="button"
                                         onClick={() => handleSelectUnifiedItem(item)}
-                                        className="w-full text-left px-2.5 py-1.5 hover:bg-amber-50/80 rounded-lg flex items-center justify-between group transition-colors cursor-pointer"
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-amber-50/80 rounded-lg flex items-center justify-between gap-2 group transition-colors cursor-pointer"
                                       >
                                         <span className="font-semibold text-slate-800 group-hover:text-amber-900 truncate text-[11px]">
                                           {item.name}
                                         </span>
+                                        {item.defaultAmount > 0 && (
+                                          <span
+                                            className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                                              item.amountSource === 'Client Payables'
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 ring-1 ring-amber-200'
+                                                : item.amountSource === 'Client Retainer Profile'
+                                                ? 'bg-indigo-100 text-indigo-900 border border-indigo-300 ring-1 ring-indigo-200'
+                                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                                            }`}
+                                            title={item.sourceDetail || `Amount originated from ${item.amountSource || 'Preset'}`}
+                                          >
+                                            <span className="font-mono font-extrabold">₱{item.defaultAmount.toLocaleString()}</span>
+                                            {item.amountSource && (
+                                              <span className="text-[9px] font-normal opacity-85">
+                                                ({item.amountSource === 'Client Payables' ? 'from Client Payables' : item.amountSource === 'Client Retainer Profile' ? 'from Client Profile' : 'from Saved Preset'})
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
                                       </button>
                                     ))}
                                 </div>
@@ -3984,11 +4920,30 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                         key={item.code}
                                         type="button"
                                         onClick={() => handleSelectUnifiedItem(item)}
-                                        className="w-full text-left px-2.5 py-1.5 hover:bg-emerald-50/80 rounded-lg flex items-center justify-between group transition-colors cursor-pointer"
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-emerald-50/80 rounded-lg flex items-center justify-between gap-2 group transition-colors cursor-pointer"
                                       >
                                         <span className="font-semibold text-slate-800 group-hover:text-emerald-900 truncate text-[11px]">
                                           {item.name}
                                         </span>
+                                        {item.defaultAmount > 0 && (
+                                          <span
+                                            className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                                              item.amountSource === 'Client Payables'
+                                                ? 'bg-emerald-100 text-emerald-900 border border-emerald-300 ring-1 ring-emerald-200'
+                                                : item.amountSource === 'Client Retainer Profile'
+                                                ? 'bg-indigo-100 text-indigo-900 border border-indigo-300 ring-1 ring-indigo-200'
+                                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                                            }`}
+                                            title={item.sourceDetail || `Amount originated from ${item.amountSource || 'Preset'}`}
+                                          >
+                                            <span className="font-mono font-extrabold">₱{item.defaultAmount.toLocaleString()}</span>
+                                            {item.amountSource && (
+                                              <span className="text-[9px] font-normal opacity-85">
+                                                ({item.amountSource === 'Client Payables' ? 'from Client Payables' : item.amountSource === 'Client Retainer Profile' ? 'from Client Profile' : 'from Saved Preset'})
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
                                       </button>
                                     ))}
                                 </div>
@@ -4014,11 +4969,30 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                         key={item.code}
                                         type="button"
                                         onClick={() => handleSelectUnifiedItem(item)}
-                                        className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50/80 rounded-lg flex items-center justify-between group transition-colors cursor-pointer"
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50/80 rounded-lg flex items-center justify-between gap-2 group transition-colors cursor-pointer"
                                       >
                                         <span className="font-semibold text-slate-800 group-hover:text-indigo-900 truncate text-[11px]">
-                                          {item.name} {item.defaultAmount ? `(₱${item.defaultAmount.toLocaleString()})` : ''}
+                                          {item.name}
                                         </span>
+                                        {item.defaultAmount > 0 && (
+                                          <span
+                                            className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                                              item.amountSource === 'Client Payables'
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 ring-1 ring-amber-200'
+                                                : item.amountSource === 'Client Retainer Profile'
+                                                ? 'bg-indigo-100 text-indigo-900 border border-indigo-300 ring-1 ring-indigo-200'
+                                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                                            }`}
+                                            title={item.sourceDetail || `Amount originated from ${item.amountSource || 'Preset'}`}
+                                          >
+                                            <span className="font-mono font-extrabold">₱{item.defaultAmount.toLocaleString()}</span>
+                                            {item.amountSource && (
+                                              <span className="text-[9px] font-normal opacity-85">
+                                                ({item.amountSource === 'Client Payables' ? 'from Client Payables' : item.amountSource === 'Client Retainer Profile' ? 'from Client Profile' : 'from Saved Preset'})
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
                                       </button>
                                     ))}
                                 </div>
@@ -4269,6 +5243,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                     currentPeriod: item.monthYear || '',
                                     currentAmount: item.amount || 0,
                                     defaultMonthlyRate: defaultRate,
+                                    initialDivideToMonths: item.divideToMonths !== undefined ? item.divideToMonths : true,
                                   });
                                 }}
                                 className="p-1.5 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
@@ -4382,15 +5357,23 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           {(() => {
                             const months = getLineCoveredMonths(item);
                             if (months.length > 1) {
+                              const isDivided = item.divideToMonths !== false;
                               const perMo = (Number(item.amount) || 0) / months.length;
                               return (
-                                <div className="flex items-center justify-between text-[10px] text-emerald-900 bg-emerald-50/80 border border-emerald-200/80 px-2 py-0.5 rounded-md">
+                                <div className={`flex items-center justify-between text-[10px] px-2 py-0.5 rounded-md border ${
+                                  isDivided 
+                                    ? 'text-emerald-900 bg-emerald-50/80 border-emerald-200/80' 
+                                    : 'text-indigo-900 bg-indigo-50/80 border-indigo-200/80'
+                                }`}>
                                   <span className="font-semibold flex items-center gap-1">
-                                    <CalendarRange className="w-3 h-3 text-emerald-600 shrink-0" />
+                                    <CalendarRange className={`w-3 h-3 shrink-0 ${isDivided ? 'text-emerald-600' : 'text-indigo-600'}`} />
                                     Covers {months.length} Months ({months.join(', ')}):
                                   </span>
-                                  <span className="font-mono font-bold text-emerald-800">
-                                    ₱{perMo.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / month in records
+                                  <span className={`font-mono font-bold ${isDivided ? 'text-emerald-800' : 'text-indigo-800'}`}>
+                                    {isDivided 
+                                      ? `₱${perMo.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / month in records`
+                                      : `₱${(Number(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Single lump-sum)`
+                                    }
                                   </span>
                                 </div>
                               );
@@ -4888,9 +5871,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 {isSuperAdmin && (
                   <button
                     type="button"
+                    disabled={selectedInvoice.status === 'Cancelled'}
                     onClick={() => handleOpenPayment(selectedInvoice)}
-                    className="h-9 px-2.5 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-2xs cursor-pointer transition-colors w-full text-center"
-                    title="Edit payment remittance details, cheque info, and records"
+                    className={`h-9 px-2.5 py-1.5 font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-2xs transition-colors w-full text-center ${
+                      selectedInvoice.status === 'Cancelled'
+                        ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
+                        : 'bg-amber-600 hover:bg-amber-500 text-white cursor-pointer'
+                    }`}
+                    title={selectedInvoice.status === 'Cancelled' ? 'Payment editing is disabled for Cancelled transactions' : 'Edit payment remittance details, cheque info, and records'}
                   >
                     <Edit className="w-3.5 h-3.5 shrink-0" />
                     <span className="truncate">Edit</span>
@@ -4902,7 +5890,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   type="button"
                   onClick={() => {
                     if (crViewFormat === 'payment') {
-                      downloadPaymentCollectionReceiptPDF(selectedInvoice);
+                      downloadPaymentCollectionReceiptPDF(selectedInvoice, { showWatermark: showCrWatermark });
                     } else {
                       downloadCollectionReceiptPDF(selectedInvoice);
                     }
@@ -4954,6 +5942,39 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             {/* Exact 1:1 FFCSI Collection Receipt Replicated Document Canvas */}
             <div className="p-6 bg-white border border-slate-300 rounded-2xl space-y-4 font-sans text-slate-900 shadow-inner relative overflow-hidden">
               
+              {/* Payment Tab Watermarks (Only active in 'Payment' Tab for Paid or Cancelled status when toggle is ON) ⭐ */}
+              {crViewFormat === 'payment' && !isCrPaymentMode && showCrWatermark && (
+                <>
+                  {/* Watermark: PAID */}
+                  {selectedInvoice.status === 'Paid' && (
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20 select-none overflow-hidden">
+                      <div className="transform -rotate-25 border-4 sm:border-8 border-emerald-600/25 rounded-3xl px-8 py-3 sm:px-14 sm:py-5 flex flex-col items-center justify-center shadow-xs">
+                        <span className="text-emerald-700/25 font-black text-6xl sm:text-7xl md:text-8xl tracking-[0.25em] uppercase font-sans leading-none">
+                          PAID
+                        </span>
+                        <span className="text-emerald-800/25 font-extrabold text-xs sm:text-sm tracking-widest uppercase mt-1">
+                          Official Collection Receipt
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Watermark: CANCELLED */}
+                  {selectedInvoice.status === 'Cancelled' && (
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20 select-none overflow-hidden">
+                      <div className="transform -rotate-25 border-4 sm:border-8 border-rose-600/25 rounded-3xl px-6 py-3 sm:px-12 sm:py-5 flex flex-col items-center justify-center shadow-xs">
+                        <span className="text-rose-700/25 font-black text-5xl sm:text-6xl md:text-7xl tracking-[0.2em] uppercase font-sans leading-none">
+                          CANCELLED
+                        </span>
+                        <span className="text-rose-800/25 font-extrabold text-xs sm:text-sm tracking-widest uppercase mt-1">
+                          Void Transaction
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
               {/* Prominent Void / Cancelled Stamp for Cancelled Invoices */}
               {selectedInvoice.status === 'Cancelled' && (
                 <div className="p-3 bg-rose-50 border-2 border-rose-300 rounded-xl text-rose-900 flex items-center justify-between gap-2 shadow-xs">
@@ -5065,7 +6086,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     selectedInvoice.services.map((srv, idx) => {
                       const itemCfg = crItemPaymentConfigs[idx] || {
                         mode: srv.paymentMode === 'Cheque' ? 'Cheque' : 'Cash',
-                        amount: srv.amount,
+                        amount: 0,
                         bank: 'BDO (Banco de Oro)',
                         customBank: '',
                         chequeNo: srv.chequeNumber || '',
@@ -5482,35 +6503,66 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </div>
             )}
 
-            {/* Bottom Modal Actions */}
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              {isCrPaymentMode ? (
-                <>
+            {/* Bottom Modal Actions & Watermark Toggle */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-200">
+              {/* Watermark Toggle (Bottom of modal, default ON - Only visible when in Payment Tab) ⭐ */}
+              {crViewFormat === 'payment' && !isCrPaymentMode ? (
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsCrPaymentMode(false)}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
+                    onClick={() => setShowCrWatermark(prev => !prev)}
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all cursor-pointer shadow-2xs ${
+                      showCrWatermark
+                        ? 'bg-emerald-50 text-emerald-900 border-emerald-300 ring-1 ring-emerald-200 hover:bg-emerald-100'
+                        : 'bg-slate-100 text-slate-600 border-slate-300 hover:bg-slate-200'
+                    }`}
+                    title={`Toggle Watermark ${showCrWatermark ? 'OFF' : 'ON'} (Default: ON)`}
                   >
-                    Cancel / View Receipt
+                    <Stamp className={`w-4 h-4 ${showCrWatermark ? 'text-emerald-700' : 'text-slate-400'}`} />
+                    <span>Watermark:</span>
+                    <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold uppercase ${
+                      showCrWatermark ? 'bg-emerald-600 text-white' : 'bg-slate-300 text-slate-700'
+                    }`}>
+                      {showCrWatermark ? 'ON' : 'OFF'}
+                    </span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleSubmitPayment}
-                    disabled={!!crError}
-                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl flex items-center gap-2 shadow-md cursor-pointer"
-                  >
-                    <CheckCircle2 className="w-4 h-4" /> Confirm & Record Payment (Issue C.R. #{orNumber || '1001'})
-                  </button>
-                </>
+                  <span className="text-[11px] text-slate-500 hidden sm:inline">
+                    {showCrWatermark ? '(Watermark stamp enabled on receipt & PDF)' : '(Watermark stamp disabled)'}
+                  </span>
+                </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={() => setShowCrModal(false)}
-                  className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
-                >
-                  Close
-                </button>
+                <div />
               )}
+
+              <div className="flex items-center gap-2">
+                {isCrPaymentMode ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsCrPaymentMode(false)}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
+                    >
+                      Cancel / View Receipt
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSubmitPayment}
+                      disabled={!!crError}
+                      className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl flex items-center gap-2 shadow-md cursor-pointer"
+                    >
+                      <CheckCircle2 className="w-4 h-4" /> Confirm & Record Payment (Issue C.R. #{orNumber || '1001'})
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setShowCrModal(false)}
+                    className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
+                  >
+                    Close
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -5564,6 +6616,314 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               <div>
                 <label className="block text-slate-700 font-bold mb-2">Itemized Services & Deliverables</label>
                 
+                {/* Quick Add Pickers: Combined Searchable Dropdown with BIR Forms, Benefits, and Others (Modify SOA) ⭐ */}
+                <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-2 mb-3">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Add Service Line Options:</span>
+                  <div className="flex flex-wrap items-center gap-2" ref={editServicePickerRef}>
+                    
+                    {/* Unified Searchable Dropdown Combobox */}
+                    <div className="relative inline-block text-left">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsEditServicePickerOpen(!isEditServicePickerOpen);
+                          setShowEditCreateCustomSection(false);
+                        }}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 shadow-2xs transition-all cursor-pointer"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>+ Add BIR Form, Benefit, or Service...</span>
+                        <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isEditServicePickerOpen ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {isEditServicePickerOpen && (
+                        <div className="absolute left-0 top-full mt-1.5 w-80 sm:w-96 max-h-[440px] bg-white border border-slate-200 rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                          {/* Search Bar */}
+                          <div className="p-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                            <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                            <input
+                              type="text"
+                              autoFocus
+                              value={editServiceSearchTerm}
+                              onChange={e => setEditServiceSearchTerm(e.target.value)}
+                              placeholder="Search BIR forms, benefits, loans, retainers, service charge..."
+                              className="w-full bg-transparent border-none text-xs font-medium text-slate-900 placeholder:text-slate-400 focus:outline-hidden"
+                            />
+                            {editServiceSearchTerm && (
+                              <button
+                                type="button"
+                                onClick={() => setEditServiceSearchTerm('')}
+                                className="p-1 text-slate-400 hover:text-slate-600 rounded-md"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Quick 1-Click Create Button if search term typed */}
+                          {editServiceSearchTerm.trim() && (
+                            <div className="p-2 bg-emerald-50 border-b border-emerald-100 flex items-center justify-between gap-2">
+                              <span className="text-[11px] font-semibold text-emerald-900 truncate">
+                                Add "<strong>{editServiceSearchTerm.trim()}</strong>"
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCreateEditCustomItem(editServiceSearchTerm.trim())}
+                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] rounded-md shrink-0 shadow-2xs cursor-pointer"
+                              >
+                                + Add Line
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Grouped Service List */}
+                          <div className="overflow-y-auto flex-1 p-2 space-y-3 divide-y divide-slate-100 text-xs">
+                            
+                            {/* SECTION 1: BIR Tax Returns & Forms */}
+                            {editUnifiedServiceCatalog.filter(item => 
+                              item.category === 'BIR' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase()))
+                            ).length > 0 && (
+                              <div>
+                                <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-amber-800 bg-amber-50 rounded-md mb-1 flex items-center justify-between">
+                                  <span>BIR Tax Returns & Forms</span>
+                                  <span className="font-mono text-[9px] font-bold text-amber-700">
+                                    {editUnifiedServiceCatalog.filter(item => item.category === 'BIR' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase()))).length} items
+                                  </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  {editUnifiedServiceCatalog
+                                    .filter(item => item.category === 'BIR' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase())))
+                                    .map(item => (
+                                      <button
+                                        key={item.code}
+                                        type="button"
+                                        onClick={() => handleSelectEditUnifiedItem(item)}
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-amber-50/80 rounded-lg flex items-center justify-between gap-2 group transition-colors cursor-pointer"
+                                      >
+                                        <span className="font-semibold text-slate-800 group-hover:text-amber-900 truncate text-[11px]">
+                                          {item.name}
+                                        </span>
+                                        {item.defaultAmount > 0 && (
+                                          <span
+                                            className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                                              item.amountSource === 'Client Payables'
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 ring-1 ring-amber-200'
+                                                : item.amountSource === 'Client Retainer Profile'
+                                                ? 'bg-indigo-100 text-indigo-900 border border-indigo-300 ring-1 ring-indigo-200'
+                                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                                            }`}
+                                            title={item.sourceDetail || `Amount originated from ${item.amountSource || 'Preset'}`}
+                                          >
+                                            <span className="font-mono font-extrabold">₱{item.defaultAmount.toLocaleString()}</span>
+                                            {item.amountSource && (
+                                              <span className="text-[9px] font-normal opacity-85">
+                                                ({item.amountSource === 'Client Payables' ? 'from Client Payables' : item.amountSource === 'Client Retainer Profile' ? 'from Client Profile' : 'from Saved Preset'})
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* SECTION 2: Statutory Benefits & Loans */}
+                            {editUnifiedServiceCatalog.filter(item => 
+                              item.category === 'Benefits' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase()))
+                            ).length > 0 && (
+                              <div className="pt-2">
+                                <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 bg-emerald-50 rounded-md mb-1 flex items-center justify-between">
+                                  <span>Statutory Benefits & Loans</span>
+                                  <span className="font-mono text-[9px] font-bold text-emerald-700">
+                                    {editUnifiedServiceCatalog.filter(item => item.category === 'Benefits' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase()))).length} items
+                                  </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  {editUnifiedServiceCatalog
+                                    .filter(item => item.category === 'Benefits' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase())))
+                                    .map(item => (
+                                      <button
+                                        key={item.code}
+                                        type="button"
+                                        onClick={() => handleSelectEditUnifiedItem(item)}
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-emerald-50/80 rounded-lg flex items-center justify-between gap-2 group transition-colors cursor-pointer"
+                                      >
+                                        <span className="font-semibold text-slate-800 group-hover:text-emerald-900 truncate text-[11px]">
+                                          {item.name}
+                                        </span>
+                                        {item.defaultAmount > 0 && (
+                                          <span
+                                            className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                                              item.amountSource === 'Client Payables'
+                                                ? 'bg-emerald-100 text-emerald-900 border border-emerald-300 ring-1 ring-emerald-200'
+                                                : item.amountSource === 'Client Retainer Profile'
+                                                ? 'bg-indigo-100 text-indigo-900 border border-indigo-300 ring-1 ring-indigo-200'
+                                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                                            }`}
+                                            title={item.sourceDetail || `Amount originated from ${item.amountSource || 'Preset'}`}
+                                          >
+                                            <span className="font-mono font-extrabold">₱{item.defaultAmount.toLocaleString()}</span>
+                                            {item.amountSource && (
+                                              <span className="text-[9px] font-normal opacity-85">
+                                                ({item.amountSource === 'Client Payables' ? 'from Client Payables' : item.amountSource === 'Client Retainer Profile' ? 'from Client Profile' : 'from Saved Preset'})
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* SECTION 3: Others (Retainers Fee, Service Charge, Bookkeeping, etc.) */}
+                            {editUnifiedServiceCatalog.filter(item => 
+                              item.category === 'Others' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase()))
+                            ).length > 0 && (
+                              <div className="pt-2">
+                                <div className="px-2 py-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-800 bg-indigo-50 rounded-md mb-1 flex items-center justify-between">
+                                  <span>Others & Professional Fees</span>
+                                  <span className="font-mono text-[9px] font-bold text-indigo-700">
+                                    {editUnifiedServiceCatalog.filter(item => item.category === 'Others' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase()))).length} items
+                                  </span>
+                                </div>
+                                <div className="space-y-0.5">
+                                  {editUnifiedServiceCatalog
+                                    .filter(item => item.category === 'Others' && (!editServiceSearchTerm.trim() || item.name.toLowerCase().includes(editServiceSearchTerm.toLowerCase()) || item.code.toLowerCase().includes(editServiceSearchTerm.toLowerCase())))
+                                    .map(item => (
+                                      <button
+                                        key={item.code}
+                                        type="button"
+                                        onClick={() => handleSelectEditUnifiedItem(item)}
+                                        className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50/80 rounded-lg flex items-center justify-between gap-2 group transition-colors cursor-pointer"
+                                      >
+                                        <span className="font-semibold text-slate-800 group-hover:text-indigo-900 truncate text-[11px]">
+                                          {item.name}
+                                        </span>
+                                        {item.defaultAmount > 0 && (
+                                          <span
+                                            className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold shadow-2xs ${
+                                              item.amountSource === 'Client Payables'
+                                                ? 'bg-amber-100 text-amber-900 border border-amber-300 ring-1 ring-amber-200'
+                                                : item.amountSource === 'Client Retainer Profile'
+                                                ? 'bg-indigo-100 text-indigo-900 border border-indigo-300 ring-1 ring-indigo-200'
+                                                : 'bg-slate-100 text-slate-700 border border-slate-300'
+                                            }`}
+                                            title={item.sourceDetail || `Amount originated from ${item.amountSource || 'Preset'}`}
+                                          >
+                                            <span className="font-mono font-extrabold">₱{item.defaultAmount.toLocaleString()}</span>
+                                            {item.amountSource && (
+                                              <span className="text-[9px] font-normal opacity-85">
+                                                ({item.amountSource === 'Client Payables' ? 'from Client Payables' : item.amountSource === 'Client Retainer Profile' ? 'from Client Profile' : 'from Saved Preset'})
+                                              </span>
+                                            )}
+                                          </span>
+                                        )}
+                                      </button>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+
+                          </div>
+
+                          {/* Bottom Create Custom Item Footer Button / Form Toggle */}
+                          <div className="p-2.5 bg-slate-50 border-t border-slate-200">
+                            {!showEditCreateCustomSection ? (
+                              <button
+                                type="button"
+                                onClick={() => setShowEditCreateCustomSection(true)}
+                                className="w-full py-1.5 px-3 bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                              >
+                                <PlusCircle className="w-3.5 h-3.5 text-emerald-600" />
+                                <span>+ Create Another / Custom Item</span>
+                              </button>
+                            ) : (
+                              <div className="p-2.5 bg-white border border-slate-200 rounded-lg space-y-2 text-xs shadow-xs">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-slate-800 text-[11px]">Create New Custom Item</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowEditCreateCustomSection(false)}
+                                    className="text-slate-400 hover:text-slate-600"
+                                  >
+                                    <X className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                                <div>
+                                  <input
+                                    type="text"
+                                    placeholder="Item Description (e.g. Service Charge)"
+                                    value={editCustomItemName}
+                                    onChange={e => setEditCustomItemName(e.target.value)}
+                                    className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
+                                </div>
+                                <div className="grid grid-cols-2 gap-1.5">
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="text"
+                                      placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
+                                      value={editCustomItemPeriod}
+                                      onChange={e => setEditCustomItemPeriod(e.target.value)}
+                                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const client = clients.find(c => c.id === selectedInvoice?.clientId);
+                                        const defaultRate = client?.monthlyRetainerFee || 0;
+                                        setPeriodCoverageModal({
+                                          isOpen: true,
+                                          itemIndex: -1,
+                                          itemDescription: editCustomItemName || 'Custom Item',
+                                          currentPeriod: editCustomItemPeriod || '',
+                                          currentAmount: editCustomItemAmount || 0,
+                                          defaultMonthlyRate: defaultRate,
+                                          targetList: 'edit-custom',
+                                        });
+                                      }}
+                                      className="p-1 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
+                                      title="Open Multi-Month / Period Coverage Builder"
+                                    >
+                                      <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
+                                    </button>
+                                  </div>
+                                  <CurrencyInput
+                                    placeholder="Amount (₱)"
+                                    value={editCustomItemAmount}
+                                    onChange={val => setEditCustomItemAmount(val)}
+                                    className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between pt-1">
+                                  <label className="flex items-center gap-1.5 text-[10px] text-slate-600 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={saveEditCustomForFuture}
+                                      onChange={e => setSaveEditCustomForFuture(e.target.checked)}
+                                      className="rounded text-emerald-600 focus:ring-0"
+                                    />
+                                    <span>Save to presets</span>
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCreateEditCustomItem()}
+                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-md shadow-2xs cursor-pointer"
+                                  >
+                                    Add Line
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
                 <div className="grid grid-cols-12 gap-2 text-[11px] font-bold text-slate-700 px-1 mb-1">
                   <div className="col-span-5">Item / Service Description</div>
                   <div className="col-span-4">Month and Year</div>
@@ -5615,6 +6975,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                               currentPeriod: s.monthYear || '',
                               currentAmount: s.amount || 0,
                               defaultMonthlyRate: defaultRate,
+                              initialDivideToMonths: s.divideToMonths !== undefined ? s.divideToMonths : true,
                               targetList: 'edit',
                             });
                           }}
@@ -6207,11 +7568,17 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
           currentPeriod={periodCoverageModal.currentPeriod}
           currentAmount={periodCoverageModal.currentAmount}
           defaultMonthlyRate={periodCoverageModal.defaultMonthlyRate}
-          onApply={(periodText, newAmount, coveredMonths, monthlyRate) => {
+          initialDivideToMonths={periodCoverageModal.initialDivideToMonths}
+          onApply={(periodText, newAmount, coveredMonths, monthlyRate, divideToMonths) => {
             if (periodCoverageModal.targetList === 'custom') {
               setCustomItemPeriod(periodText);
               if (newAmount !== undefined) {
                 setCustomItemAmount(newAmount);
+              }
+            } else if (periodCoverageModal.targetList === 'edit-custom') {
+              setEditCustomItemPeriod(periodText);
+              if (newAmount !== undefined) {
+                setEditCustomItemAmount(newAmount);
               }
             } else if (periodCoverageModal.targetList === 'edit') {
               const updated = [...editServices];
@@ -6221,7 +7588,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   monthYear: periodText,
                   amount: newAmount !== undefined ? newAmount : updated[periodCoverageModal.itemIndex].amount,
                   coveredMonths: coveredMonths,
-                  monthlyRate: monthlyRate
+                  monthlyRate: monthlyRate,
+                  divideToMonths: divideToMonths
                 };
                 setEditServices(updated);
               }
@@ -6236,7 +7604,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   amount: finalAmt,
                   unitPrice: finalAmt,
                   coveredMonths: coveredMonths,
-                  monthlyRate: monthlyRate
+                  monthlyRate: monthlyRate,
+                  divideToMonths: divideToMonths
                 };
 
                 // Duplicate Check on Apply

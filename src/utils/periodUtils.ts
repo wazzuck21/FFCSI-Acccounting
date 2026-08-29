@@ -207,6 +207,15 @@ export function getMonthlyBreakdown(line: InvoiceServiceLine): Array<{ month: st
     }];
   }
 
+  // If divideToMonths is explicitly false, it is billed as a single lump-sum / not divided per month
+  if (line.divideToMonths === false) {
+    return [{
+      month: line.monthYear || `${months[0]} – ${months[months.length - 1]}`,
+      amount: totalAmount,
+      description: line.description
+    }];
+  }
+
   // Distribute equally with precise 2-decimal rounding
   const basePerMonth = Math.floor((totalAmount / months.length) * 100) / 100;
   let remaining = Math.round((totalAmount - basePerMonth * months.length) * 100) / 100;

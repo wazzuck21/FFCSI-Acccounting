@@ -21,11 +21,14 @@ import {
   Banknote,
   CreditCard,
   Database,
-  BarChart3
+  BarChart3,
+  UserCheck2,
+  UserSquare2
 } from 'lucide-react';
 
 export type NavTab = 
   | 'dashboard' 
+  | 'profile'
   | 'executive-bi'
   | 'my-clients'
   | 'clients' 
@@ -64,6 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const menuItems: { id: NavTab; label: string; icon: any; permissionKey?: any; badge?: number; highlight?: boolean }[] = [
     { id: 'dashboard', label: 'Operations Dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' },
+    { id: 'profile', label: 'My Profile & Directory', icon: UserSquare2, highlight: true },
     { id: 'executive-bi', label: 'Executive BI Analytics', icon: BarChart3, permissionKey: 'reports', highlight: true },
     { id: 'my-clients', label: 'My Clients (To-Do List)', icon: Briefcase, permissionKey: 'clients' },
     { id: 'clients', label: 'Client Management', icon: Building2, permissionKey: 'clients' },

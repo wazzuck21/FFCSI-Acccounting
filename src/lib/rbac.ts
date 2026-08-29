@@ -170,3 +170,67 @@ export function can(
       return true;
   }
 }
+
+/**
+ * Checks whether a user has permission to access / file a specific BIR tax return for a client
+ */
+export function canAccessClientBIR(
+  user: User | null | undefined,
+  clientId: string,
+  birCode: string
+): boolean {
+  if (!user) return false;
+  const role = normalizeUserRole(user.role);
+  if (role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR') return true;
+
+  // 1. If user has company restrictions and this company is not assigned
+  if (user.permissions.clientAccessList && user.permissions.clientAccessList.length > 0) {
+    if (!user.permissions.clientAccessList.includes(clientId)) {
+      return false;
+    }
+  }
+
+  // 2. Check granular service permissions for this company
+  const companyPerm = user.permissions.clientServicePermissions?.[clientId];
+  if (companyPerm) {
+    if (companyPerm.allowAllBIR) return true;
+    const cleanCode = (birCode || '').trim().toUpperCase();
+    return (companyPerm.allowedBIR || []).some(
+      b => b.trim().toUpperCase() === cleanCode || cleanCode.includes(b.trim().toUpperCase())
+    );
+  }
+
+  return true;
+}
+
+/**
+ * Checks whether a user has permission to access / file a specific Statutory Benefit for a client
+ */
+export function canAccessClientBenefit(
+  user: User | null | undefined,
+  clientId: string,
+  benefitName: string
+): boolean {
+  if (!user) return false;
+  const role = normalizeUserRole(user.role);
+  if (role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR') return true;
+
+  // 1. If user has company restrictions and this company is not assigned
+  if (user.permissions.clientAccessList && user.permissions.clientAccessList.length > 0) {
+    if (!user.permissions.clientAccessList.includes(clientId)) {
+      return false;
+    }
+  }
+
+  // 2. Check granular service permissions for this company
+  const companyPerm = user.permissions.clientServicePermissions?.[clientId];
+  if (companyPerm) {
+    if (companyPerm.allowAllBenefits) return true;
+    const cleanName = (benefitName || '').trim().toLowerCase();
+    return (companyPerm.allowedBenefits || []).some(
+      b => b.trim().toLowerCase() === cleanName || cleanName.includes(b.trim().toLowerCase())
+    );
+  }
+
+  return true;
+}

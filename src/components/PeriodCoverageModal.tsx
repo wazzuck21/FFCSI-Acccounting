@@ -9,7 +9,8 @@ interface PeriodCoverageModalProps {
   currentPeriod: string;
   currentAmount: number;
   defaultMonthlyRate?: number;
-  onApply: (periodText: string, newAmount?: number, coveredMonths?: string[], monthlyRate?: number) => void;
+  initialDivideToMonths?: boolean;
+  onApply: (periodText: string, newAmount?: number, coveredMonths?: string[], monthlyRate?: number, divideToMonths?: boolean) => void;
 }
 
 const MONTH_NAMES = [
@@ -31,6 +32,7 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
   currentPeriod,
   currentAmount,
   defaultMonthlyRate = 0,
+  initialDivideToMonths = true,
   onApply,
 }) => {
   const [activeTab, setActiveTab] = useState<'range' | 'discrete' | 'quarterly' | 'annual'>('range');
@@ -60,6 +62,9 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
   const [fromAnnualYear, setFromAnnualYear] = useState<number>(currentYearNum - 1);
   const [toAnnualYear, setToAnnualYear] = useState<number>(currentYearNum);
 
+  // Divide across covered months selector ⭐
+  const [divideToMonths, setDivideToMonths] = useState<boolean>(initialDivideToMonths);
+
   // Smart Multiplier state
   const initialBaseRate = currentAmount > 0 ? currentAmount : (defaultMonthlyRate > 0 ? defaultMonthlyRate : 0);
   const [baseRate, setBaseRate] = useState<number>(initialBaseRate);
@@ -73,8 +78,9 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
       const base = currentAmount > 0 ? currentAmount : (defaultMonthlyRate > 0 ? defaultMonthlyRate : 0);
       setBaseRate(base);
       setIsCustomAmountManual(false);
+      setDivideToMonths(initialDivideToMonths !== undefined ? initialDivideToMonths : true);
     }
-  }, [isOpen, currentAmount, defaultMonthlyRate]);
+  }, [isOpen, currentAmount, defaultMonthlyRate, initialDivideToMonths]);
 
   if (!isOpen) return null;
 
@@ -169,17 +175,20 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
     }
   }
 
-  // Calculate suggested amount
-  const autoCalculatedTotal = baseRate * multiplierCount;
+  // Calculate suggested amount:
+  // If divideToMonths is true, the total is baseRate * multiplierCount (or custom amount).
+  // If divideToMonths is false (lump sum / single charge), default total amount can just be baseRate (or custom amount).
+  const autoCalculatedTotal = divideToMonths ? (baseRate * multiplierCount) : baseRate;
   const finalAmountToDisplay = isCustomAmountManual ? customFinalAmount : autoCalculatedTotal;
-  const perMonthBreakdownAmt = coveredMonths.length > 0 ? finalAmountToDisplay / coveredMonths.length : finalAmountToDisplay;
+  const perMonthBreakdownAmt = (divideToMonths && coveredMonths.length > 0) ? (finalAmountToDisplay / coveredMonths.length) : finalAmountToDisplay;
 
   const handleApply = () => {
     onApply(
       periodText, 
       applyCalculatedAmount ? finalAmountToDisplay : undefined,
       coveredMonths,
-      perMonthBreakdownAmt
+      perMonthBreakdownAmt,
+      divideToMonths
     );
     onClose();
   };
@@ -598,7 +607,7 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
         )}
 
         {/* SMART MULTIPLIER & AMOUNT CALCULATION CARD ⭐ */}
-        <div className="p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-2.5">
+        <div className="p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-indigo-950 flex items-center gap-1.5">
               <Calculator className="w-3.5 h-3.5 text-indigo-600" />
@@ -609,10 +618,74 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
             </span>
           </div>
 
+          {/* DIVIDE TO MONTHS TOGGLE SELECTOR ⭐ */}
+          {coveredMonths.length > 1 && (
+            <div className="p-2.5 bg-white rounded-xl border border-indigo-100 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-800 block">
+                    Distribution Mode across {coveredMonths.length} Months
+                  </span>
+                  <span className="text-[10px] text-slate-500 block">
+                    Choose whether to divide the amount across each covered month or bill as a single amount.
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDivideToMonths(true);
+                  }}
+                  className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    divideToMonths 
+                      ? 'bg-emerald-50/90 border-emerald-500 ring-2 ring-emerald-500/20 text-emerald-950 shadow-2xs' 
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[11px] flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${divideToMonths ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      Divide to Months
+                    </span>
+                    {divideToMonths && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1">
+                    Multiplies base rate by {multiplierCount} {unitLabel} (₱{(baseRate * multiplierCount).toLocaleString()}), apportioning ₱{baseRate.toLocaleString()}/mo in records.
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDivideToMonths(false);
+                  }}
+                  className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    !divideToMonths 
+                      ? 'bg-indigo-50/90 border-indigo-500 ring-2 ring-indigo-500/20 text-indigo-950 shadow-2xs' 
+                      : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100/80'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[11px] flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${!divideToMonths ? 'bg-indigo-500' : 'bg-slate-300'}`} />
+                      Do Not Divide (Fixed Total)
+                    </span>
+                    {!divideToMonths && <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0" />}
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1">
+                    Single lump-sum total payable (₱{baseRate.toLocaleString()}) covering the whole period without multiplying per month.
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[10px] font-bold text-indigo-800 mb-1">
-                Base Rate (Per {activeTab === 'quarterly' ? 'Quarter' : activeTab === 'annual' ? 'Year' : 'Month'})
+                {divideToMonths ? `Base Rate (Per ${activeTab === 'quarterly' ? 'Quarter' : activeTab === 'annual' ? 'Year' : 'Month'})` : 'Fixed Lump-Sum Rate'}
               </label>
               <CurrencyInput
                 value={baseRate}
@@ -645,7 +718,11 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
           {/* Formula calculation preview */}
           <div className="flex items-center justify-between text-[11px] bg-white/90 p-2 rounded-lg border border-indigo-100">
             <span className="text-slate-600">
-              Calculation: <strong className="font-mono text-slate-900">₱{baseRate.toLocaleString()}</strong> × <strong className="font-semibold text-indigo-700">{multiplierCount} {unitLabel}</strong>
+              {divideToMonths ? (
+                <>Calculation: <strong className="font-mono text-slate-900">₱{baseRate.toLocaleString()}</strong> × <strong className="font-semibold text-indigo-700">{multiplierCount} {unitLabel}</strong></>
+              ) : (
+                <>Calculation: Fixed lump-sum <strong className="font-mono text-slate-900">₱{baseRate.toLocaleString()}</strong> across entire span</>
+              )}
             </span>
             <span className="font-mono font-bold text-emerald-700 text-xs">
               = ₱{autoCalculatedTotal.toLocaleString()}
@@ -672,7 +749,7 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
                 Ledger & Records Monthly Breakdown ({coveredMonths.length} Months):
               </span>
               <span className="text-[10px] text-emerald-800 font-semibold bg-emerald-100/80 px-2 py-0.5 rounded-md">
-                1 Consolidated SOA Line
+                {divideToMonths ? 'Divided Across Months' : 'Single Lump-Sum Period'}
               </span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 max-h-32 overflow-y-auto pr-1">
@@ -680,13 +757,21 @@ export const PeriodCoverageModal: React.FC<PeriodCoverageModalProps> = ({
                 <div key={idx} className="bg-white px-2 py-1.5 rounded-lg border border-emerald-100 flex items-center justify-between text-[10px]">
                   <span className="text-slate-700 font-medium truncate mr-1">{m}</span>
                   <span className="font-mono font-bold text-emerald-800 shrink-0">
-                    ₱{perMonthBreakdownAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {divideToMonths ? (
+                      `₱${perMonthBreakdownAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    ) : (
+                      'Lump-Sum'
+                    )}
                   </span>
                 </div>
               ))}
             </div>
             <p className="text-[10px] text-emerald-700">
-              * On the SOA, this appears as one consolidated line (<strong>{periodText}</strong>). In your records and financial reports, each month is accounted as <strong>₱{perMonthBreakdownAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>.
+              {divideToMonths ? (
+                <>* On the SOA, this appears as one consolidated line (<strong>{periodText}</strong>). In your records and financial reports, each month is accounted as <strong>₱{perMonthBreakdownAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>.</>
+              ) : (
+                <>* On the SOA, this appears as one consolidated line (<strong>{periodText}</strong>) with a total of <strong>₱{finalAmountToDisplay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> and is not divided per month.</>
+              )}
             </p>
           </div>
         )}

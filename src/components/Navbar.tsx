@@ -14,15 +14,18 @@ import {
   ShieldCheck, 
   Sparkles,
   Search,
-  Menu
+  Menu,
+  KeyRound,
+  UserSquare2
 } from 'lucide-react';
 
 interface NavbarProps {
   onSearchQuery?: (q: string) => void;
   onToggleMobileMenu?: () => void;
+  onNavigateToProfile?: () => void;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMenu }) => {
+export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMenu, onNavigateToProfile }) => {
   const { currentUser, allUsers, quickSwitchUser, logout, isSuperAdmin, sessionMinutesRemaining } = useAuth();
   const { syncStatus } = useData();
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -151,6 +154,23 @@ export const Navbar: React.FC<NavbarProps> = ({ onSearchQuery, onToggleMobileMen
                     </span>
                   </div>
                 </div>
+
+                {/* Direct Profile & Security Actions */}
+                {onNavigateToProfile && (
+                  <div className="p-1 border-b border-slate-100 space-y-0.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onNavigateToProfile();
+                        setShowUserDropdown(false);
+                      }}
+                      className="w-full text-left px-3 py-2 rounded-lg text-slate-800 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 font-bold transition-colors cursor-pointer"
+                    >
+                      <UserSquare2 className="w-4 h-4 text-blue-600" />
+                      <span>My Profile & Employee Directory</span>
+                    </button>
+                  </div>
+                )}
 
                 {/* Switch User Helper */}
                 <div className="px-3 py-2 border-b border-slate-100">

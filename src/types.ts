@@ -495,6 +495,7 @@ export interface InvoiceServiceLine {
   description: string;
   monthYear?: string;
   coveredMonths?: string[]; // e.g. ["July 2026", "August 2026", "September 2026"] ⭐
+  divideToMonths?: boolean; // Whether the payable is divided equally across the covered months (true) or billed as a single lump-sum / per-month full payable (false) ⭐
   monthlyRate?: number; // e.g. 1000 per month ⭐
   unitPrice?: number;
   quantity?: number;
@@ -833,6 +834,19 @@ export interface BillingTemplateConfig {
 // INTERNAL FIRM PAYROLL, LEAVE & VALE TYPES ⭐
 // ==========================================
 
+export type EmploymentType = 
+  | 'Regular' 
+  | 'Probationary' 
+  | 'Contractual' 
+  | 'Part-time' 
+  | 'OJT / Intern' 
+  | 'Temp / Daily Paid';
+
+export type SalaryBasis = 
+  | 'Monthly Fixed' 
+  | 'Daily (No Work, No Pay)' 
+  | 'OJT / Daily Allowance';
+
 export interface CompanyEmployee {
   id: string;
   employeeNo: string; // e.g. "EMP-001"
@@ -840,10 +854,23 @@ export interface CompanyEmployee {
   position: string;
   department: string; // e.g., 'Accounting', 'Tax & Audit', 'Billing', 'Admin & HR'
   dateHired: string; // YYYY-MM-DD
-  employmentType: 'Regular' | 'Probationary' | 'Contractual' | 'Part-time';
+  employmentType: EmploymentType;
+  
+  // Salary & Pay Structure
+  salaryBasis?: SalaryBasis; // Defaults to 'Monthly Fixed' or 'Daily (No Work, No Pay)'
   monthlyBasicSalary: number;
-  dailyRate: number; // Defaults to monthlyBasicSalary / 22
+  dailyRate: number; // Defaults to monthlyBasicSalary / 22 or direct daily rate
   hourlyRate: number; // Defaults to dailyRate / 8
+  
+  // OJT / Intern & Temp Employee (No Work, No Pay) Setup ⭐
+  isNoWorkNoPay?: boolean; // When true, pay is computed strictly as Days Worked * Daily Rate
+  exemptFromStatutory?: boolean; // When true (e.g. OJT Trainee Stipend under DOLE/CHED rules), no SSS/PHIC/HDMF/Tax deduction
+  schoolOrUniversity?: string; // e.g. "UST - AMV College of Accountancy", "PUP", "DLSU"
+  internshipRequiredHours?: number; // e.g. 400 hours
+  internshipRenderedHours?: number; // e.g. 180 hours
+  supervisorMentor?: string; // e.g. "Maria Teresa Santos (Managing Partner)"
+  contractEndDate?: string; // YYYY-MM-DD for temporary or internship completion
+  dailyAllowance?: number; // Optional meal / transportation allowance per day
   
   // Statutory Numbers & Account details
   tinNumber: string;
@@ -853,7 +880,7 @@ export interface CompanyEmployee {
   bankName: string; // e.g., "BDO", "GCash", "Maya", "BPI"
   accountNumber: string;
   
-  status: 'Active' | 'On Leave' | 'Resigned' | 'Terminated';
+  status: 'Active' | 'On Leave' | 'Resigned' | 'Terminated' | 'Completed';
   
   // Leave Balances (Days)
   silBalance: number; // Service Incentive Leave (DOLE statutory 5 days)
@@ -898,10 +925,15 @@ export interface ValeRepayment {
   remarks: string;
 }
 
+export type AdvanceType = 'Cash Advance' | 'Vale';
+export type RepaymentMode = 'Full Next Cutoff' | 'Installment';
+
 export interface ValeRecord {
   id: string;
   employeeId: string;
   employeeName: string;
+  advanceType?: AdvanceType; // 'Cash Advance' = Pay full next cutoff | 'Vale' = Monthly/Semi-monthly Cutoff Deduction
+  repaymentMode?: RepaymentMode; // 'Full Next Cutoff' | 'Installment'
   amountGiven: number;
   dateGiven: string;
   purpose: string;
@@ -909,6 +941,7 @@ export interface ValeRecord {
   remainingBalance: number;
   status: 'Active' | 'Fully Paid' | 'Cancelled';
   repayments: ValeRepayment[];
+  approvedBy?: string;
   createdAt: string;
 }
 

@@ -5,6 +5,77 @@ import { parseTimeToMinutes } from '../lib/dolePayroll';
 // Local storage key for custom/imported Cutoff Attendance reports
 const ATTENDANCE_STORE_KEY = 'afms_custom_cutoff_attendance';
 
+export interface StandardCutoffOption {
+  label: string;
+  period: string;
+  periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
+  defaultPayDate: string;
+  monthName: string;
+  year: number;
+  isCurrent?: boolean;
+}
+
+export const STANDARD_CUTOFF_PERIODS: StandardCutoffOption[] = [
+  // 2026 Primary Cutoffs
+  { label: 'August 16-31, 2026 (2nd Half)', period: 'August 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-08-31', monthName: 'August', year: 2026, isCurrent: true },
+  { label: 'August 1-15, 2026 (1st Half)', period: 'August 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-08-15', monthName: 'August', year: 2026 },
+  { label: 'September 1-15, 2026 (1st Half)', period: 'September 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-09-15', monthName: 'September', year: 2026 },
+  { label: 'September 16-30, 2026 (2nd Half)', period: 'September 16-30, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-09-30', monthName: 'September', year: 2026 },
+  { label: 'October 1-15, 2026 (1st Half)', period: 'October 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-10-15', monthName: 'October', year: 2026 },
+  { label: 'October 16-31, 2026 (2nd Half)', period: 'October 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-10-31', monthName: 'October', year: 2026 },
+  { label: 'November 1-15, 2026 (1st Half)', period: 'November 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-11-15', monthName: 'November', year: 2026 },
+  { label: 'November 16-30, 2026 (2nd Half)', period: 'November 16-30, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-11-30', monthName: 'November', year: 2026 },
+  { label: 'December 1-15, 2026 (1st Half)', period: 'December 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-12-15', monthName: 'December', year: 2026 },
+  { label: 'December 16-31, 2026 (2nd Half)', period: 'December 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-12-31', monthName: 'December', year: 2026 },
+  { label: 'July 16-31, 2026 (2nd Half)', period: 'July 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-07-31', monthName: 'July', year: 2026 },
+  { label: 'July 1-15, 2026 (1st Half)', period: 'July 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-07-15', monthName: 'July', year: 2026 },
+  { label: 'June 16-30, 2026 (2nd Half)', period: 'June 16-30, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-06-30', monthName: 'June', year: 2026 },
+  { label: 'June 1-15, 2026 (1st Half)', period: 'June 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-06-15', monthName: 'June', year: 2026 },
+  { label: 'May 16-31, 2026 (2nd Half)', period: 'May 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-05-31', monthName: 'May', year: 2026 },
+  { label: 'May 1-15, 2026 (1st Half)', period: 'May 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-05-15', monthName: 'May', year: 2026 },
+  { label: 'April 16-30, 2026 (2nd Half)', period: 'April 16-30, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-04-30', monthName: 'April', year: 2026 },
+  { label: 'April 1-15, 2026 (1st Half)', period: 'April 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-04-15', monthName: 'April', year: 2026 },
+  { label: 'March 16-31, 2026 (2nd Half)', period: 'March 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-03-31', monthName: 'March', year: 2026 },
+  { label: 'March 1-15, 2026 (1st Half)', period: 'March 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-03-15', monthName: 'March', year: 2026 },
+  { label: 'February 16-28, 2026 (2nd Half)', period: 'February 16-28, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-02-28', monthName: 'February', year: 2026 },
+  { label: 'February 1-15, 2026 (1st Half)', period: 'February 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-02-15', monthName: 'February', year: 2026 },
+  { label: 'January 16-31, 2026 (2nd Half)', period: 'January 16-31, 2026', periodType: '2nd Half (16-30/31)', defaultPayDate: '2026-01-31', monthName: 'January', year: 2026 },
+  { label: 'January 1-15, 2026 (1st Half)', period: 'January 1-15, 2026', periodType: '1st Half (1-15)', defaultPayDate: '2026-01-15', monthName: 'January', year: 2026 },
+  // Monthly Cutoffs
+  { label: 'August 1-31, 2026 (Monthly Full)', period: 'August 1-31, 2026', periodType: 'Monthly', defaultPayDate: '2026-08-31', monthName: 'August', year: 2026 },
+  { label: 'July 1-31, 2026 (Monthly Full)', period: 'July 1-31, 2026', periodType: 'Monthly', defaultPayDate: '2026-07-31', monthName: 'July', year: 2026 },
+  { label: 'September 1-30, 2026 (Monthly Full)', period: 'September 1-30, 2026', periodType: 'Monthly', defaultPayDate: '2026-09-30', monthName: 'September', year: 2026 },
+  { label: 'October 1-31, 2026 (Monthly Full)', period: 'October 1-31, 2026', periodType: 'Monthly', defaultPayDate: '2026-10-31', monthName: 'October', year: 2026 }
+];
+
+export function inferPeriodDetails(periodStr: string): {
+  periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
+  defaultPayDate: string;
+} {
+  const match = STANDARD_CUTOFF_PERIODS.find(o => 
+    o.period.toLowerCase() === periodStr.toLowerCase().trim() || 
+    o.label.toLowerCase() === periodStr.toLowerCase().trim()
+  );
+  if (match) {
+    return {
+      periodType: match.periodType,
+      defaultPayDate: match.defaultPayDate
+    };
+  }
+
+  let periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly' = '1st Half (1-15)';
+  if (periodStr.includes('16-') || periodStr.includes('16 -') || periodStr.includes('2nd Half')) {
+    periodType = '2nd Half (16-30/31)';
+  } else if (periodStr.includes('Monthly') || periodStr.includes('1-30') || periodStr.includes('1-31')) {
+    periodType = 'Monthly';
+  }
+
+  return {
+    periodType,
+    defaultPayDate: new Date().toISOString().split('T')[0]
+  };
+}
+
 /**
  * Storage helpers for persisting uploaded or edited Cutoff Attendance Reports
  */
@@ -169,12 +240,14 @@ export function computeDailyAttendanceMetrics(
   const cleanPmIn = pmInStr?.trim() || '';
   const cleanPmOut = pmOutStr?.trim() || '';
 
-  // Effective time in and out
-  const effectiveInStr = cleanAmIn || cleanPmIn;
-  const effectiveOutStr = cleanPmOut || cleanAmOut;
+  // Parse individually with proper AM / PM column hints:
+  const parsedAmIn = parseTimeToMinutes(cleanAmIn, false);
+  const parsedAmOut = parseTimeToMinutes(cleanAmOut, false);
+  const parsedPmIn = parseTimeToMinutes(cleanPmIn, true);
+  const parsedPmOut = parseTimeToMinutes(cleanPmOut, true);
 
-  const inMins = parseTimeToMinutes(effectiveInStr);
-  let outMins = parseTimeToMinutes(effectiveOutStr);
+  const inMins = parsedAmIn !== null ? parsedAmIn : parsedPmIn;
+  let outMins = parsedPmOut !== null ? parsedPmOut : parsedAmOut;
 
   const hasLogs = inMins !== null && outMins !== null;
 

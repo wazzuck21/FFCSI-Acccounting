@@ -713,6 +713,7 @@ export function generatePaymentCollectionReceiptPDF(
     preparedBy?: string;
     checkNo?: string;
     clientAddress?: string;
+    showWatermark?: boolean;
   }
 ) {
   const doc = new jsPDF({
@@ -731,6 +732,7 @@ export function generatePaymentCollectionReceiptPDF(
   const displayDate = inv.paymentDate || inv.issueDate || '05/08/2026';
   const preparedBy = customOptions?.preparedBy || 'Maricris';
   const clientAddress = customOptions?.clientAddress || (inv as any).clientAddress || 'Gen. Aguinaldo Hi-Way Panapaan V, Bacoor City';
+  const isWatermarkEnabled = customOptions?.showWatermark !== false;
 
   let y = 16;
 
@@ -993,6 +995,43 @@ export function generatePaymentCollectionReceiptPDF(
   // Bottom outer box
   doc.setLineWidth(0.5);
   doc.rect(margin, footerStartY, contentWidth, 24);
+
+  // Watermark for Payment Receipt (Only when Paid or Cancelled, and isWatermarkEnabled is true) ⭐
+  if (isWatermarkEnabled && (inv.status === 'Paid' || (inv.paidAmount !== undefined && inv.paidAmount >= (inv.totalAmount || 0) && (inv.totalAmount || 0) > 0))) {
+    try {
+      doc.saveGraphicsState();
+      if ((doc as any).setGState && (doc as any).GState) {
+        (doc as any).setGState(new (doc as any).GState({ opacity: 0.13 }));
+      }
+      doc.setTextColor(5, 150, 105); // Emerald-600
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(56);
+      doc.text('PAID', pageWidth / 2, 135, { align: 'center', angle: 30 });
+      doc.restoreGraphicsState();
+    } catch {
+      doc.setTextColor(167, 243, 208);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(56);
+      doc.text('PAID', pageWidth / 2, 135, { align: 'center', angle: 30 });
+    }
+  } else if (isWatermarkEnabled && inv.status === 'Cancelled') {
+    try {
+      doc.saveGraphicsState();
+      if ((doc as any).setGState && (doc as any).GState) {
+        (doc as any).setGState(new (doc as any).GState({ opacity: 0.13 }));
+      }
+      doc.setTextColor(225, 29, 72); // Rose-600
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(48);
+      doc.text('CANCELLED', pageWidth / 2, 135, { align: 'center', angle: 30 });
+      doc.restoreGraphicsState();
+    } catch {
+      doc.setTextColor(254, 205, 211);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(48);
+      doc.text('CANCELLED', pageWidth / 2, 135, { align: 'center', angle: 30 });
+    }
+  }
 
   const cleanClient = inv.clientName.replace(/[^a-zA-Z0-9]/g, '_');
   doc.save(`FFCSI_Payment_Collection_Receipt_${cleanCrNo}_${cleanClient}.pdf`);

@@ -24,6 +24,7 @@ interface AuthContextType {
   isSuperAdmin: boolean;
   updateUsers: (newUsers: User[]) => void;
   resetUserPassword: (userId: string, newPassword: string) => Promise<boolean>;
+  changePassword: (userId: string, currentPasswordInput: string, newPasswordInput: string) => Promise<{ success: boolean; message?: string }>;
   sessionMinutesRemaining: number;
 }
 
@@ -127,6 +128,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     updateUsers(updatedUsers);
     return true;
+  };
+
+  // Helper for users to change their own password with old password verification
+  const changePassword = async (userId: string, currentPasswordInput: string, newPasswordInput: string): Promise<{ success: boolean; message?: string }> => {
+    if (!newPasswordInput || newPasswordInput.length < 6) {
+      return { success: false, message: 'New password must be at least 6 characters long.' };
+    }
+
+    const targetUser = allUsers.find(u => u.id === userId);
+    if (!targetUser) {
+      return { success: false, message: 'User account not found.' };
+    }
+
+    // Verify current password unless user is Super Admin resetting without current
+    let isCurrentValid = false;
+    if (targetUser.passwordHash && targetUser.salt) {
+      isCurrentValid = await verifyPassword(currentPasswordInput, targetUser.passwordHash, targetUser.salt);
+    } else if (targetUser.password) {
+      isCurrentValid = targetUser.password === currentPasswordInput;
+    }
+
+    if (!isCurrentValid) {
+      return { success: false, message: 'Current password does not match our records.' };
+    }
+
+    const { hash, salt } = await hashPassword(newPasswordInput);
+    const updatedUsers = allUsers.map(u => {
+      if (u.id === userId) {
+        const { password, ...cleaned } = u;
+        return {
+          ...cleaned,
+          passwordHash: hash,
+          salt
+        };
+      }
+      return u;
+    });
+
+    updateUsers(updatedUsers);
+
+    // If current logged-in user changed their password, update active currentUser state
+    if (currentUser && currentUser.id === userId) {
+      setCurrentUser(prev => prev ? {
+        ...prev,
+        passwordHash: hash,
+        salt
+      } : null);
+    }
+
+    return { success: true, message: 'Password changed successfully! Updated across User Management & RBAC.' };
   };
 
   // Session Logout
@@ -351,6 +402,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isSuperAdmin,
         updateUsers,
         resetUserPassword,
+        changePassword,
         sessionMinutesRemaining
       }}
     >

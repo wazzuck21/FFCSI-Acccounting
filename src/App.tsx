@@ -21,6 +21,7 @@ import { MyClientsView } from './components/MyClientsView';
 import { MasterTablesView } from './components/MasterTablesView';
 import { CompanyPayrollView } from './components/CompanyPayrollView';
 import { CompanyExpensesView } from './components/CompanyExpensesView';
+import { UserProfileView } from './components/UserProfileView';
 import { TaskWorkflowView } from './components/TaskWorkflowView';
 import { DocumentLibraryView } from './components/DocumentLibraryView';
 import { DataIntegrityBackupView } from './components/DataIntegrityBackupView';
@@ -52,6 +53,7 @@ import {
 
 export const TAB_LABELS: Record<NavTab, string> = {
   'dashboard': 'Operations Dashboard',
+  'profile': 'My Profile & Directory',
   'executive-bi': 'Executive BI Analytics',
   'my-clients': 'My Clients (To-Do List)',
   'clients': 'Client Management',
@@ -96,6 +98,7 @@ const MainAppContent: React.FC = () => {
       <Navbar 
         onSearchQuery={setGlobalSearch} 
         onToggleMobileMenu={() => setMobileNavOpen(!mobileNavOpen)}
+        onNavigateToProfile={() => handleTabChange('profile')}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -113,6 +116,10 @@ const MainAppContent: React.FC = () => {
         <main className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-24 md:pb-8">
           {activeTab === 'dashboard' && (
             <DashboardView onNavigate={handleTabChange} />
+          )}
+
+          {activeTab === 'profile' && (
+            <UserProfileView onNavigateToTab={handleTabChange} />
           )}
 
           {activeTab === 'executive-bi' && (

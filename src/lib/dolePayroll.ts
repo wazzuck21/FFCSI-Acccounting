@@ -424,24 +424,52 @@ export interface ShiftOvertimeResult {
 }
 
 /**
- * Converts a flexible time string (e.g. "8:30 AM", "08:30", "22:00", "10:00 PM")
+ * Converts a flexible time string (e.g. "8:30 AM", "08:30", "22:00", "10:00 PM", "5:30", "1730")
  * into minutes from midnight (0 to 1440).
  */
-export function parseTimeToMinutes(timeStr: string): number | null {
+export function parseTimeToMinutes(timeStr: string, isPmColumnHint: boolean = false): number | null {
   if (!timeStr) return null;
   const clean = timeStr.trim().toUpperCase();
+  if (!clean || clean === '-' || clean === 'NULL' || clean === 'UNDEFINED' || clean === 'NONE') return null;
+
   const isPM = clean.includes('PM');
   const isAM = clean.includes('AM');
   const timeOnly = clean.replace(/AM|PM/g, '').trim();
-  const parts = timeOnly.split(':');
-  if (parts.length < 2) return null;
-  
-  let hours = parseInt(parts[0], 10);
-  const mins = parseInt(parts[1], 10);
+
+  let hours = 0;
+  let mins = 0;
+
+  if (timeOnly.includes(':')) {
+    const parts = timeOnly.split(':');
+    hours = parseInt(parts[0], 10);
+    mins = parseInt(parts[1], 10);
+  } else if (/^\d{3,4}$/.test(timeOnly)) {
+    if (timeOnly.length === 3) {
+      hours = parseInt(timeOnly.substring(0, 1), 10);
+      mins = parseInt(timeOnly.substring(1), 10);
+    } else {
+      hours = parseInt(timeOnly.substring(0, 2), 10);
+      mins = parseInt(timeOnly.substring(2), 10);
+    }
+  } else {
+    const parsedNum = parseInt(timeOnly, 10);
+    if (!isNaN(parsedNum) && parsedNum >= 1 && parsedNum <= 24) {
+      hours = parsedNum;
+      mins = 0;
+    } else {
+      return null;
+    }
+  }
+
   if (isNaN(hours) || isNaN(mins)) return null;
 
-  if (isPM && hours < 12) hours += 12;
-  if (isAM && hours === 12) hours = 0;
+  if (isPM && hours < 12) {
+    hours += 12;
+  } else if (!isAM && !isPM && isPmColumnHint && hours >= 1 && hours <= 11) {
+    hours += 12;
+  } else if (isAM && hours === 12) {
+    hours = 0;
+  }
 
   return hours * 60 + mins;
 }
@@ -592,6 +620,12 @@ export interface PayrollComputationInput {
   hourlyRateOverride?: number;
   periodType: '1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly';
   
+  // Pay Structure & OJT / Temp Setup ⭐
+  employmentType?: string;
+  salaryBasis?: string; // 'Monthly Fixed' | 'Daily (No Work, No Pay)' | 'OJT / Daily Allowance'
+  isNoWorkNoPay?: boolean;
+  exemptFromStatutory?: boolean;
+  
   daysWorked: number;
   daysAbsent: number;
   tardinessMinutes: number;
@@ -609,15 +643,36 @@ export interface PayrollComputationInput {
 
 export function computeEmployeePayslip(input: PayrollComputationInput) {
   const isSemiMonthly = input.periodType !== 'Monthly';
-  const semiMonthlyBasic = isSemiMonthly ? input.monthlyBasic / 2 : input.monthlyBasic;
   
-  // Company Standard: Daily Salary = Gross Monthly Income / 22 ⭐
+  // Determine if employee is daily paid ("No Work, No Pay" / OJT Stipend)
+  const isDailyPaid = Boolean(
+    input.isNoWorkNoPay || 
+    input.salaryBasis === 'Daily (No Work, No Pay)' || 
+    input.salaryBasis === 'OJT / Daily Allowance' ||
+    input.employmentType === 'OJT / Intern' || 
+    input.employmentType === 'Temp / Daily Paid'
+  );
+  
+  // Rate resolution
   const dailyRate = input.dailyRateOverride || Number((input.monthlyBasic / 22).toFixed(2));
   const hourlyRate = input.hourlyRateOverride || Number((dailyRate / 8).toFixed(2));
   const minuteRate = hourlyRate / 60;
   
+  // Basic Pay Computation:
+  // For Daily Paid / No Work No Pay: Basic = Days Worked * Daily Rate
+  // For Monthly Fixed Paid: Semi-monthly basic = Monthly / 2, with absences deduction for missed days
+  let semiMonthlyBasic: number;
+  let absencesDeduction: number;
+  
+  if (isDailyPaid) {
+    semiMonthlyBasic = Number((input.daysWorked * dailyRate).toFixed(2));
+    absencesDeduction = 0; // Unworked days simply yield no daily pay (no double deduction)
+  } else {
+    semiMonthlyBasic = isSemiMonthly ? input.monthlyBasic / 2 : input.monthlyBasic;
+    absencesDeduction = Number((input.daysAbsent * dailyRate).toFixed(2));
+  }
+  
   // Deductions from Attendance
-  const absencesDeduction = Number((input.daysAbsent * dailyRate).toFixed(2));
   const tardinessDeduction = Number((input.tardinessMinutes * minuteRate).toFixed(2));
   const undertimeDeduction = Number((input.undertimeMinutes * minuteRate).toFixed(2));
   
@@ -634,26 +689,41 @@ export function computeEmployeePayslip(input: PayrollComputationInput) {
     semiMonthlyBasic - absencesDeduction - tardinessDeduction - undertimeDeduction + totalOtEarnings + input.otherAllowances
   ).toFixed(2));
   
-  // Statutory Contributions (Split semi-monthly)
-  const fullSss = calculateSSSContribution(input.monthlyBasic);
-  const fullPhic = calculatePhilHealthContribution(input.monthlyBasic);
-  const fullHdmf = calculatePagIbigContribution(input.monthlyBasic);
+  // Statutory Contributions:
+  // Check if exempt (e.g. OJT Trainee Stipend under DOLE/CHED non-employee rules)
+  const isExempt = Boolean(input.exemptFromStatutory || input.employmentType === 'OJT / Intern');
   
-  const sssEE = isSemiMonthly ? Number((fullSss.ee / 2).toFixed(2)) : fullSss.ee;
-  const sssER = isSemiMonthly ? Number((fullSss.er / 2).toFixed(2)) : fullSss.er;
+  let sssEE = 0;
+  let sssER = 0;
+  let philHealthEE = 0;
+  let philHealthER = 0;
+  let pagIbigEE = 0;
+  let pagIbigER = 0;
+  let birWithholdingTax = 0;
   
-  const philHealthEE = isSemiMonthly ? Number((fullPhic.ee / 2).toFixed(2)) : fullPhic.ee;
-  const philHealthER = isSemiMonthly ? Number((fullPhic.er / 2).toFixed(2)) : fullPhic.er;
-  
-  const pagIbigEE = isSemiMonthly ? Number((fullHdmf.ee / 2).toFixed(2)) : fullHdmf.ee;
-  const pagIbigER = isSemiMonthly ? Number((fullHdmf.er / 2).toFixed(2)) : fullHdmf.er;
-  
-  // Taxable Income Calculation
-  const taxableIncome = Math.max(0, grossPay - sssEE - philHealthEE - pagIbigEE);
-  const taxResult = isSemiMonthly 
-    ? calculateSemiMonthlyBIRTax(taxableIncome)
-    : calculateMonthlyBIRTax(taxableIncome);
-  const birWithholdingTax = taxResult.tax;
+  if (!isExempt) {
+    const basisForContribution = isDailyPaid ? Math.max(input.monthlyBasic, grossPay * (isSemiMonthly ? 2 : 1)) : input.monthlyBasic;
+    
+    const fullSss = calculateSSSContribution(basisForContribution);
+    const fullPhic = calculatePhilHealthContribution(basisForContribution);
+    const fullHdmf = calculatePagIbigContribution(basisForContribution);
+    
+    sssEE = isSemiMonthly ? Number((fullSss.ee / 2).toFixed(2)) : fullSss.ee;
+    sssER = isSemiMonthly ? Number((fullSss.er / 2).toFixed(2)) : fullSss.er;
+    
+    philHealthEE = isSemiMonthly ? Number((fullPhic.ee / 2).toFixed(2)) : fullPhic.ee;
+    philHealthER = isSemiMonthly ? Number((fullPhic.er / 2).toFixed(2)) : fullPhic.er;
+    
+    pagIbigEE = isSemiMonthly ? Number((fullHdmf.ee / 2).toFixed(2)) : fullHdmf.ee;
+    pagIbigER = isSemiMonthly ? Number((fullHdmf.er / 2).toFixed(2)) : fullHdmf.er;
+    
+    // Taxable Income Calculation
+    const taxableIncome = Math.max(0, grossPay - sssEE - philHealthEE - pagIbigEE);
+    const taxResult = isSemiMonthly 
+      ? calculateSemiMonthlyBIRTax(taxableIncome)
+      : calculateMonthlyBIRTax(taxableIncome);
+    birWithholdingTax = taxResult.tax;
+  }
     
   const totalStatutoryEE = sssEE + philHealthEE + pagIbigEE + birWithholdingTax;
   const totalDeductions = Number((totalStatutoryEE + input.valeDeduction + input.otherDeductions).toFixed(2));

@@ -380,7 +380,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     async function loadStoredState() {
       const storedClients = await getLocalData<ClientProfile[]>('afms_clients');
-      if (storedClients) setClients(storedClients);
+      if (storedClients) {
+        const updatedStoredClients = storedClients.map(c => {
+          if (c.id === 'client_001' || c.companyName?.toLowerCase().includes('apex global logistics corp. (head office)')) {
+            if (c.retainersFee === 25000 || !c.retainersFee) {
+              return { ...c, retainersFee: 45000 };
+            }
+          }
+          return c;
+        });
+        setClients(updatedStoredClients);
+        persistState('afms_clients', updatedStoredClients);
+      }
 
       const storedSections = await getLocalData<DynamicSection[]>('afms_dynamic_sections');
       if (storedSections) setDynamicSections(storedSections);
@@ -3242,9 +3253,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // VALE (CASH ADVANCE) TRACKER ACTIONS ⭐
   // ==========================================
   const addValeRecord = (vale: Omit<ValeRecord, 'id' | 'createdAt' | 'repayments' | 'status'>) => {
+    const isCashAdvance = vale.advanceType === 'Cash Advance' || vale.repaymentMode === 'Full Next Cutoff';
     const newVale: ValeRecord = {
       ...vale,
       id: `vale_${Date.now()}`,
+      advanceType: vale.advanceType || (isCashAdvance ? 'Cash Advance' : 'Vale'),
+      repaymentMode: vale.repaymentMode || (isCashAdvance ? 'Full Next Cutoff' : 'Installment'),
+      cutoffDeductionAmount: isCashAdvance ? vale.amountGiven : (vale.cutoffDeductionAmount || 500),
       status: 'Active',
       remainingBalance: vale.amountGiven,
       repayments: [],
@@ -3259,7 +3274,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setEmployees(prev => {
       const updatedEmps = prev.map(e => {
         if (e.id === vale.employeeId) {
-          return { ...e, currentValeBalance: (e.currentValeBalance || 0) + vale.amountGiven, defaultValeDeduction: vale.cutoffDeductionAmount || e.defaultValeDeduction };
+          return { 
+            ...e, 
+            currentValeBalance: (e.currentValeBalance || 0) + vale.amountGiven, 
+            defaultValeDeduction: isCashAdvance ? (e.defaultValeDeduction || 500) : (vale.cutoffDeductionAmount || e.defaultValeDeduction) 
+          };
         }
         return e;
       });
@@ -3268,37 +3287,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const addValeRepayment = (valeId: string, amount: number, remarks: string, payrollCutoffLabel?: string) => {
-    const updatedVales = valeRecords.map(v => {
-      if (v.id === valeId) {
-        const newRepayment = {
-          id: `rep_${Date.now()}`,
-          date: new Date().toISOString().split('T')[0],
-          amountPaid: amount,
-          payrollCutoffLabel,
-          remarks
-        };
-        const newRem = Math.max(0, v.remainingBalance - amount);
-        const newStatus: ValeRecord['status'] = newRem === 0 ? 'Fully Paid' : 'Active';
-        return {
-          ...v,
-          remainingBalance: newRem,
-          status: newStatus,
-          repayments: [...v.repayments, newRepayment]
-        };
-      }
-      return v;
+  const addValeRepayment = (valeId: string, amount: number, remarks: string, payrollCutoffLabel?: string, payrollRunId?: string) => {
+    let targetEmpId = '';
+    setValeRecords(prev => {
+      const updatedVales = prev.map(v => {
+        if (v.id === valeId) {
+          targetEmpId = v.employeeId;
+          const newRepayment: ValeRepayment = {
+            id: `rep_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            date: new Date().toISOString().split('T')[0],
+            amountPaid: amount,
+            payrollRunId,
+            payrollCutoffLabel,
+            remarks
+          };
+          const newRem = Math.max(0, v.remainingBalance - amount);
+          const newStatus: ValeRecord['status'] = newRem === 0 ? 'Fully Paid' : 'Active';
+          return {
+            ...v,
+            remainingBalance: newRem,
+            status: newStatus,
+            repayments: [...v.repayments, newRepayment]
+          };
+        }
+        return v;
+      });
+      persistState('afms_vale_records', updatedVales);
+      return updatedVales;
     });
 
-    setValeRecords(updatedVales);
-    persistState('afms_vale_records', updatedVales);
-
     // Also reduce employee's total currentValeBalance
-    const targetVale = valeRecords.find(v => v.id === valeId);
-    if (targetVale) {
+    if (targetEmpId) {
       setEmployees(prev => {
         const updatedEmps = prev.map(e => {
-          if (e.id === targetVale.employeeId) {
+          if (e.id === targetEmpId) {
             return { ...e, currentValeBalance: Math.max(0, (e.currentValeBalance || 0) - amount) };
           }
           return e;
@@ -3310,15 +3332,149 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateValeRecord = (id: string, updates: Partial<ValeRecord>) => {
-    const updated = valeRecords.map(v => v.id === id ? { ...v, ...updates } : v);
-    setValeRecords(updated);
-    persistState('afms_vale_records', updated);
+    setValeRecords(prev => {
+      const updated = prev.map(v => v.id === id ? { ...v, ...updates } : v);
+      persistState('afms_vale_records', updated);
+      return updated;
+    });
   };
 
   const deleteValeRecord = (id: string) => {
-    const updated = valeRecords.filter(v => v.id !== id);
-    setValeRecords(updated);
-    persistState('afms_vale_records', updated);
+    setValeRecords(prev => {
+      const updated = prev.filter(v => v.id !== id);
+      persistState('afms_vale_records', updated);
+      return updated;
+    });
+  };
+
+  // Process Vale Deductions Automatically from Payroll Run ⭐
+  const processPayrollValeDeductions = (run: PayrollRun) => {
+    const valeItems = (run.items || []).filter(item => (item.valeDeduction || 0) > 0);
+    if (valeItems.length === 0) return;
+
+    setValeRecords(prevVales => {
+      let updatedVales = [...prevVales];
+      const employeeDeductionMap: Record<string, number> = {};
+
+      valeItems.forEach(item => {
+        const empId = item.employeeId;
+        const totalToDeduct = item.valeDeduction || 0;
+        let remainingNeeded = totalToDeduct;
+
+        // Find active vale records for this employee (oldest active first)
+        const activeValesForEmp = updatedVales.filter(
+          v => v.employeeId === empId && v.status === 'Active'
+        );
+
+        activeValesForEmp.forEach(vale => {
+          if (remainingNeeded <= 0) return;
+
+          // Prevent duplicate deduction for the exact same payroll run
+          const alreadyProcessed = vale.repayments.some(
+            r => r.payrollRunId === run.id || (r.payrollCutoffLabel === run.cutoffPeriod && r.remarks.includes(run.cutoffPeriod))
+          );
+          if (alreadyProcessed) return;
+
+          const deductAmount = Math.min(vale.remainingBalance, remainingNeeded);
+          if (deductAmount > 0) {
+            const newRepayment: ValeRepayment = {
+              id: `rep_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+              date: run.payDate || new Date().toISOString().split('T')[0],
+              amountPaid: deductAmount,
+              payrollRunId: run.id,
+              payrollCutoffLabel: run.cutoffPeriod,
+              remarks: `Payroll Auto-Deduction (${run.cutoffPeriod} • Pay Date: ${run.payDate})`
+            };
+
+            const newBalance = Math.max(0, vale.remainingBalance - deductAmount);
+            updatedVales = updatedVales.map(v => 
+              v.id === vale.id
+                ? {
+                    ...v,
+                    remainingBalance: newBalance,
+                    status: newBalance === 0 ? 'Fully Paid' : 'Active',
+                    repayments: [...v.repayments, newRepayment]
+                  }
+                : v
+            );
+
+            employeeDeductionMap[empId] = (employeeDeductionMap[empId] || 0) + deductAmount;
+            remainingNeeded -= deductAmount;
+          }
+        });
+      });
+
+      persistState('afms_vale_records', updatedVales);
+
+      // Atomically update employee currentValeBalance
+      setEmployees(prevEmps => {
+        const updatedEmps = prevEmps.map(emp => {
+          const deducted = employeeDeductionMap[emp.id];
+          if (deducted && deducted > 0) {
+            return {
+              ...emp,
+              currentValeBalance: Math.max(0, (emp.currentValeBalance || 0) - deducted)
+            };
+          }
+          return emp;
+        });
+        persistState('afms_employees', updatedEmps);
+        return updatedEmps;
+      });
+
+      return updatedVales;
+    });
+  };
+
+  // Revert Vale Deductions if a payroll run is deleted or unapproved ⭐
+  const revertPayrollValeDeductions = (runId: string, cutoffPeriod: string) => {
+    setValeRecords(prevVales => {
+      let updatedVales = [...prevVales];
+      const employeeRevertMap: Record<string, number> = {};
+
+      updatedVales = updatedVales.map(vale => {
+        const matchedReps = vale.repayments.filter(
+          r => r.payrollRunId === runId || (r.payrollCutoffLabel === cutoffPeriod && r.remarks.includes(cutoffPeriod))
+        );
+
+        if (matchedReps.length === 0) return vale;
+
+        const totalReverted = matchedReps.reduce((sum, r) => sum + r.amountPaid, 0);
+        const keptRepayments = vale.repayments.filter(
+          r => !(r.payrollRunId === runId || (r.payrollCutoffLabel === cutoffPeriod && r.remarks.includes(cutoffPeriod)))
+        );
+
+        const newBalance = Math.min(vale.amountGiven, vale.remainingBalance + totalReverted);
+        employeeRevertMap[vale.employeeId] = (employeeRevertMap[vale.employeeId] || 0) + totalReverted;
+
+        return {
+          ...vale,
+          remainingBalance: newBalance,
+          status: newBalance > 0 ? 'Active' : 'Fully Paid',
+          repayments: keptRepayments
+        };
+      });
+
+      persistState('afms_vale_records', updatedVales);
+
+      // Restore employee balance
+      setEmployees(prevEmps => {
+        const updatedEmps = prevEmps.map(emp => {
+          const reverted = employeeRevertMap[emp.id];
+          if (reverted && reverted > 0) {
+            return {
+              ...emp,
+              currentValeBalance: (emp.currentValeBalance || 0) + reverted
+            };
+          }
+          return emp;
+        });
+        persistState('afms_employees', updatedEmps);
+        return updatedEmps;
+      });
+
+      return updatedVales;
+    });
   };
 
   // ==========================================
@@ -3335,7 +3491,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPayrollRuns(updated);
     persistState('afms_payroll_runs', updated);
 
-    // If created directly as Approved or Paid, trigger Vale repayments if any item has valeDeduction > 0
+    // If created directly as Approved or Paid, trigger automated Vale deductions immediately
     if (newRun.status === 'Approved' || newRun.status === 'Paid') {
       processPayrollValeDeductions(newRun);
     }
@@ -3345,28 +3501,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const targetRun = payrollRuns.find(r => r.id === id);
     if (!targetRun) return;
 
+    const previousStatus = targetRun.status;
     const updatedRuns = payrollRuns.map(r => r.id === id ? { ...r, status, approvedBy: approvedBy || r.approvedBy } : r);
     setPayrollRuns(updatedRuns);
     persistState('afms_payroll_runs', updatedRuns);
 
-    if (status === 'Approved' || status === 'Paid') {
-      processPayrollValeDeductions(targetRun);
+    if ((status === 'Approved' || status === 'Paid') && previousStatus === 'Draft') {
+      processPayrollValeDeductions({ ...targetRun, status });
+    } else if (status === 'Draft' && (previousStatus === 'Approved' || previousStatus === 'Paid')) {
+      revertPayrollValeDeductions(targetRun.id, targetRun.cutoffPeriod);
     }
   };
 
-  const processPayrollValeDeductions = (run: PayrollRun) => {
-    run.items.forEach(item => {
-      if (item.valeDeduction > 0) {
-        // Find active vale record for employee
-        const activeVale = valeRecords.find(v => v.employeeId === item.employeeId && v.status === 'Active');
-        if (activeVale) {
-          addValeRepayment(activeVale.id, item.valeDeduction, `Payroll Auto-Deduction (${run.cutoffPeriod})`, run.cutoffPeriod);
-        }
-      }
-    });
-  };
-
   const deletePayrollRun = (id: string) => {
+    const targetRun = payrollRuns.find(r => r.id === id);
+    if (targetRun && (targetRun.status === 'Approved' || targetRun.status === 'Paid')) {
+      revertPayrollValeDeductions(targetRun.id, targetRun.cutoffPeriod);
+    }
     const updated = payrollRuns.filter(r => r.id !== id);
     setPayrollRuns(updated);
     persistState('afms_payroll_runs', updated);

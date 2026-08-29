@@ -23,7 +23,9 @@ import {
   exportAttendanceReportToExcel,
   parseExceptionalsDTRWorkbook,
   saveCutoffAttendanceStore,
-  downloadExceptionalsDTRTemplate
+  downloadExceptionalsDTRTemplate,
+  STANDARD_CUTOFF_PERIODS,
+  inferPeriodDetails
 } from '../utils/attendanceUtils';
 
 interface AttendanceReportModalProps {
@@ -168,7 +170,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
     const totalNightDiffHours = Number(updatedRecords.reduce((s, r) => s + r.nightDiffHours, 0).toFixed(2));
     const totalNightDiffPay = Number(updatedRecords.reduce((s, r) => s + r.nightDiffPay, 0).toFixed(2));
 
-    setReport({
+    const updatedReport: CutoffAttendanceReport = {
       ...report,
       records: updatedRecords,
       totalDaysWorked,
@@ -181,7 +183,10 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
       totalNightDiffHours,
       totalNightDiffPay,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    setReport(updatedReport);
+    saveCutoffAttendanceStore([updatedReport]);
   };
 
   // Pre-fill standard working shift (8:30 AM - 5:30 PM) for all weekdays
@@ -207,7 +212,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
 
     const totalDaysWorked = updated.filter(r => !r.isRestDay).length;
 
-    setReport({
+    const updatedReport: CutoffAttendanceReport = {
       ...report,
       records: updated,
       totalDaysWorked,
@@ -220,7 +225,10 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
       totalNightDiffHours: 0,
       totalNightDiffPay: 0,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    setReport(updatedReport);
+    saveCutoffAttendanceStore([updatedReport]);
   };
 
   // Clear all time logs
@@ -243,7 +251,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
       );
     });
 
-    setReport({
+    const updatedReport: CutoffAttendanceReport = {
       ...report,
       records: updated,
       totalDaysWorked: 0,
@@ -256,7 +264,10 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
       totalNightDiffHours: 0,
       totalNightDiffPay: 0,
       updatedAt: new Date().toISOString()
-    });
+    };
+
+    setReport(updatedReport);
+    saveCutoffAttendanceStore([updatedReport]);
   };
 
   // Upload Excel Attendance File (supports both Exceptionals multi-employee DTR and single-sheet reports)
@@ -377,6 +388,7 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
   };
 
   const handleSyncAndClose = () => {
+    saveCutoffAttendanceStore([report]);
     if (onSyncToPayroll) {
       onSyncToPayroll({
         daysWorked: report.totalDaysWorked,
@@ -442,12 +454,31 @@ export const AttendanceReportModal: React.FC<AttendanceReportModalProps> = ({
                   onChange={(e) => handleCutoffChange(e.target.value)}
                   className="bg-transparent font-bold text-xs text-blue-900 focus:outline-none cursor-pointer"
                 >
-                  {COMMON_CUTOFF_OPTIONS.map(opt => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
-                  ))}
-                  {!COMMON_CUTOFF_OPTIONS.includes(selectedCutoff) && (
+                  <optgroup label="⭐ Current & Upcoming Cutoffs">
+                    {STANDARD_CUTOFF_PERIODS.filter(o => o.isCurrent || o.monthName === 'August' || o.monthName === 'September').map(opt => (
+                      <option key={`curr_${opt.period}`} value={opt.period}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </optgroup>
+
+                  <optgroup label="📅 2026 Semi-Monthly Cutoffs">
+                    {STANDARD_CUTOFF_PERIODS.filter(o => o.periodType !== 'Monthly').map(opt => (
+                      <option key={`semi_${opt.period}`} value={opt.period}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </optgroup>
+
+                  <optgroup label="📊 Monthly Full Cutoffs">
+                    {STANDARD_CUTOFF_PERIODS.filter(o => o.periodType === 'Monthly').map(opt => (
+                      <option key={`m_${opt.period}`} value={opt.period}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </optgroup>
+
+                  {!STANDARD_CUTOFF_PERIODS.some(o => o.period === selectedCutoff) && (
                     <option value={selectedCutoff}>{selectedCutoff}</option>
                   )}
                 </select>

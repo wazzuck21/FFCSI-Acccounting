@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { 
   CompanyEmployee, 
+  EmploymentType,
+  SalaryBasis,
   LeaveRecord, 
   ValeRecord, 
   PayrollRun, 
@@ -15,12 +17,16 @@ import { DolePayrollSandbox } from './DolePayrollSandbox';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { AttendanceReportModal } from './AttendanceReportModal';
+import { ConsolidatedLeaveTracker } from './ConsolidatedLeaveTracker';
+import { ConsolidatedValeTracker } from './ConsolidatedValeTracker';
 import { 
   generateCutoffAttendance, 
   exportAttendanceReportToExcel,
   parseExceptionalsDTRWorkbook,
   saveCutoffAttendanceStore,
   downloadExceptionalsDTRTemplate,
+  STANDARD_CUTOFF_PERIODS,
+  inferPeriodDetails,
   ParsedDTRResult
 } from '../utils/attendanceUtils';
 import { 
@@ -50,7 +56,12 @@ import {
   FileSpreadsheet,
   TableProperties,
   Sparkles,
-  Check
+  Check,
+  GraduationCap,
+  Briefcase,
+  Filter,
+  Layers,
+  Info
 } from 'lucide-react';
 
 export const CompanyPayrollView: React.FC = () => {
@@ -89,6 +100,16 @@ export const CompanyPayrollView: React.FC = () => {
   const [selectedAttCutoff, setSelectedAttCutoff] = useState<string>('August 16-31, 2026');
   const [selectedAttCutoffType, setSelectedAttCutoffType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>('2nd Half (16-30/31)');
   const [searchTerm, setSearchTerm] = useState('');
+  const [attendanceRefreshKey, setAttendanceRefreshKey] = useState<number>(0);
+
+  // Listen to store updates for live instant sync across all tabs
+  useEffect(() => {
+    const handleAttUpdated = () => {
+      setAttendanceRefreshKey(k => k + 1);
+    };
+    window.addEventListener('afms_attendance_updated', handleAttUpdated);
+    return () => window.removeEventListener('afms_attendance_updated', handleAttUpdated);
+  }, []);
 
   // 360° Employee Profile & Cross-Tab Modals ⭐
   const [profileModalEmployee, setProfileModalEmployee] = useState<CompanyEmployee | null>(null);
@@ -104,9 +125,10 @@ export const CompanyPayrollView: React.FC = () => {
   const [dtrUploadSuccessMsg, setDtrUploadSuccessMsg] = useState<string | null>(null);
 
   // Form states for New Payroll Run
-  const [newRunPeriod, setNewRunPeriod] = useState('August 1-15, 2026');
-  const [newRunPeriodType, setNewRunPeriodType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>('1st Half (1-15)');
-  const [newRunPayDate, setNewRunPayDate] = useState('2026-08-15');
+  const [newRunPeriod, setNewRunPeriod] = useState('August 16-31, 2026');
+  const [newRunPeriodType, setNewRunPeriodType] = useState<'1st Half (1-15)' | '2nd Half (16-30/31)' | 'Monthly'>('2nd Half (16-30/31)');
+  const [newRunPayDate, setNewRunPayDate] = useState('2026-08-31');
+  const [isCustomNewRunPeriod, setIsCustomNewRunPeriod] = useState<boolean>(false);
   const [payrollInputs, setPayrollInputs] = useState<Record<string, {
     daysWorked: number;
     daysAbsent: number;
@@ -123,7 +145,7 @@ export const CompanyPayrollView: React.FC = () => {
     timeOut?: string;
   }>>({});
 
-  // Employee Form State (Defaults to Gross / 22 for Daily Salary)
+  // Employee Form State (Supports Monthly Fixed, OJT Daily Allowance, and Temp Daily No Work No Pay)
   const [empForm, setEmpForm] = useState<Omit<CompanyEmployee, 'id'>>({
     employeeNo: `EMP-00${employees.length + 1}`,
     fullName: '',
@@ -131,9 +153,18 @@ export const CompanyPayrollView: React.FC = () => {
     department: 'Tax & Audit',
     dateHired: new Date().toISOString().split('T')[0],
     employmentType: 'Regular',
+    salaryBasis: 'Monthly Fixed',
     monthlyBasicSalary: 25000,
     dailyRate: 1136.36, // 25,000 / 22
     hourlyRate: 142.05, // 1136.36 / 8
+    isNoWorkNoPay: false,
+    exemptFromStatutory: false,
+    schoolOrUniversity: '',
+    internshipRequiredHours: 400,
+    internshipRenderedHours: 0,
+    supervisorMentor: '',
+    contractEndDate: '',
+    dailyAllowance: 0,
     tinNumber: '',
     sssNumber: '',
     philhealthNumber: '',
@@ -148,6 +179,118 @@ export const CompanyPayrollView: React.FC = () => {
     defaultValeDeduction: 0
   });
 
+  // Filter & Search states for Employee Directory ⭐
+  const [empFilterCategory, setEmpFilterCategory] = useState<'All' | 'Regular & Prob' | 'OJT / Intern' | 'Temp / Daily Paid' | 'Active' | 'On Leave'>('All');
+  const [empSearchQuery, setEmpSearchQuery] = useState('');
+
+  // Helper to initialize new staff form with presets
+  const handleOpenAddEmployee = (presetType: EmploymentType = 'Regular') => {
+    setEditingEmployee(null);
+    const nextEmpNo = `EMP-00${employees.length + 1}`;
+    
+    if (presetType === 'OJT / Intern') {
+      setEmpForm({
+        employeeNo: nextEmpNo,
+        fullName: '',
+        position: 'OJT Tax & Audit Intern',
+        department: 'Tax & Audit',
+        dateHired: new Date().toISOString().split('T')[0],
+        employmentType: 'OJT / Intern',
+        salaryBasis: 'OJT / Daily Allowance',
+        isNoWorkNoPay: true,
+        exemptFromStatutory: true,
+        schoolOrUniversity: '',
+        internshipRequiredHours: 400,
+        internshipRenderedHours: 0,
+        supervisorMentor: employees.find(e => e.position.includes('Senior') || e.position.includes('Partner'))?.fullName || '',
+        contractEndDate: new Date(Date.now() + 120 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        dailyAllowance: 0,
+        monthlyBasicSalary: 9900, // 450 * 22 estimated
+        dailyRate: 450.00,
+        hourlyRate: 56.25,
+        tinNumber: 'Pending (OJT Trainee)',
+        sssNumber: 'Exempt (DOLE Trainee)',
+        philhealthNumber: 'Exempt (DOLE Trainee)',
+        pagibigNumber: 'Exempt (DOLE Trainee)',
+        bankName: 'GCash',
+        accountNumber: '',
+        status: 'Active',
+        silBalance: 0,
+        vlBalance: 0,
+        slBalance: 0,
+        currentValeBalance: 0,
+        defaultValeDeduction: 0
+      });
+    } else if (presetType === 'Temp / Daily Paid') {
+      setEmpForm({
+        employeeNo: nextEmpNo,
+        fullName: '',
+        position: 'Temp Bookkeeper / Data Encoder',
+        department: 'Accounting',
+        dateHired: new Date().toISOString().split('T')[0],
+        employmentType: 'Temp / Daily Paid',
+        salaryBasis: 'Daily (No Work, No Pay)',
+        isNoWorkNoPay: true,
+        exemptFromStatutory: false,
+        schoolOrUniversity: '',
+        internshipRequiredHours: 0,
+        internshipRenderedHours: 0,
+        supervisorMentor: '',
+        contractEndDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        dailyAllowance: 0,
+        monthlyBasicSalary: 14190, // 645 * 22
+        dailyRate: 645.00, // NCR Statutory Daily Minimum Wage
+        hourlyRate: 80.63,
+        tinNumber: '',
+        sssNumber: '',
+        philhealthNumber: '',
+        pagibigNumber: '',
+        bankName: 'BDO Unibank',
+        accountNumber: '',
+        status: 'Active',
+        silBalance: 0,
+        vlBalance: 0,
+        slBalance: 0,
+        currentValeBalance: 0,
+        defaultValeDeduction: 0
+      });
+    } else {
+      setEmpForm({
+        employeeNo: nextEmpNo,
+        fullName: '',
+        position: presetType === 'Probationary' ? 'Junior Bookkeeper / Audit Staff' : 'Tax Accountant',
+        department: 'Tax & Audit',
+        dateHired: new Date().toISOString().split('T')[0],
+        employmentType: presetType,
+        salaryBasis: 'Monthly Fixed',
+        monthlyBasicSalary: 25000,
+        dailyRate: 1149.43,
+        hourlyRate: 143.68,
+        isNoWorkNoPay: false,
+        exemptFromStatutory: false,
+        schoolOrUniversity: '',
+        internshipRequiredHours: 0,
+        internshipRenderedHours: 0,
+        supervisorMentor: '',
+        contractEndDate: '',
+        dailyAllowance: 0,
+        tinNumber: '',
+        sssNumber: '',
+        philhealthNumber: '',
+        pagibigNumber: '',
+        bankName: 'BDO Unibank',
+        accountNumber: '',
+        status: 'Active',
+        silBalance: 5,
+        vlBalance: 10,
+        slBalance: 8,
+        currentValeBalance: 0,
+        defaultValeDeduction: 0
+      });
+    }
+    setShowEmployeeModal(true);
+  };
+
   // Leave Form State
   const [leaveForm, setLeaveForm] = useState({
     employeeId: employees[0]?.id || '',
@@ -160,12 +303,20 @@ export const CompanyPayrollView: React.FC = () => {
   });
 
   // Vale Form State
-  const [valeForm, setValeForm] = useState({
+  const [valeForm, setValeForm] = useState<{
+    employeeId: string;
+    amountGiven: number;
+    dateGiven: string;
+    purpose: string;
+    cutoffDeductionAmount: number;
+    advanceType: 'Cash Advance' | 'Vale';
+  }>({
     employeeId: employees[0]?.id || '',
     amountGiven: 2000,
     dateGiven: new Date().toISOString().split('T')[0],
     purpose: '',
-    cutoffDeductionAmount: 500
+    cutoffDeductionAmount: 500,
+    advanceType: 'Cash Advance'
   });
 
   // Parse shift times helper (Standard Shift: 8:30 AM - 5:30 PM, Grace Allowance up to 8:45 AM)
@@ -496,6 +647,8 @@ export const CompanyPayrollView: React.FC = () => {
 
   // Initialize Payroll Input map when opening modal with auto-sync
   const handleOpenNewRunModal = () => {
+    const isStandard = STANDARD_CUTOFF_PERIODS.some(o => o.period === newRunPeriod);
+    setIsCustomNewRunPeriod(!isStandard);
     syncPayrollInputsFromAttendanceAndLedgers(newRunPeriod, newRunPeriodType);
     setShowNewRunModal(true);
   };
@@ -504,6 +657,10 @@ export const CompanyPayrollView: React.FC = () => {
   const handlePushAttendanceToPayrollRun = () => {
     setNewRunPeriod(selectedAttCutoff);
     setNewRunPeriodType(selectedAttCutoffType);
+    const details = inferPeriodDetails(selectedAttCutoff);
+    setNewRunPayDate(details.defaultPayDate);
+    const isStandard = STANDARD_CUTOFF_PERIODS.some(o => o.period === selectedAttCutoff);
+    setIsCustomNewRunPeriod(!isStandard);
     syncPayrollInputsFromAttendanceAndLedgers(selectedAttCutoff, selectedAttCutoffType);
     setShowNewRunModal(true);
   };
@@ -531,6 +688,10 @@ export const CompanyPayrollView: React.FC = () => {
         dailyRateOverride: emp.dailyRate,
         hourlyRateOverride: emp.hourlyRate,
         periodType: newRunPeriodType,
+        employmentType: emp.employmentType,
+        salaryBasis: emp.salaryBasis,
+        isNoWorkNoPay: emp.isNoWorkNoPay,
+        exemptFromStatutory: emp.exemptFromStatutory,
         daysWorked: input.daysWorked,
         daysAbsent: input.daysAbsent,
         tardinessMinutes: input.tardinessMinutes,
@@ -601,23 +762,6 @@ export const CompanyPayrollView: React.FC = () => {
       items: computedRunItems
     });
 
-    // Auto-record vale repayment if run is Approved or Paid and employee has a vale deduction
-    if (status !== 'Draft') {
-      computedRunItems.forEach(item => {
-        if (item.valeDeduction > 0) {
-          const activeVale = valeRecords.find(v => v.employeeId === item.employeeId && v.status === 'Active');
-          if (activeVale) {
-            addValeRepayment(
-              activeVale.id,
-              item.valeDeduction,
-              `Cutoff payroll deduction (${newRunPeriod})`,
-              newRunPeriod
-            );
-          }
-        }
-      });
-    }
-
     if (currentUser) {
       addAuditLog(
         'Created Internal Payroll Run',
@@ -686,14 +830,19 @@ export const CompanyPayrollView: React.FC = () => {
     const emp = employees.find(e => e.id === valeForm.employeeId);
     if (!emp) return;
 
+    const isCA = valeForm.advanceType === 'Cash Advance';
+    const effectiveDeduction = isCA ? Number(valeForm.amountGiven) : Number(valeForm.cutoffDeductionAmount);
+
     addValeRecord({
       employeeId: emp.id,
       employeeName: emp.fullName,
       amountGiven: Number(valeForm.amountGiven),
       dateGiven: valeForm.dateGiven,
       purpose: valeForm.purpose,
-      cutoffDeductionAmount: Number(valeForm.cutoffDeductionAmount),
-      remainingBalance: Number(valeForm.amountGiven)
+      cutoffDeductionAmount: effectiveDeduction,
+      remainingBalance: Number(valeForm.amountGiven),
+      advanceType: valeForm.advanceType,
+      repaymentMode: isCA ? 'Full Next Cutoff' : 'Installment'
     });
 
     setShowValeModal(false);
@@ -720,6 +869,31 @@ export const CompanyPayrollView: React.FC = () => {
     resetOnChange: payrollRuns.length,
   });
 
+  // Filtered Employees for Directory with Search & Category filters ⭐
+  const filteredEmployees = useMemo(() => {
+    return employees.filter(emp => {
+      // Category filter
+      if (empFilterCategory === 'Regular & Prob' && !(emp.employmentType === 'Regular' || emp.employmentType === 'Probationary')) return false;
+      if (empFilterCategory === 'OJT / Intern' && emp.employmentType !== 'OJT / Intern') return false;
+      if (empFilterCategory === 'Temp / Daily Paid' && emp.employmentType !== 'Temp / Daily Paid') return false;
+      if (empFilterCategory === 'Active' && emp.status !== 'Active') return false;
+      if (empFilterCategory === 'On Leave' && emp.status !== 'On Leave') return false;
+
+      // Search query
+      if (empSearchQuery.trim()) {
+        const q = empSearchQuery.toLowerCase();
+        const matchName = emp.fullName.toLowerCase().includes(q);
+        const matchNo = emp.employeeNo.toLowerCase().includes(q);
+        const matchPos = emp.position.toLowerCase().includes(q);
+        const matchDept = emp.department.toLowerCase().includes(q);
+        const matchSchool = emp.schoolOrUniversity?.toLowerCase().includes(q) || false;
+        const matchType = emp.employmentType.toLowerCase().includes(q);
+        return matchName || matchNo || matchPos || matchDept || matchSchool || matchType;
+      }
+      return true;
+    });
+  }, [employees, empFilterCategory, empSearchQuery]);
+
   // Pagination for Employee Directory
   const {
     currentPage: empPage,
@@ -730,9 +904,9 @@ export const CompanyPayrollView: React.FC = () => {
     setPageSize: setEmpPageSize,
     loadMore: loadMoreEmp,
     hasMoreToLoad: hasMoreEmp,
-  } = usePagination(employees, {
+  } = usePagination(filteredEmployees, {
     initialPageSize: 15,
-    resetOnChange: employees.length,
+    resetOnChange: filteredEmployees.length,
   });
 
   // Pagination for Leaves
@@ -1113,179 +1287,358 @@ export const CompanyPayrollView: React.FC = () => {
       {/* TAB 2: EMPLOYEE DIRECTORY & SALARY SETUP */}
       {activeTab === 'employees' && (
         <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm">Internal Accounting Firm Employee Roster</h3>
-              <p className="text-xs text-slate-500">Configure staff monthly basic salaries, SSS/PhilHealth/PagIBIG/TIN IDs, bank payout details & leave balances.</p>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-600" />
+                <h3 className="font-bold text-slate-900 text-base">Internal Accounting Firm Employee Roster</h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                Manage firm personnel, monthly basic salaries, OJT / Intern trainee allowances, temporary daily-paid staff (No Work, No Pay), and government statutory profiles.
+              </p>
             </div>
-            <button
-              onClick={() => {
-                setEditingEmployee(null);
-                setEmpForm({
-                  employeeNo: `EMP-00${employees.length + 1}`,
-                  fullName: '',
-                  position: 'Tax Accountant',
-                  department: 'Tax & Audit',
-                  dateHired: new Date().toISOString().split('T')[0],
-                  employmentType: 'Regular',
-                  monthlyBasicSalary: 25000,
-                  dailyRate: 1149.43,
-                  hourlyRate: 143.68,
-                  tinNumber: '',
-                  sssNumber: '',
-                  philhealthNumber: '',
-                  pagibigNumber: '',
-                  bankName: 'BDO Unibank',
-                  accountNumber: '',
-                  status: 'Active',
-                  silBalance: 5,
-                  vlBalance: 10,
-                  slBalance: 8,
-                  currentValeBalance: 0,
-                  defaultValeDeduction: 0
-                });
-                setShowEmployeeModal(true);
-              }}
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4" /> Add Internal Employee
-            </button>
+
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleOpenAddEmployee('OJT / Intern')}
+                className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Add OJT Student Trainee with Daily Allowance & No Work No Pay Setup"
+              >
+                <GraduationCap className="w-4 h-4 text-purple-600" /> + Add OJT / Intern
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenAddEmployee('Temp / Daily Paid')}
+                className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold rounded-xl shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                title="Add Temporary / Contractual Daily-Paid Staff (No Work, No Pay)"
+              >
+                <Clock className="w-4 h-4 text-amber-600" /> + Add Temp / Daily Staff
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenAddEmployee('Regular')}
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-xs flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                <Plus className="w-4 h-4" /> Add Regular Staff
+              </button>
+            </div>
           </div>
 
+          {/* Search & Filter Bar ⭐ */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="text-slate-400 font-bold text-[11px] flex items-center gap-1">
+                <Filter className="w-3.5 h-3.5" /> Filter:
+              </span>
+              <button
+                type="button"
+                onClick={() => setEmpFilterCategory('All')}
+                className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                  empFilterCategory === 'All'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Staff ({employees.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setEmpFilterCategory('Regular & Prob')}
+                className={`px-3 py-1.5 rounded-xl font-bold cursor-pointer transition-colors ${
+                  empFilterCategory === 'Regular & Prob'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                Regular & Prob ({employees.filter(e => e.employmentType === 'Regular' || e.employmentType === 'Probationary').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setEmpFilterCategory('OJT / Intern')}
+                className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+                  empFilterCategory === 'OJT / Intern'
+                    ? 'bg-purple-600 text-white shadow-xs'
+                    : 'bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100'
+                }`}
+              >
+                <GraduationCap className="w-3.5 h-3.5" />
+                OJT / Interns ({employees.filter(e => e.employmentType === 'OJT / Intern').length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setEmpFilterCategory('Temp / Daily Paid')}
+                className={`px-3 py-1.5 rounded-xl font-bold flex items-center gap-1 cursor-pointer transition-colors ${
+                  empFilterCategory === 'Temp / Daily Paid'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                Temp / Daily Paid ({employees.filter(e => e.employmentType === 'Temp / Daily Paid').length})
+              </button>
+            </div>
+
+            <div className="relative w-full md:w-72">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search staff, position, school..."
+                value={empSearchQuery}
+                onChange={e => setEmpSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-8 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:bg-white focus:border-blue-500 focus:outline-hidden"
+              />
+              {empSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setEmpSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Roster Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {paginatedEmployees.map(emp => (
-              <div key={emp.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-4 hover:shadow-md transition-all">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">{emp.employeeNo}</span>
-                    <h4 className="font-bold text-slate-900 text-base mt-1">{emp.fullName}</h4>
-                    <p className="text-xs text-slate-500">{emp.position} • <span className="text-slate-700">{emp.department}</span></p>
+            {paginatedEmployees.map(emp => {
+              const isOJT = emp.employmentType === 'OJT / Intern';
+              const isTemp = emp.employmentType === 'Temp / Daily Paid';
+              const isNoWorkNoPay = Boolean(emp.isNoWorkNoPay || isOJT || isTemp);
+
+              return (
+                <div 
+                  key={emp.id} 
+                  className={`bg-white border rounded-2xl p-5 shadow-xs space-y-4 hover:shadow-md transition-all ${
+                    isOJT 
+                      ? 'border-purple-200 ring-1 ring-purple-100' 
+                      : isTemp 
+                      ? 'border-amber-200 ring-1 ring-amber-100' 
+                      : 'border-slate-200'
+                  }`}
+                >
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[10px] font-mono font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                          {emp.employeeNo}
+                        </span>
+                        {isOJT ? (
+                          <span className="text-[10px] font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-full border border-purple-200 flex items-center gap-1">
+                            <GraduationCap className="w-3 h-3" /> OJT Trainee
+                          </span>
+                        ) : isTemp ? (
+                          <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Temp Daily Paid
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full">
+                            {emp.employmentType}
+                          </span>
+                        )}
+                      </div>
+                      <h4 className="font-bold text-slate-900 text-base mt-1.5">{emp.fullName}</h4>
+                      <p className="text-xs text-slate-500">{emp.position} • <span className="text-slate-700">{emp.department}</span></p>
+                      
+                      {isOJT && emp.schoolOrUniversity && (
+                        <p className="text-[11px] text-purple-700 font-semibold mt-1 flex items-center gap-1">
+                          <span>🏫</span> {emp.schoolOrUniversity}
+                        </p>
+                      )}
+                    </div>
+
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                      emp.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {emp.status}
+                    </span>
                   </div>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                    emp.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+
+                  {/* Compensation Card */}
+                  <div className={`rounded-xl p-3 border text-xs space-y-1 font-mono ${
+                    isOJT 
+                      ? 'bg-purple-50/50 border-purple-100' 
+                      : isTemp 
+                      ? 'bg-amber-50/50 border-amber-100' 
+                      : 'bg-slate-50 border-slate-100'
                   }`}>
-                    {emp.status}
-                  </span>
-                </div>
-
-                <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 text-xs space-y-1 font-mono">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500 font-sans">Monthly Basic:</span>
-                    <span className="font-bold text-slate-900">₱{emp.monthlyBasicSalary.toLocaleString()}</span>
+                    {isNoWorkNoPay ? (
+                      <>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-600 font-sans font-bold flex items-center gap-1">
+                            {isOJT ? 'Daily Trainee Allowance:' : 'Daily Wage Rate:'}
+                          </span>
+                          <span className="font-bold text-base text-slate-900">
+                            ₱{emp.dailyRate.toFixed(2)}<span className="text-[10px] text-slate-500 font-normal">/day</span>
+                          </span>
+                        </div>
+                        <div className="flex justify-between text-[11px] pt-0.5 text-slate-500">
+                          <span className="font-sans">Pay Policy:</span>
+                          <span className="font-bold text-rose-700 font-sans">No Work, No Pay</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-slate-500">
+                          <span className="font-sans">Hourly Rate (8h):</span>
+                          <span className="text-slate-700">₱{emp.hourlyRate.toFixed(2)}/hr</span>
+                        </div>
+                        <div className="flex justify-between text-[11px] text-slate-500">
+                          <span className="font-sans">Est. Monthly (22d):</span>
+                          <span className="text-slate-700">₱{emp.monthlyBasicSalary.toLocaleString()}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-500 font-sans">Monthly Basic:</span>
+                          <span className="font-bold text-base text-slate-900">₱{emp.monthlyBasicSalary.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-500 font-sans">Daily Rate (21.75):</span>
+                          <span className="text-slate-700">₱{emp.dailyRate.toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-500 font-sans">Hourly Rate (8h):</span>
+                          <span className="text-slate-700">₱{emp.hourlyRate.toFixed(2)}</span>
+                        </div>
+                      </>
+                    )}
                   </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-slate-500 font-sans">Daily Rate (21.75):</span>
-                    <span className="text-slate-700">₱{emp.dailyRate.toFixed(2)}</span>
+
+                  {/* Special Trainee / Temp or Statutory IDs details */}
+                  <div className="text-[11px] space-y-1 text-slate-600">
+                    {isOJT ? (
+                      <>
+                        <p className="flex justify-between">
+                          <strong className="text-slate-800">Internship Hours:</strong> 
+                          <span className="font-mono text-purple-800 font-bold">{emp.internshipRenderedHours || 0} / {emp.internshipRequiredHours || 400} hrs</span>
+                        </p>
+                        {emp.supervisorMentor && (
+                          <p><strong className="text-slate-800">Mentor:</strong> {emp.supervisorMentor}</p>
+                        )}
+                        <p className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                          ✓ DOLE/CHED Trainee Rule (Statutory Exempt)
+                        </p>
+                        <p><strong className="text-slate-800">Payout Account:</strong> {emp.bankName} - {emp.accountNumber || 'Pending'}</p>
+                      </>
+                    ) : (
+                      <>
+                        <p><strong className="text-slate-800">TIN:</strong> {emp.tinNumber || 'N/A'}</p>
+                        <p><strong className="text-slate-800">SSS:</strong> {emp.sssNumber || 'N/A'}</p>
+                        <p><strong className="text-slate-800">PhilHealth:</strong> {emp.philhealthNumber || 'N/A'}</p>
+                        <p><strong className="text-slate-800">Pag-IBIG:</strong> {emp.pagibigNumber || 'N/A'}</p>
+                        <p><strong className="text-slate-800">Bank / Payout:</strong> {emp.bankName} - {emp.accountNumber || 'N/A'}</p>
+                        {isTemp && emp.contractEndDate && (
+                          <p><strong className="text-slate-800">Contract End Date:</strong> {emp.contractEndDate}</p>
+                        )}
+                      </>
+                    )}
                   </div>
-                  <div className="flex justify-between text-[11px]">
-                    <span className="text-slate-500 font-sans">Hourly Rate (8h):</span>
-                    <span className="text-slate-700">₱{emp.hourlyRate.toFixed(2)}</span>
-                  </div>
-                </div>
 
-                {/* Statutory IDs */}
-                <div className="text-[11px] space-y-1 text-slate-600">
-                  <p><strong className="text-slate-800">TIN:</strong> {emp.tinNumber || 'N/A'}</p>
-                  <p><strong className="text-slate-800">SSS:</strong> {emp.sssNumber || 'N/A'}</p>
-                  <p><strong className="text-slate-800">PhilHealth:</strong> {emp.philhealthNumber || 'N/A'}</p>
-                  <p><strong className="text-slate-800">Pag-IBIG:</strong> {emp.pagibigNumber || 'N/A'}</p>
-                  <p><strong className="text-slate-800">Bank / Payout:</strong> {emp.bankName} - {emp.accountNumber || 'N/A'}</p>
-                </div>
+                  {/* Balances (for regular/prob staff) */}
+                  {!isOJT && (
+                    <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center text-[10px]">
+                      <div className="bg-blue-50/60 p-1.5 rounded">
+                        <span className="text-slate-500 block font-bold">SIL</span>
+                        <span className="font-bold text-blue-700 text-xs">{emp.silBalance} days</span>
+                      </div>
+                      <div className="bg-purple-50/60 p-1.5 rounded">
+                        <span className="text-slate-500 block font-bold">VL</span>
+                        <span className="font-bold text-purple-700 text-xs">{emp.vlBalance} days</span>
+                      </div>
+                      <div className="bg-emerald-50/60 p-1.5 rounded">
+                        <span className="text-slate-500 block font-bold">SL</span>
+                        <span className="font-bold text-emerald-700 text-xs">{emp.slBalance} days</span>
+                      </div>
+                    </div>
+                  )}
 
-                {/* Balances */}
-                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center text-[10px]">
-                  <div className="bg-blue-50/60 p-1.5 rounded">
-                    <span className="text-slate-500 block font-bold">SIL</span>
-                    <span className="font-bold text-blue-700 text-xs">{emp.silBalance} days</span>
-                  </div>
-                  <div className="bg-purple-50/60 p-1.5 rounded">
-                    <span className="text-slate-500 block font-bold">VL</span>
-                    <span className="font-bold text-purple-700 text-xs">{emp.vlBalance} days</span>
-                  </div>
-                  <div className="bg-emerald-50/60 p-1.5 rounded">
-                    <span className="text-slate-500 block font-bold">SL</span>
-                    <span className="font-bold text-emerald-700 text-xs">{emp.slBalance} days</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
-                  <span className="text-amber-700 font-bold">Vale Balance: ₱{(emp.currentValeBalance || 0).toLocaleString()}</span>
-                  <button
-                    onClick={() => {
-                      setProfileModalEmployee(emp);
-                      setProfileModalTab('overview');
-                    }}
-                    className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold rounded-lg border border-blue-200 flex items-center gap-1 cursor-pointer"
-                  >
-                    <UserCheck className="w-3.5 h-3.5 text-blue-600" /> 360° Profile
-                  </button>
-                </div>
-
-                {/* Cross-Tab Quick Actions Bar ⭐ */}
-                <div className="grid grid-cols-4 gap-1.5 pt-2 border-t border-slate-100 text-[10px]">
-                  <button
-                    onClick={() => {
-                      setSelectedAttEmployeeId(emp.id);
-                      setActiveTab('attendance');
-                    }}
-                    className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
-                    title="View Cutoff DTR Timesheet"
-                  >
-                    <TableProperties className="w-3.5 h-3.5 text-blue-600" />
-                    <span>DTR Sheet</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setLeaveForm(prev => ({ ...prev, employeeId: emp.id }));
-                      setShowLeaveModal(true);
-                    }}
-                    className="p-1.5 bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
-                    title="File Leave for this Employee"
-                  >
-                    <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>File Leave</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setValeForm(prev => ({ ...prev, employeeId: emp.id }));
-                      setShowValeModal(true);
-                    }}
-                    className="p-1.5 bg-slate-50 hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
-                    title="Issue Vale Cash Advance"
-                  >
-                    <DollarSign className="w-3.5 h-3.5 text-amber-600" />
-                    <span>Issue Vale</span>
-                  </button>
-
-                  <div className="flex items-center justify-center gap-1 bg-slate-50 rounded border border-slate-200">
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
+                    <span className="text-amber-700 font-bold">Vale Balance: ₱{(emp.currentValeBalance || 0).toLocaleString()}</span>
                     <button
+                      type="button"
                       onClick={() => {
-                        setEditingEmployee(emp);
-                        setEmpForm(emp);
-                        setShowEmployeeModal(true);
+                        setProfileModalEmployee(emp);
+                        setProfileModalTab('overview');
                       }}
-                      className="p-1 text-blue-600 hover:bg-blue-100 rounded cursor-pointer"
-                      title="Edit Salary & Info"
+                      className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 text-[11px] font-bold rounded-lg border border-blue-200 flex items-center gap-1 cursor-pointer"
                     >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete employee ${emp.fullName}?`)) {
-                          deleteEmployee(emp.id);
-                        }
-                      }}
-                      className="p-1 text-rose-600 hover:bg-rose-100 rounded cursor-pointer"
-                      title="Delete Employee"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
+                      <UserCheck className="w-3.5 h-3.5 text-blue-600" /> 360° Profile
                     </button>
                   </div>
+
+                  {/* Cross-Tab Quick Actions Bar ⭐ */}
+                  <div className="grid grid-cols-4 gap-1.5 pt-2 border-t border-slate-100 text-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedAttEmployeeId(emp.id);
+                        setActiveTab('attendance');
+                      }}
+                      className="p-1.5 bg-slate-50 hover:bg-blue-50 text-slate-700 hover:text-blue-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
+                      title="View Cutoff DTR Timesheet"
+                    >
+                      <TableProperties className="w-3.5 h-3.5 text-blue-600" />
+                      <span>DTR Sheet</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeaveForm(prev => ({ ...prev, employeeId: emp.id }));
+                        setShowLeaveModal(true);
+                      }}
+                      className="p-1.5 bg-slate-50 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
+                      title="File Leave for this Employee"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>File Leave</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setValeForm(prev => ({ ...prev, employeeId: emp.id }));
+                        setShowValeModal(true);
+                      }}
+                      className="p-1.5 bg-slate-50 hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-semibold rounded border border-slate-200 flex flex-col items-center justify-center gap-0.5 cursor-pointer text-center"
+                      title="Issue Vale Cash Advance"
+                    >
+                      <DollarSign className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Issue Vale</span>
+                    </button>
+
+                    <div className="flex items-center justify-center gap-1 bg-slate-50 rounded border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingEmployee(emp);
+                          setEmpForm(emp);
+                          setShowEmployeeModal(true);
+                        }}
+                        className="p-1 text-blue-600 hover:bg-blue-100 rounded cursor-pointer"
+                        title="Edit Salary & Info"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Delete employee ${emp.fullName}?`)) {
+                            deleteEmployee(emp.id);
+                          }
+                        }}
+                        className="p-1 text-rose-600 hover:bg-rose-100 rounded cursor-pointer"
+                        title="Delete Employee"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {employees.length > 0 && (
@@ -1303,208 +1656,14 @@ export const CompanyPayrollView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 3: LEAVE TRACKER */}
+      {/* TAB 3: CONSOLIDATED LEAVE TRACKER (SIL / VL / SL) */}
       {activeTab === 'leaves' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm">Service Incentive Leave (SIL) & Vacation / Sick Leave Tracker</h3>
-              <p className="text-xs text-slate-500">Track DOLE statutory 5-day Service Incentive Leave (SIL), Vacation Leave (VL), and Sick Leave (SL) requests.</p>
-            </div>
-            <button
-              onClick={() => setShowLeaveModal(true)}
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4" /> File Leave Request
-            </button>
-          </div>
-
-          <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
-              <span className="font-bold text-xs text-slate-700 uppercase tracking-wider">Leave Applications History</span>
-              <span className="text-xs text-slate-500">{leaveRecords.length} Record(s)</span>
-            </div>
-
-            <div className="divide-y divide-slate-100">
-              {paginatedLeaveRecords.map(leave => (
-                <div key={leave.id} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-slate-50 transition-all text-xs">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900 text-sm">{leave.employeeName}</span>
-                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 font-bold text-[10px] rounded border border-blue-200">
-                        {leave.leaveType}
-                      </span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        leave.status === 'Approved' ? 'bg-emerald-100 text-emerald-800' :
-                        leave.status === 'Rejected' ? 'bg-rose-100 text-rose-800' :
-                        'bg-amber-100 text-amber-800'
-                      }`}>
-                        {leave.status}
-                      </span>
-                    </div>
-                    <p className="text-slate-600">
-                      Duration: <strong className="font-mono text-slate-800">{leave.startDate}</strong> to <strong className="font-mono text-slate-800">{leave.endDate}</strong> ({leave.totalDays} day/s)
-                      {leave.isPaid ? <span className="ml-2 text-emerald-600 font-bold">• Paid Leave</span> : <span className="ml-2 text-amber-600 font-bold">• Unpaid Leave</span>}
-                    </p>
-                    <p className="text-slate-500 italic">" Reason: {leave.reason} "</p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {leave.status === 'Pending' && (
-                      <>
-                        <button
-                          onClick={() => updateLeaveStatus(leave.id, 'Approved', currentUser?.fullName)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1 cursor-pointer"
-                        >
-                          <CheckCircle className="w-3.5 h-3.5" /> Approve
-                        </button>
-                        <button
-                          onClick={() => updateLeaveStatus(leave.id, 'Rejected', currentUser?.fullName)}
-                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1 cursor-pointer"
-                        >
-                          <XCircle className="w-3.5 h-3.5" /> Reject
-                        </button>
-                      </>
-                    )}
-                    <button
-                      onClick={() => {
-                        if (confirm(`Cancel/Delete this leave record for ${leave.employeeName}? Any deducted days will be refunded.`)) {
-                          deleteLeaveRecord(leave.id);
-                        }
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
-                      title="Delete & Refund Leave"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {leaveRecords.length > 0 && (
-              <TablePagination
-                currentPage={leavesPage}
-                totalItems={totalLeaves}
-                pageSize={leavesPageSize}
-                onPageChange={setLeavesPage}
-                onPageSizeChange={setLeavesPageSize}
-                onLoadMore={loadMoreLeaves}
-                hasMoreToLoad={hasMoreLeaves}
-                itemLabel="leave records"
-              />
-            )}
-          </div>
-        </div>
+        <ConsolidatedLeaveTracker onNavigateToPayroll={() => setActiveTab('payroll')} />
       )}
 
-      {/* TAB 4: VALE TRACKER */}
+      {/* TAB 4: CONSOLIDATED VALE TRACKER (CASH ADVANCES) */}
       {activeTab === 'vale' && (
-        <div className="space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
-            <div>
-              <h3 className="font-bold text-slate-800 text-sm">Vale (Employee Cash Advance) Ledger</h3>
-              <p className="text-xs text-slate-500">Record employee cash advances, set automatic cutoff installment deductions, and view repayment history.</p>
-            </div>
-            <button
-              onClick={() => setShowValeModal(true)}
-              className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow-xs flex items-center gap-2 cursor-pointer shrink-0"
-            >
-              <Plus className="w-4 h-4" /> Issue New Vale
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {paginatedValeRecords.map(vale => (
-              <div key={vale.id} className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs space-y-3">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-base">{vale.employeeName}</h4>
-                    <p className="text-xs text-slate-500">Issued Date: <span className="font-mono text-slate-700">{vale.dateGiven}</span></p>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                      vale.status === 'Active' ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                    }`}>
-                      {vale.status}
-                    </span>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Delete this vale record for ${vale.employeeName}?`)) {
-                          deleteValeRecord(vale.id);
-                        }
-                      }}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 cursor-pointer"
-                      title="Delete Vale"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                <p className="text-xs text-slate-600 bg-slate-50 p-2 rounded italic">" {vale.purpose} "</p>
-
-                <div className="grid grid-cols-3 gap-2 text-center text-xs font-mono bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                  <div>
-                    <span className="text-[10px] text-slate-400 block font-sans font-medium">Original</span>
-                    <span className="font-bold text-slate-800">₱{vale.amountGiven.toLocaleString()}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block font-sans font-medium">Cutoff Ded.</span>
-                    <span className="font-bold text-blue-700">₱{vale.cutoffDeductionAmount.toLocaleString()}</span>
-                  </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block font-sans font-medium">Remaining</span>
-                    <span className="font-bold text-rose-600">₱{vale.remainingBalance.toLocaleString()}</span>
-                  </div>
-                </div>
-
-                {/* Quick Repayment Button ⭐ */}
-                {vale.status === 'Active' && (
-                  <div className="flex justify-end pt-1">
-                    <button
-                      onClick={() => {
-                        setRepaymentModalVale(vale);
-                        setManualRepaymentAmount(Math.min(vale.remainingBalance, vale.cutoffDeductionAmount || 500));
-                      }}
-                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[11px] font-bold rounded-lg border border-emerald-300 flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <DollarSign className="w-3.5 h-3.5 text-emerald-600" /> Record Manual Repayment
-                    </button>
-                  </div>
-                )}
-
-                {/* Repayments History */}
-                {vale.repayments.length > 0 && (
-                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Repayment Log ({vale.repayments.length})</span>
-                    <div className="max-h-24 overflow-y-auto space-y-1 pr-1">
-                      {vale.repayments.map(rep => (
-                        <div key={rep.id} className="text-[11px] flex justify-between items-center bg-slate-50 px-2.5 py-1 rounded text-slate-700 font-mono">
-                          <span>{rep.date} • {rep.remarks}</span>
-                          <span className="font-bold text-emerald-600">-₱{rep.amountPaid.toLocaleString()}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-
-          {valeRecords.length > 0 && (
-            <TablePagination
-              currentPage={valePage}
-              totalItems={totalVale}
-              pageSize={valePageSize}
-              onPageChange={setValePage}
-              onPageSizeChange={setValePageSize}
-              onLoadMore={loadMoreVale}
-              hasMoreToLoad={hasMoreVale}
-              itemLabel="vale records"
-            />
-          )}
-        </div>
+        <ConsolidatedValeTracker onNavigateToPayroll={() => setActiveTab('payroll')} />
       )}
 
       {/* TAB 5: ATTENDANCE & DTR REPORTS (MATCHING FFCSI ATTENDANCE FORMAT) ⭐ */}
@@ -1535,22 +1694,38 @@ export const CompanyPayrollView: React.FC = () => {
                     onChange={(e) => {
                       const val = e.target.value;
                       setSelectedAttCutoff(val);
-                      if (val.includes('1-15')) setSelectedAttCutoffType('1st Half (1-15)');
-                      else if (val.includes('Monthly')) setSelectedAttCutoffType('Monthly');
-                      else setSelectedAttCutoffType('2nd Half (16-30/31)');
+                      const details = inferPeriodDetails(val);
+                      setSelectedAttCutoffType(details.periodType);
                     }}
                     className="bg-transparent font-bold text-xs text-blue-950 focus:outline-none cursor-pointer pr-2"
                   >
-                    <option value="August 16-31, 2026">August 16-31, 2026 (2nd Half)</option>
-                    <option value="August 1-15, 2026">August 1-15, 2026 (1st Half)</option>
-                    <option value="July 16-31, 2026">July 16-31, 2026 (2nd Half)</option>
-                    <option value="July 1-15, 2026">July 1-15, 2026 (1st Half)</option>
-                    <option value="June 16-30, 2026">June 16-30, 2026 (2nd Half)</option>
-                    <option value="June 1-15, 2026">June 1-15, 2026 (1st Half)</option>
-                    <option value="September 1-15, 2026">September 1-15, 2026 (1st Half)</option>
-                    <option value="September 16-30, 2026">September 16-30, 2026 (2nd Half)</option>
-                    <option value="October 1-15, 2026">October 1-15, 2026 (1st Half)</option>
-                    <option value="October 16-31, 2026">October 16-31, 2026 (2nd Half)</option>
+                    <optgroup label="⭐ Current & Upcoming Cutoffs">
+                      {STANDARD_CUTOFF_PERIODS.filter(o => o.isCurrent || o.monthName === 'August' || o.monthName === 'September').map(o => (
+                        <option key={`att_curr_${o.period}`} value={o.period}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+
+                    <optgroup label="📅 2026 Semi-Monthly Cutoffs">
+                      {STANDARD_CUTOFF_PERIODS.filter(o => o.periodType !== 'Monthly').map(o => (
+                        <option key={`att_semi_${o.period}`} value={o.period}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+
+                    <optgroup label="📊 Monthly Full Cutoffs">
+                      {STANDARD_CUTOFF_PERIODS.filter(o => o.periodType === 'Monthly').map(o => (
+                        <option key={`att_m_${o.period}`} value={o.period}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+
+                    {!STANDARD_CUTOFF_PERIODS.some(o => o.period === selectedAttCutoff) && (
+                      <option value={selectedAttCutoff}>{selectedAttCutoff}</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -1679,7 +1854,8 @@ export const CompanyPayrollView: React.FC = () => {
           {(() => {
             const selectedEmp = employees.find(e => e.id === selectedAttEmployeeId) || employees.filter(e => e.status === 'Active')[0] || employees[0];
             if (!selectedEmp) return null;
-            const previewReport = generateCutoffAttendance(selectedEmp, selectedAttCutoff, selectedAttCutoffType);
+            // Evaluates with attendanceRefreshKey to ensure instant reactivity on any edit
+            const previewReport = generateCutoffAttendance(selectedEmp, selectedAttCutoff, selectedAttCutoffType, undefined, undefined, leaveRecords);
 
             return (
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
@@ -1800,23 +1976,92 @@ export const CompanyPayrollView: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Cutoff Label / Period</label>
-                <input
-                  type="text"
-                  value={newRunPeriod}
-                  onChange={e => setNewRunPeriod(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                  placeholder="e.g. August 1-15, 2026"
-                />
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-700 block">Cutoff Label / Period</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCustomNewRunPeriod(!isCustomNewRunPeriod)}
+                    className="text-[11px] text-blue-600 hover:text-blue-800 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    {isCustomNewRunPeriod ? '← Select from List' : '+ Custom Entry'}
+                  </button>
+                </div>
+
+                {!isCustomNewRunPeriod ? (
+                  <select
+                    value={newRunPeriod}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '__custom__') {
+                        setIsCustomNewRunPeriod(true);
+                        return;
+                      }
+                      setNewRunPeriod(val);
+                      const details = inferPeriodDetails(val);
+                      setNewRunPeriodType(details.periodType);
+                      setNewRunPayDate(details.defaultPayDate);
+                      syncPayrollInputsFromAttendanceAndLedgers(val, details.periodType);
+                    }}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 cursor-pointer shadow-2xs"
+                  >
+                    <optgroup label="⭐ Current & Upcoming Cutoffs">
+                      {STANDARD_CUTOFF_PERIODS.filter(o => o.isCurrent || o.monthName === 'August' || o.monthName === 'September').map(o => (
+                        <option key={`run_curr_${o.period}`} value={o.period}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+
+                    <optgroup label="📅 2026 Semi-Monthly Cutoffs">
+                      {STANDARD_CUTOFF_PERIODS.filter(o => o.periodType !== 'Monthly').map(o => (
+                        <option key={`run_semi_${o.period}`} value={o.period}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+
+                    <optgroup label="📊 Monthly Full Cutoffs">
+                      {STANDARD_CUTOFF_PERIODS.filter(o => o.periodType === 'Monthly').map(o => (
+                        <option key={`run_m_${o.period}`} value={o.period}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </optgroup>
+
+                    {!STANDARD_CUTOFF_PERIODS.some(o => o.period === newRunPeriod) && (
+                      <option value={newRunPeriod}>{newRunPeriod}</option>
+                    )}
+
+                    <option value="__custom__">✏️ Custom / Other Cutoff Period...</option>
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={newRunPeriod}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setNewRunPeriod(val);
+                      const details = inferPeriodDetails(val);
+                      setNewRunPeriodType(details.periodType);
+                    }}
+                    className="w-full px-3 py-2 bg-white border border-blue-400 rounded-lg text-xs font-bold focus:ring-2 focus:ring-blue-500"
+                    placeholder="e.g. August 16-31, 2026 or Special Cutoff"
+                    autoFocus
+                  />
+                )}
               </div>
 
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Period Type</label>
                 <select
                   value={newRunPeriodType}
-                  onChange={e => setNewRunPeriodType(e.target.value as any)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  onChange={e => {
+                    const newType = e.target.value as any;
+                    setNewRunPeriodType(newType);
+                    syncPayrollInputsFromAttendanceAndLedgers(newRunPeriod, newType);
+                  }}
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="1st Half (1-15)">1st Half (1-15)</option>
                   <option value="2nd Half (16-30/31)">2nd Half (16-30/31)</option>
@@ -1830,7 +2075,7 @@ export const CompanyPayrollView: React.FC = () => {
                   type="date"
                   value={newRunPayDate}
                   onChange={e => setNewRunPayDate(e.target.value)}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-blue-500"
                 />
               </div>
             </div>
@@ -1931,14 +2176,48 @@ export const CompanyPayrollView: React.FC = () => {
                     }
                   };
 
+                  const isOJT = emp.employmentType === 'OJT / Intern';
+                  const isTemp = emp.employmentType === 'Temp / Daily Paid';
+                  const isNoWorkNoPay = Boolean(emp.isNoWorkNoPay || isOJT || isTemp);
+
                   return (
                     <div key={emp.id} className="p-4 bg-white hover:bg-slate-50/50 space-y-3">
-                      <div className="flex justify-between items-center border-b border-slate-100 pb-2">
+                      <div className="flex justify-between items-start border-b border-slate-100 pb-2">
                         <div>
-                          <strong className="text-slate-900 text-sm font-bold">{emp.fullName}</strong>
-                          <span className="text-xs text-slate-500 ml-2">
-                            ({emp.position}) • Rate: <strong className="text-blue-700 font-mono">₱{emp.dailyRate?.toFixed(2)}/day</strong> • Basic: <strong className="text-slate-800 font-mono">₱{emp.monthlyBasicSalary.toLocaleString()}</strong>
-                          </span>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <strong className="text-slate-900 text-sm font-bold">{emp.fullName}</strong>
+                            {isOJT ? (
+                              <span className="text-[10px] font-bold bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full border border-purple-200 flex items-center gap-1">
+                                <GraduationCap className="w-3 h-3" /> OJT Trainee (Daily Allowance)
+                              </span>
+                            ) : isTemp ? (
+                              <span className="text-[10px] font-bold bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full border border-amber-200 flex items-center gap-1">
+                                <Clock className="w-3 h-3" /> Temp Daily Paid (No Work No Pay)
+                              </span>
+                            ) : (
+                              <span className="text-[10px] font-bold bg-slate-100 text-slate-700 px-2 py-0.5 rounded-full">
+                                {emp.employmentType}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1 flex items-center gap-3 flex-wrap">
+                            <span>{emp.position}</span>
+                            <span>•</span>
+                            <span>Rate: <strong className="text-blue-700 font-mono">₱{emp.dailyRate?.toFixed(2)}/day</strong></span>
+                            <span>•</span>
+                            {isNoWorkNoPay ? (
+                              <span className="text-amber-800 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                                Policy: Actual Days Worked × ₱{emp.dailyRate?.toFixed(2)}
+                              </span>
+                            ) : (
+                              <span>Basic: <strong className="text-slate-800 font-mono">₱{emp.monthlyBasicSalary.toLocaleString()}</strong></span>
+                            )}
+                            {emp.exemptFromStatutory && (
+                              <span className="text-emerald-700 font-semibold bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[11px]">
+                                ✓ Statutory Exempt
+                              </span>
+                            )}
+                          </div>
                         </div>
                         <div className="text-right">
                           <span className="text-[10px] text-slate-400 uppercase font-bold block">Calculated Net Pay</span>
@@ -1989,11 +2268,28 @@ export const CompanyPayrollView: React.FC = () => {
                         </button>
                       </div>
 
-                      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+                      <div className="grid grid-cols-2 md:grid-cols-7 gap-2.5 text-xs">
+                        <div>
+                          <label className="text-[10px] font-bold text-blue-700 block">
+                            Days Worked {isNoWorkNoPay ? '⭐' : ''}
+                          </label>
+                          <input
+                            type="number"
+                            step="0.5"
+                            value={inp.daysWorked}
+                            onChange={e => setPayrollInputs({
+                              ...payrollInputs,
+                              [emp.id]: { ...inp, daysWorked: Number(e.target.value) }
+                            })}
+                            className="w-full px-2 py-1 border border-blue-300 bg-blue-50/40 rounded font-mono text-blue-800 font-bold"
+                          />
+                        </div>
+
                         <div>
                           <label className="text-[10px] font-bold text-slate-500 block">Days Absent</label>
                           <input
                             type="number"
+                            step="0.5"
                             value={inp.daysAbsent}
                             onChange={e => setPayrollInputs({
                               ...payrollInputs,
@@ -2229,17 +2525,117 @@ export const CompanyPayrollView: React.FC = () => {
       {/* MODAL: ADD / EDIT EMPLOYEE */}
       {showEmployeeModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <form onSubmit={handleSaveEmployee} className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 my-auto max-h-[90vh] overflow-y-auto">
+          <form onSubmit={handleSaveEmployee} className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl space-y-5 my-auto max-h-[92vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3">
-              <h3 className="font-bold text-base text-slate-900">
-                {editingEmployee ? 'Edit Internal Employee' : 'Add Internal Staff Member'}
-              </h3>
-              <button type="button" onClick={() => setShowEmployeeModal(false)} className="text-slate-400 hover:text-slate-600">
+              <div className="flex items-center gap-2.5">
+                <div className={`p-2 rounded-xl ${
+                  empForm.employmentType === 'OJT / Intern' 
+                    ? 'bg-purple-100 text-purple-700' 
+                    : empForm.employmentType === 'Temp / Daily Paid'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-blue-100 text-blue-700'
+                }`}>
+                  {empForm.employmentType === 'OJT / Intern' ? (
+                    <GraduationCap className="w-5 h-5" />
+                  ) : empForm.employmentType === 'Temp / Daily Paid' ? (
+                    <Clock className="w-5 h-5" />
+                  ) : (
+                    <Users className="w-5 h-5" />
+                  )}
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-slate-900">
+                    {editingEmployee ? `Edit Employee: ${editingEmployee.fullName}` : 'Add Internal Accounting Firm Staff'}
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    {empForm.employmentType === 'OJT / Intern' 
+                      ? 'Student Intern / Trainee Allowance setup (Daily No Work, No Pay • Statutory Exempt)' 
+                      : empForm.employmentType === 'Temp / Daily Paid'
+                      ? 'Temporary / Daily-Paid Staff setup (Daily No Work, No Pay • Daily Minimum/Project Wage)'
+                      : 'Configure employee credentials, monthly basic salary, and statutory IDs.'}
+                  </p>
+                </div>
+              </div>
+              <button type="button" onClick={() => setShowEmployeeModal(false)} className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer">
                 <XCircle className="w-6 h-6" />
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            {/* Employment Category Quick Tabs */}
+            <div className="space-y-1.5">
+              <label className="font-bold text-slate-700 text-xs block">Employment Type & Work Agreement</label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { type: 'Regular' as EmploymentType, label: 'Regular Staff', icon: Users, desc: 'Monthly Fixed Base' },
+                  { type: 'Probationary' as EmploymentType, label: 'Probationary', icon: Briefcase, desc: 'Monthly Fixed Base' },
+                  { type: 'OJT / Intern' as EmploymentType, label: '🎓 OJT / Intern', icon: GraduationCap, desc: 'Daily Allowance (No Work No Pay)' },
+                  { type: 'Temp / Daily Paid' as EmploymentType, label: '⏱️ Temp / Daily Staff', icon: Clock, desc: 'Daily Wage (No Work No Pay)' },
+                ].map(tab => {
+                  const isSelected = empForm.employmentType === tab.type;
+                  return (
+                    <button
+                      key={tab.type}
+                      type="button"
+                      onClick={() => {
+                        const nextBasis: SalaryBasis = 
+                          tab.type === 'OJT / Intern' 
+                            ? 'OJT / Daily Allowance' 
+                            : tab.type === 'Temp / Daily Paid'
+                            ? 'Daily (No Work, No Pay)'
+                            : 'Monthly Fixed';
+                        const isNoWork = tab.type === 'OJT / Intern' || tab.type === 'Temp / Daily Paid';
+                        const isExempt = tab.type === 'OJT / Intern';
+
+                        let newDaily = empForm.dailyRate;
+                        let newMonthly = empForm.monthlyBasicSalary;
+
+                        if (tab.type === 'OJT / Intern' && (!empForm.dailyRate || empForm.dailyRate > 600)) {
+                          newDaily = 450.00;
+                          newMonthly = 9900;
+                        } else if (tab.type === 'Temp / Daily Paid' && (!empForm.dailyRate || empForm.dailyRate < 500)) {
+                          newDaily = 645.00;
+                          newMonthly = 14190;
+                        }
+
+                        setEmpForm({
+                          ...empForm,
+                          employmentType: tab.type,
+                          salaryBasis: nextBasis,
+                          isNoWorkNoPay: isNoWork,
+                          exemptFromStatutory: isExempt,
+                          dailyRate: newDaily,
+                          hourlyRate: Number((newDaily / 8).toFixed(2)),
+                          monthlyBasicSalary: newMonthly,
+                          sssNumber: isExempt ? 'Exempt (DOLE Trainee)' : empForm.sssNumber === 'Exempt (DOLE Trainee)' ? '' : empForm.sssNumber,
+                          philhealthNumber: isExempt ? 'Exempt (DOLE Trainee)' : empForm.philhealthNumber === 'Exempt (DOLE Trainee)' ? '' : empForm.philhealthNumber,
+                          pagibigNumber: isExempt ? 'Exempt (DOLE Trainee)' : empForm.pagibigNumber === 'Exempt (DOLE Trainee)' ? '' : empForm.pagibigNumber,
+                          silBalance: isNoWork ? 0 : 5,
+                          vlBalance: isNoWork ? 0 : 10,
+                          slBalance: isNoWork ? 0 : 8
+                        });
+                      }}
+                      className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                        isSelected 
+                          ? tab.type === 'OJT / Intern'
+                            ? 'bg-purple-50 border-purple-500 ring-2 ring-purple-200'
+                            : tab.type === 'Temp / Daily Paid'
+                            ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-200'
+                            : 'bg-blue-50 border-blue-600 ring-2 ring-blue-200'
+                          : 'bg-white border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                        <span>{tab.label}</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">{tab.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Basic Info Section */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Employee No.</label>
                 <input
@@ -2247,12 +2643,12 @@ export const CompanyPayrollView: React.FC = () => {
                   required
                   value={empForm.employeeNo}
                   onChange={e => setEmpForm({ ...empForm, employeeNo: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
                 />
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Full Name</label>
+              <div className="md:col-span-2">
+                <label className="font-bold text-slate-700 block mb-1">Full Legal Name</label>
                 <input
                   type="text"
                   required
@@ -2271,64 +2667,411 @@ export const CompanyPayrollView: React.FC = () => {
                   value={empForm.position}
                   onChange={e => setEmpForm({ ...empForm, position: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  placeholder="e.g. OJT Tax Associate"
                 />
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Monthly Basic Salary (₱)</label>
-                <input
-                  type="number"
-                  required
-                  value={empForm.monthlyBasicSalary}
-                  onChange={e => {
-                    const sal = Number(e.target.value);
-                    const dRate = Number((sal / 21.75).toFixed(2));
-                    const hRate = Number((dRate / 8).toFixed(2));
-                    setEmpForm({
-                      ...empForm,
-                      monthlyBasicSalary: sal,
-                      dailyRate: dRate,
-                      hourlyRate: hRate
-                    });
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
-                />
+                <label className="font-bold text-slate-700 block mb-1">Department</label>
+                <select
+                  value={empForm.department}
+                  onChange={e => setEmpForm({ ...empForm, department: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                >
+                  <option value="Tax & Audit">Tax & Audit</option>
+                  <option value="Accounting">Accounting</option>
+                  <option value="Management Advisory">Management Advisory</option>
+                  <option value="Payroll & Compliance">Payroll & Compliance</option>
+                  <option value="Admin & Support">Admin & Support</option>
+                </select>
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Daily Rate (₱) <span className="text-[10px] text-slate-400 font-normal">(Manual Override)</span></label>
+                <label className="font-bold text-slate-700 block mb-1">Date Hired / Start Date</label>
                 <input
-                  type="number"
-                  step="0.01"
+                  type="date"
                   required
-                  value={empForm.dailyRate}
-                  onChange={e => {
-                    const dRate = Number(e.target.value);
-                    const hRate = Number((dRate / 8).toFixed(2));
-                    setEmpForm({
-                      ...empForm,
-                      dailyRate: dRate,
-                      hourlyRate: hRate
-                    });
-                  }}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-blue-700"
+                  value={empForm.dateHired}
+                  onChange={e => setEmpForm({ ...empForm, dateHired: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
                 />
               </div>
+            </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Hourly Rate (₱)</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  required
-                  value={empForm.hourlyRate}
-                  onChange={e => setEmpForm({ ...empForm, hourlyRate: Number(e.target.value) })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold text-blue-700"
-                />
+            {/* Compensation & Salary Setup Box */}
+            <div className={`p-4 rounded-xl border space-y-3 text-xs ${
+              empForm.isNoWorkNoPay || empForm.employmentType === 'OJT / Intern' || empForm.employmentType === 'Temp / Daily Paid'
+                ? 'bg-amber-50/60 border-amber-200'
+                : 'bg-slate-50 border-slate-200'
+            }`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/80 pb-2">
+                <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                  <Banknote className="w-4 h-4 text-emerald-600" />
+                  {empForm.employmentType === 'OJT / Intern' 
+                    ? 'OJT Daily Stipend / Allowance Configuration (No Work, No Pay)' 
+                    : empForm.employmentType === 'Temp / Daily Paid'
+                    ? 'Temporary Staff Daily Wage Setup (No Work, No Pay)'
+                    : 'Salary & Rate Configuration'}
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700 cursor-pointer bg-white px-2 py-1 rounded border border-slate-200">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(empForm.isNoWorkNoPay)}
+                      onChange={e => setEmpForm({ ...empForm, isNoWorkNoPay: e.target.checked })}
+                      className="rounded text-amber-600 focus:ring-amber-500"
+                    />
+                    <span>Daily No Work, No Pay Policy</span>
+                  </label>
+                </div>
               </div>
 
-              {/* Leave Numbers Section */}
-              <div className="md:col-span-2 bg-emerald-50/60 p-3 rounded-xl border border-emerald-100 space-y-2">
+              {/* No Work No Pay Notice Banner */}
+              {(empForm.isNoWorkNoPay || empForm.employmentType === 'OJT / Intern' || empForm.employmentType === 'Temp / Daily Paid') && (
+                <div className="bg-amber-100/70 border border-amber-300 text-amber-900 p-2.5 rounded-lg text-[11px] flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="block">DOLE "No Work, No Pay" Computation Active:</strong>
+                    <span>In every payroll cutoff, basic earnings are calculated strictly as <code>Days Worked × Daily Rate</code>. Unworked days and absences are not included in base compensation.</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Rate Presets */}
+              {(empForm.employmentType === 'OJT / Intern' || empForm.employmentType === 'Temp / Daily Paid') && (
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500 font-bold">Quick Presets:</span>
+                  {empForm.employmentType === 'OJT / Intern' ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = 350;
+                          setEmpForm({
+                            ...empForm,
+                            dailyRate: d,
+                            hourlyRate: Number((d / 8).toFixed(2)),
+                            monthlyBasicSalary: d * 22
+                          });
+                        }}
+                        className="px-2 py-0.5 bg-white hover:bg-purple-100 text-purple-700 border border-purple-200 rounded font-mono font-bold cursor-pointer"
+                      >
+                        ₱350/day (Basic OJT)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = 450;
+                          setEmpForm({
+                            ...empForm,
+                            dailyRate: d,
+                            hourlyRate: Number((d / 8).toFixed(2)),
+                            monthlyBasicSalary: d * 22
+                          });
+                        }}
+                        className="px-2 py-0.5 bg-purple-600 text-white rounded font-mono font-bold cursor-pointer"
+                      >
+                        ₱450/day (Standard Trainee)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = 550;
+                          setEmpForm({
+                            ...empForm,
+                            dailyRate: d,
+                            hourlyRate: Number((d / 8).toFixed(2)),
+                            monthlyBasicSalary: d * 22
+                          });
+                        }}
+                        className="px-2 py-0.5 bg-white hover:bg-purple-100 text-purple-700 border border-purple-200 rounded font-mono font-bold cursor-pointer"
+                      >
+                        ₱550/day (Senior Intern)
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = 645;
+                          setEmpForm({
+                            ...empForm,
+                            dailyRate: d,
+                            hourlyRate: Number((d / 8).toFixed(2)),
+                            monthlyBasicSalary: d * 22
+                          });
+                        }}
+                        className="px-2 py-0.5 bg-amber-600 text-white rounded font-mono font-bold cursor-pointer"
+                      >
+                        ₱645/day (NCR Statutory Min Wage)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = 500;
+                          setEmpForm({
+                            ...empForm,
+                            dailyRate: d,
+                            hourlyRate: Number((d / 8).toFixed(2)),
+                            monthlyBasicSalary: d * 22
+                          });
+                        }}
+                        className="px-2 py-0.5 bg-white hover:bg-amber-100 text-amber-800 border border-amber-200 rounded font-mono font-bold cursor-pointer"
+                      >
+                        ₱500/day (Provincial Rate)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = 750;
+                          setEmpForm({
+                            ...empForm,
+                            dailyRate: d,
+                            hourlyRate: Number((d / 8).toFixed(2)),
+                            monthlyBasicSalary: d * 22
+                          });
+                        }}
+                        className="px-2 py-0.5 bg-white hover:bg-amber-100 text-amber-800 border border-amber-200 rounded font-mono font-bold cursor-pointer"
+                      >
+                        ₱750/day (Skilled Temp Accountant)
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Rate Inputs */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    {empForm.employmentType === 'OJT / Intern' 
+                      ? 'Daily Allowance / Stipend (₱)' 
+                      : empForm.employmentType === 'Temp / Daily Paid' || empForm.isNoWorkNoPay
+                      ? 'Daily Rate (₱) [Primary Base]'
+                      : 'Daily Rate (₱) (Manual Override)'}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={empForm.dailyRate}
+                    onChange={e => {
+                      const dRate = Number(e.target.value);
+                      const hRate = Number((dRate / 8).toFixed(2));
+                      const mSal = Number((dRate * 22).toFixed(2));
+                      setEmpForm({
+                        ...empForm,
+                        dailyRate: dRate,
+                        hourlyRate: hRate,
+                        monthlyBasicSalary: mSal
+                      });
+                    }}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-blue-700 text-base"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    Hourly Rate (₱) <span className="text-[10px] text-slate-400 font-normal">(Daily ÷ 8h)</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={empForm.hourlyRate}
+                    onChange={e => setEmpForm({ ...empForm, hourlyRate: Number(e.target.value) })}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-800"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">
+                    {empForm.isNoWorkNoPay || empForm.employmentType === 'OJT / Intern' || empForm.employmentType === 'Temp / Daily Paid'
+                      ? 'Est. Monthly Equivalent (22d)'
+                      : 'Monthly Basic Salary (₱)'}
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={empForm.monthlyBasicSalary}
+                    onChange={e => {
+                      const sal = Number(e.target.value);
+                      const dRate = Number((sal / 21.75).toFixed(2));
+                      const hRate = Number((dRate / 8).toFixed(2));
+                      setEmpForm({
+                        ...empForm,
+                        monthlyBasicSalary: sal,
+                        dailyRate: dRate,
+                        hourlyRate: hRate
+                      });
+                    }}
+                    className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-800"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* OJT / Academic Specific Details (Conditional) */}
+            {empForm.employmentType === 'OJT / Intern' && (
+              <div className="bg-purple-50/70 p-4 rounded-xl border border-purple-200 space-y-3 text-xs">
+                <span className="font-bold text-purple-950 text-xs flex items-center gap-1.5">
+                  <GraduationCap className="w-4 h-4 text-purple-700" /> Academic Institution & Internship Tracking
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="font-bold text-purple-900 block mb-1">School / University</label>
+                    <input
+                      type="text"
+                      value={empForm.schoolOrUniversity || ''}
+                      onChange={e => setEmpForm({ ...empForm, schoolOrUniversity: e.target.value })}
+                      placeholder="e.g. UST - AMV College of Accountancy"
+                      className="w-full px-3 py-2 bg-white border border-purple-300 rounded-lg text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-purple-900 block mb-1">Required Practicum Hours</label>
+                    <input
+                      type="number"
+                      value={empForm.internshipRequiredHours || 400}
+                      onChange={e => setEmpForm({ ...empForm, internshipRequiredHours: Number(e.target.value) })}
+                      className="w-full px-3 py-2 bg-white border border-purple-300 rounded-lg text-xs font-mono font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-purple-900 block mb-1">Assigned Mentor / Supervisor</label>
+                    <input
+                      type="text"
+                      value={empForm.supervisorMentor || ''}
+                      onChange={e => setEmpForm({ ...empForm, supervisorMentor: e.target.value })}
+                      placeholder="e.g. Maria Santos, CPA"
+                      className="w-full px-3 py-2 bg-white border border-purple-300 rounded-lg text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-purple-200/80 flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-purple-900 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(empForm.exemptFromStatutory)}
+                      onChange={e => setEmpForm({ ...empForm, exemptFromStatutory: e.target.checked })}
+                      className="rounded text-purple-600 focus:ring-purple-500"
+                    />
+                    <span>Exempt from SSS, PhilHealth, Pag-IBIG & BIR Withholding Tax (DOLE/CHED Trainee Stipend Rule)</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {/* Temporary Staff Specifics (Conditional) */}
+            {empForm.employmentType === 'Temp / Daily Paid' && (
+              <div className="bg-amber-50/70 p-4 rounded-xl border border-amber-200 space-y-3 text-xs">
+                <span className="font-bold text-amber-950 text-xs flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-amber-700" /> Temporary Engagement Terms
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-bold text-amber-900 block mb-1">Contract / Project End Date</label>
+                    <input
+                      type="date"
+                      value={empForm.contractEndDate || ''}
+                      onChange={e => setEmpForm({ ...empForm, contractEndDate: e.target.value })}
+                      className="w-full px-3 py-2 bg-white border border-amber-300 rounded-lg text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-bold text-amber-900 block mb-1">Statutory Exemption</label>
+                    <label className="flex items-center gap-2 text-[11px] font-bold text-amber-900 cursor-pointer mt-2 bg-white p-2 rounded border border-amber-200">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(empForm.exemptFromStatutory)}
+                        onChange={e => setEmpForm({ ...empForm, exemptFromStatutory: e.target.checked })}
+                        className="rounded text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Exempt from Statutory Deductions (Short-term / Consultant)</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Statutory & Payout Info Section */}
+            <div className="space-y-2">
+              <span className="font-bold text-slate-800 text-xs block">Government Statutory IDs & Payout Bank</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">TIN Number</label>
+                  <input
+                    type="text"
+                    value={empForm.tinNumber}
+                    onChange={e => setEmpForm({ ...empForm, tinNumber: e.target.value })}
+                    placeholder="e.g. 123-456-789-000"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">SSS Number</label>
+                  <input
+                    type="text"
+                    value={empForm.sssNumber}
+                    onChange={e => setEmpForm({ ...empForm, sssNumber: e.target.value })}
+                    placeholder={empForm.exemptFromStatutory ? 'Exempt' : 'e.g. 04-1234567-8'}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">PhilHealth Number</label>
+                  <input
+                    type="text"
+                    value={empForm.philhealthNumber}
+                    onChange={e => setEmpForm({ ...empForm, philhealthNumber: e.target.value })}
+                    placeholder={empForm.exemptFromStatutory ? 'Exempt' : 'e.g. 12-345678901-2'}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Pag-IBIG Number</label>
+                  <input
+                    type="text"
+                    value={empForm.pagibigNumber}
+                    onChange={e => setEmpForm({ ...empForm, pagibigNumber: e.target.value })}
+                    placeholder={empForm.exemptFromStatutory ? 'Exempt' : 'e.g. 1234-5678-9012'}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Payout Channel / Bank</label>
+                  <input
+                    type="text"
+                    value={empForm.bankName}
+                    onChange={e => setEmpForm({ ...empForm, bankName: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                    placeholder="e.g. BDO Unibank, GCash"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Account Number</label>
+                  <input
+                    type="text"
+                    value={empForm.accountNumber}
+                    onChange={e => setEmpForm({ ...empForm, accountNumber: e.target.value })}
+                    placeholder="e.g. 0012-3456-7890"
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Leave Numbers Section (For Regular/Probationary) */}
+            {empForm.employmentType !== 'OJT / Intern' && (
+              <div className="bg-emerald-50/60 p-3 rounded-xl border border-emerald-100 space-y-2">
                 <span className="font-bold text-emerald-900 text-xs flex items-center gap-1.5">
                   <Calendar className="w-4 h-4 text-emerald-600" /> Employee Leave Credits & Balances (Days)
                 </span>
@@ -2365,82 +3108,21 @@ export const CompanyPayrollView: React.FC = () => {
                   </div>
                 </div>
               </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">TIN Number</label>
-                <input
-                  type="text"
-                  value={empForm.tinNumber}
-                  onChange={e => setEmpForm({ ...empForm, tinNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">SSS Number</label>
-                <input
-                  type="text"
-                  value={empForm.sssNumber}
-                  onChange={e => setEmpForm({ ...empForm, sssNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">PhilHealth Number</label>
-                <input
-                  type="text"
-                  value={empForm.philhealthNumber}
-                  onChange={e => setEmpForm({ ...empForm, philhealthNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Pag-IBIG Number</label>
-                <input
-                  type="text"
-                  value={empForm.pagibigNumber}
-                  onChange={e => setEmpForm({ ...empForm, pagibigNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Bank Name / Wallet</label>
-                <input
-                  type="text"
-                  value={empForm.bankName}
-                  onChange={e => setEmpForm({ ...empForm, bankName: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                  placeholder="e.g. BDO Unibank, GCash"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Account Number</label>
-                <input
-                  type="text"
-                  value={empForm.accountNumber}
-                  onChange={e => setEmpForm({ ...empForm, accountNumber: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                />
-              </div>
-            </div>
+            )}
 
             <div className="flex justify-end gap-3 pt-3 border-t border-slate-200">
               <button
                 type="button"
                 onClick={() => setShowEmployeeModal(false)}
-                className="px-4 py-2 bg-slate-100 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 bg-blue-600 text-white text-xs font-semibold rounded-xl shadow-sm cursor-pointer"
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-sm cursor-pointer transition-colors"
               >
-                Save Employee Record
+                {editingEmployee ? 'Update Employee Record' : 'Save New Employee Record'}
               </button>
             </div>
           </form>
@@ -2603,6 +3285,68 @@ export const CompanyPayrollView: React.FC = () => {
               </button>
             </div>
 
+            {/* Advance Type Selector ⭐ Cash Advance vs Vale */}
+            <div>
+              <label className="block text-slate-700 font-bold mb-1.5 text-xs">Advance Type & Repayment Option *</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setValeForm(prev => ({
+                      ...prev,
+                      advanceType: 'Cash Advance',
+                      cutoffDeductionAmount: prev.amountGiven
+                    }));
+                  }}
+                  className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                    valeForm.advanceType === 'Cash Advance'
+                      ? 'bg-indigo-50 border-indigo-500 ring-2 ring-indigo-500/20 text-indigo-950 shadow-2xs'
+                      : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold text-xs">
+                    <span>⚡</span>
+                    <span>Cash Advance</span>
+                  </div>
+                  <p className="text-[10px] font-semibold text-indigo-700 mt-0.5">
+                    Will pay full next cut off
+                  </p>
+                  <p className="text-[9px] text-slate-500 mt-0.5 leading-tight">
+                    100% full deduction on immediate next payroll
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const emp = employees.find(e => e.id === valeForm.employeeId);
+                    const defDed = emp?.defaultValeDeduction || 500;
+                    setValeForm(prev => ({
+                      ...prev,
+                      advanceType: 'Vale',
+                      cutoffDeductionAmount: prev.cutoffDeductionAmount === prev.amountGiven ? defDed : prev.cutoffDeductionAmount
+                    }));
+                  }}
+                  className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                    valeForm.advanceType === 'Vale'
+                      ? 'bg-amber-50 border-amber-500 ring-2 ring-amber-500/20 text-amber-950 shadow-2xs'
+                      : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold text-xs">
+                    <span>🔄</span>
+                    <span>Vale</span>
+                  </div>
+                  <p className="text-[10px] font-semibold text-amber-700 mt-0.5">
+                    Will pay monthly Cutoff Deduction
+                  </p>
+                  <p className="text-[9px] text-slate-500 mt-0.5 leading-tight">
+                    Periodic installment deductions across cutoffs
+                  </p>
+                </button>
+              </div>
+            </div>
+
             <div className="space-y-3 text-xs">
               <div>
                 <label className="font-bold text-slate-700 block mb-1">Employee</label>
@@ -2618,26 +3362,50 @@ export const CompanyPayrollView: React.FC = () => {
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Amount Given (₱)</label>
+                <label className="font-bold text-slate-700 block mb-1">Amount Given (₱) *</label>
                 <input
                   type="number"
                   required
                   value={valeForm.amountGiven}
-                  onChange={e => setValeForm({ ...valeForm, amountGiven: Number(e.target.value) })}
+                  onChange={e => {
+                    const newAmt = Number(e.target.value);
+                    if (valeForm.advanceType === 'Cash Advance') {
+                      setValeForm({ ...valeForm, amountGiven: newAmt, cutoffDeductionAmount: newAmt });
+                    } else {
+                      setValeForm({ ...valeForm, amountGiven: newAmt });
+                    }
+                  }}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono font-bold"
                 />
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Cutoff Installment Deduction (₱)</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-700">
+                    {valeForm.advanceType === 'Cash Advance' ? 'Immediate Next Cutoff Deduction (₱)' : 'Cutoff Installment Deduction (₱)'} *
+                  </label>
+                  {valeForm.advanceType === 'Cash Advance' && (
+                    <span className="text-[10px] text-indigo-700 font-bold">100% Next Cutoff</span>
+                  )}
+                </div>
                 <input
                   type="number"
                   required
-                  value={valeForm.cutoffDeductionAmount}
+                  disabled={valeForm.advanceType === 'Cash Advance'}
+                  value={valeForm.advanceType === 'Cash Advance' ? valeForm.amountGiven : valeForm.cutoffDeductionAmount}
                   onChange={e => setValeForm({ ...valeForm, cutoffDeductionAmount: Number(e.target.value) })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-mono"
+                  className={`w-full px-3 py-2 border rounded-lg text-xs font-mono ${
+                    valeForm.advanceType === 'Cash Advance'
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-900 cursor-not-allowed font-bold'
+                      : 'border-slate-300 bg-white'
+                  }`}
                   placeholder="e.g. 500 or 1000 per payroll cutoff"
                 />
+                <span className="text-[10px] text-slate-500 mt-0.5 block">
+                  {valeForm.advanceType === 'Cash Advance'
+                    ? '100% full amount will be deducted on the immediate next payroll cutoff.'
+                    : 'Deducted automatically across payroll cutoffs until fully amortized.'}
+                </span>
               </div>
 
               <div>
@@ -2648,7 +3416,7 @@ export const CompanyPayrollView: React.FC = () => {
                   value={valeForm.purpose}
                   onChange={e => setValeForm({ ...valeForm, purpose: e.target.value })}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                  placeholder="e.g. Emergency family medical expense"
+                  placeholder={valeForm.advanceType === 'Cash Advance' ? 'e.g. Immediate bridge cash advance (full next cutoff)' : 'e.g. Emergency family medical expense'}
                 />
               </div>
             </div>
@@ -2811,20 +3579,104 @@ export const CompanyPayrollView: React.FC = () => {
             {/* Profile Tab 1: Overview & Rates */}
             {profileModalTab === 'overview' && (
               <div className="space-y-4 text-xs">
+                {/* OJT Academic & Internship Highlight Box */}
+                {profileModalEmployee.employmentType === 'OJT / Intern' && (
+                  <div className="bg-purple-50/80 border border-purple-200 rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex justify-between items-start">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-purple-200 text-purple-800 rounded-lg">
+                          <GraduationCap className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <strong className="text-purple-950 text-sm block">Academic Internship & DOLE Trainee Setup</strong>
+                          <span className="text-purple-700 text-[11px]">{profileModalEmployee.schoolOrUniversity || 'Accredited Academic Partner'}</span>
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 bg-purple-200 text-purple-900 text-[10px] font-bold rounded-full">
+                        Daily Stipend: ₱{profileModalEmployee.dailyRate?.toFixed(2)}/day
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 border-t border-purple-200/80 text-[11px]">
+                      <div>
+                        <span className="text-purple-600 block">Required Hours:</span>
+                        <strong className="text-purple-950 font-mono text-xs">{profileModalEmployee.internshipRequiredHours || 400} Hours</strong>
+                      </div>
+                      <div>
+                        <span className="text-purple-600 block">Rendered Hours:</span>
+                        <strong className="text-purple-950 font-mono text-xs">{profileModalEmployee.internshipRenderedHours || 0} Hours</strong>
+                      </div>
+                      <div>
+                        <span className="text-purple-600 block">Faculty / Mentor:</span>
+                        <strong className="text-purple-950 text-xs">{profileModalEmployee.supervisorMentor || 'Supervising CPA'}</strong>
+                      </div>
+                    </div>
+
+                    {/* Hours Progress Bar */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[10px] text-purple-700 font-semibold">
+                        <span>Practicum Progress</span>
+                        <span>
+                          {Math.round(((profileModalEmployee.internshipRenderedHours || 0) / (profileModalEmployee.internshipRequiredHours || 400)) * 100)}% Completed
+                        </span>
+                      </div>
+                      <div className="w-full bg-purple-200/80 h-2 rounded-full overflow-hidden">
+                        <div 
+                          className="bg-purple-600 h-full rounded-full transition-all"
+                          style={{
+                            width: `${Math.min(100, Math.round(((profileModalEmployee.internshipRenderedHours || 0) / (profileModalEmployee.internshipRequiredHours || 400)) * 100))}%`
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Temp Staff Engagement Box */}
+                {profileModalEmployee.employmentType === 'Temp / Daily Paid' && (
+                  <div className="bg-amber-50/80 border border-amber-200 rounded-xl p-3.5 space-y-2 text-[11px]">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-amber-200 text-amber-900 rounded-lg">
+                          <Clock className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <strong className="text-amber-950 text-sm block">Temporary Staff Engagement</strong>
+                          <span className="text-amber-800">Compensated strictly on Daily "No Work, No Pay" basis</span>
+                        </div>
+                      </div>
+                      {profileModalEmployee.contractEndDate && (
+                        <span className="px-2 py-0.5 bg-amber-200 text-amber-900 text-[10px] font-bold rounded-full">
+                          Contract End: {profileModalEmployee.contractEndDate}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
                     <span className="text-[11px] text-slate-500 font-bold uppercase">Basic Compensation</span>
-                    <p className="font-mono text-base font-bold text-slate-900">₱{profileModalEmployee.monthlyBasicSalary.toLocaleString()}</p>
-                    <p className="text-[11px] text-slate-600 font-mono">Daily: ₱{profileModalEmployee.dailyRate.toFixed(2)}</p>
+                    <p className="font-mono text-base font-bold text-slate-900">
+                      {profileModalEmployee.isNoWorkNoPay || profileModalEmployee.employmentType === 'OJT / Intern' || profileModalEmployee.employmentType === 'Temp / Daily Paid'
+                        ? `₱${profileModalEmployee.dailyRate.toFixed(2)}/day`
+                        : `₱${profileModalEmployee.monthlyBasicSalary.toLocaleString()}`}
+                    </p>
+                    <p className="text-[11px] text-slate-600 font-mono">Daily Rate: ₱{profileModalEmployee.dailyRate.toFixed(2)}</p>
                     <p className="text-[11px] text-slate-600 font-mono">Hourly: ₱{profileModalEmployee.hourlyRate.toFixed(2)}</p>
+                    <p className="text-[10px] text-amber-700 font-bold">
+                      {profileModalEmployee.isNoWorkNoPay || profileModalEmployee.employmentType === 'OJT / Intern' || profileModalEmployee.employmentType === 'Temp / Daily Paid'
+                        ? '• Policy: Daily No Work, No Pay'
+                        : '• Fixed Monthly Base'}
+                    </p>
                   </div>
 
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
                     <span className="text-[11px] text-slate-500 font-bold uppercase">Government & Tax IDs</span>
                     <p className="text-slate-700">TIN: <strong className="font-mono">{profileModalEmployee.tinNumber || 'N/A'}</strong></p>
-                    <p className="text-slate-700">SSS: <strong className="font-mono">{profileModalEmployee.sssNumber || 'N/A'}</strong></p>
-                    <p className="text-slate-700">PhilHealth: <strong className="font-mono">{profileModalEmployee.philhealthNumber || 'N/A'}</strong></p>
-                    <p className="text-slate-700">Pag-IBIG: <strong className="font-mono">{profileModalEmployee.pagibigNumber || 'N/A'}</strong></p>
+                    <p className="text-slate-700">SSS: <strong className="font-mono">{profileModalEmployee.sssNumber || (profileModalEmployee.exemptFromStatutory ? 'Exempt' : 'N/A')}</strong></p>
+                    <p className="text-slate-700">PhilHealth: <strong className="font-mono">{profileModalEmployee.philhealthNumber || (profileModalEmployee.exemptFromStatutory ? 'Exempt' : 'N/A')}</strong></p>
+                    <p className="text-slate-700">Pag-IBIG: <strong className="font-mono">{profileModalEmployee.pagibigNumber || (profileModalEmployee.exemptFromStatutory ? 'Exempt' : 'N/A')}</strong></p>
                   </div>
 
                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
@@ -3246,11 +4098,15 @@ export const CompanyPayrollView: React.FC = () => {
           allEmployees={employees.filter(e => e.status === 'Active')}
           cutoffPeriod={selectedAttCutoff}
           cutoffPeriodType={selectedAttCutoffType}
+          leaveRecords={leaveRecords}
           onSelectEmployee={(emp) => {
             setSelectedAttEmployeeId(emp.id);
             setAttendanceModalEmployee(emp);
           }}
-          onClose={() => setAttendanceModalEmployee(null)}
+          onClose={() => {
+            setAttendanceModalEmployee(null);
+            setAttendanceRefreshKey(k => k + 1);
+          }}
           onSyncToPayroll={(totals) => {
             const current = payrollInputs[attendanceModalEmployee.id] || {
               daysWorked: 11,
@@ -3280,6 +4136,7 @@ export const CompanyPayrollView: React.FC = () => {
                 otherAllowances: current.otherAllowances + (totals.holidayPayAmount || 0)
               }
             });
+            setAttendanceRefreshKey(k => k + 1);
             alert(`Synced attendance metrics for ${attendanceModalEmployee.fullName} to payroll batch!`);
           }}
         />
