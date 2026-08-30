@@ -33,6 +33,7 @@ export interface UserPermission {
   dynamicFields: boolean;
   payables?: boolean;
   companyExpenses?: boolean;
+  credentials?: boolean;
 }
 
 export interface User {
@@ -585,6 +586,9 @@ export interface CoreCredential {
   portalName?: string; // e.g. Landbank iAccess, BDO Online, eFPS BIR
   username: string;
   password?: string;
+  passwordPbkdf2Hash?: string;
+  pinPbkdf2Hash?: string;
+  isPbkdf2Hashed?: boolean;
   encryptedPassword?: string;
   encryptedPin?: string;
   iv?: string;

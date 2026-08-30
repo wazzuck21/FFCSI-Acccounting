@@ -82,6 +82,9 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
   // Top-level Navigation Mode: "My Profile" or "Employee Directory & 360° Roster"
   const [viewMode, setViewMode] = useState<'my-profile' | 'directory'>('my-profile');
 
+  // Enforce view mode: non-admins are strictly locked to 'my-profile'
+  const effectiveViewMode = isAdmin ? viewMode : 'my-profile';
+
   // Currently Selected Employee ID for 360° Profile inspection (defaults to logged-in user)
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
 
@@ -185,7 +188,10 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
 
   // Active Employee to display (either logged in user or specifically selected employee from directory)
   const activeEmployee: CompanyEmployee | undefined = useMemo(() => {
-    if (viewMode === 'directory' && selectedEmpId) {
+    if (!isAdmin) {
+      return loggedInEmployee;
+    }
+    if (effectiveViewMode === 'directory' && selectedEmpId) {
       const found = employees.find(e => e.id === selectedEmpId);
       if (found) return found;
     }
@@ -194,7 +200,7 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
       if (found) return found;
     }
     return loggedInEmployee;
-  }, [viewMode, selectedEmpId, employees, loggedInEmployee]);
+  }, [isAdmin, effectiveViewMode, selectedEmpId, employees, loggedInEmployee]);
 
   // Filter leave records for active employee
   const activeEmployeeLeaves = useMemo(() => {
@@ -577,7 +583,7 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base sm:text-lg font-bold text-slate-900">
-                {viewMode === 'my-profile' ? 'My Profile & Employee Workspace' : 'Company Employee Directory & 360° Roster'}
+                {effectiveViewMode === 'my-profile' ? 'My Profile & Employee Workspace' : 'Company Employee Directory & 360° Roster'}
               </h2>
               <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -591,39 +597,41 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
         </div>
 
         <div className="flex items-center gap-2 flex-wrap shrink-0">
-          {/* Mode Switcher */}
-          <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setViewMode('my-profile');
-                setSelectedEmpId(loggedInEmployee?.id || null);
-              }}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                viewMode === 'my-profile'
-                  ? 'bg-white text-blue-700 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <UserIcon className="w-3.5 h-3.5" />
-              <span>My Profile</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('directory')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                viewMode === 'directory'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Users className="w-3.5 h-3.5" />
-              <span>Employee Directory ({employees.length})</span>
-            </button>
-          </div>
+          {/* Mode Switcher - Only visible to Admins */}
+          {isAdmin && (
+            <div className="bg-slate-100 p-1 rounded-xl flex items-center gap-1 text-xs">
+              <button
+                type="button"
+                onClick={() => {
+                  setViewMode('my-profile');
+                  setSelectedEmpId(loggedInEmployee?.id || null);
+                }}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  effectiveViewMode === 'my-profile'
+                    ? 'bg-white text-blue-700 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <UserIcon className="w-3.5 h-3.5" />
+                <span>My Profile</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('directory')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  effectiveViewMode === 'directory'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Users className="w-3.5 h-3.5" />
+                <span>Employee Directory ({employees.length})</span>
+              </button>
+            </div>
+          )}
 
-          {/* Direct Navigation to Company Staff Payroll & HR */}
-          {onNavigateToTab && (
+          {/* Direct Navigation to Company Staff Payroll & HR - Only visible to Admins */}
+          {isAdmin && onNavigateToTab && (
             <button
               type="button"
               onClick={() => onNavigateToTab('payroll')}
@@ -638,9 +646,9 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
       </div>
 
       {/* ========================================================================= */}
-      {/* MODE 1: EMPLOYEE DIRECTORY ROSTER LIST & SEARCH                           */}
+      {/* MODE 1: EMPLOYEE DIRECTORY ROSTER LIST & SEARCH (ADMIN ONLY)              */}
       {/* ========================================================================= */}
-      {viewMode === 'directory' && (
+      {isAdmin && effectiveViewMode === 'directory' && (
         <div className="space-y-6">
           {/* Summary Strip for Directory */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -841,24 +849,26 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
                         <span>View 360° Profile</span>
                       </button>
 
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenLeaveModal(emp)}
-                          className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg border border-slate-200 cursor-pointer"
-                          title="File Leave for this Employee"
-                        >
-                          <Calendar className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenValeModal(emp)}
-                          className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg border border-slate-200 cursor-pointer"
-                          title="Issue Vale Cash Advance"
-                        >
-                          <Banknote className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      {(isAdmin || emp.id === loggedInEmployee?.id) && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenLeaveModal(emp)}
+                            className="p-1.5 text-emerald-700 hover:bg-emerald-50 rounded-lg border border-slate-200 cursor-pointer"
+                            title={isAdmin ? "File Leave for this Employee" : "File My Leave"}
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenValeModal(emp)}
+                            className="p-1.5 text-amber-700 hover:bg-amber-50 rounded-lg border border-slate-200 cursor-pointer"
+                            title={isAdmin ? "Issue Vale Cash Advance" : "Request My Cash Advance"}
+                          >
+                            <Banknote className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -938,7 +948,7 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
       {/* ========================================================================= */}
       {/* MODE 2: EMPLOYEE 360° PROFILE VIEW (PERSONAL OR SELECTED EMPLOYEE)        */}
       {/* ========================================================================= */}
-      {viewMode === 'my-profile' && activeEmployee && (
+      {effectiveViewMode === 'my-profile' && activeEmployee && (
         <div className="space-y-6">
           
           {/* PROFILE TOP BANNER CARD */}
@@ -2106,20 +2116,50 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
               </button>
             </div>
 
-            {/* Employee Selector */}
+            {/* Employee Selector - Admin only allowed to change, otherwise locked to current user */}
             <div>
-              <label className="font-bold text-slate-700 block mb-1 text-xs">Target Employee</label>
-              <select
-                value={targetLeaveEmployeeId}
-                onChange={e => setTargetLeaveEmployeeId(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
-              >
-                {employees.map(emp => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.fullName} ({emp.employeeNo || 'EMP'}) - {emp.position}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-bold text-slate-700 text-xs">Target Employee</label>
+                {!isAdmin && (
+                  <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                    <Lock className="w-3 h-3 text-slate-500" /> Default (Logged-in User)
+                  </span>
+                )}
+              </div>
+
+              {isAdmin ? (
+                <select
+                  value={targetLeaveEmployeeId}
+                  onChange={e => setTargetLeaveEmployeeId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                >
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.fullName} ({emp.employeeNo || 'EMP'}) - {emp.position}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">
+                      {(loggedInEmployee?.fullName || currentUser?.fullName || 'U').charAt(0)}
+                    </div>
+                    <div>
+                      <span className="text-slate-900 font-bold block">{loggedInEmployee?.fullName || currentUser?.fullName}</span>
+                      <span className="text-[10px] text-slate-500 font-mono">{loggedInEmployee?.employeeNo || currentUser?.username} • {loggedInEmployee?.position || 'Staff Member'}</span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
+                    Current User
+                  </span>
+                </div>
+              )}
+              {!isAdmin && (
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Only administrators are authorized to select and file leave requests on behalf of other team members.
+                </p>
+              )}
             </div>
 
             {/* Leave Balance Alert Box */}
@@ -2266,20 +2306,52 @@ export const UserProfileView: React.FC<UserProfileViewProps> = ({ onNavigateToTa
               </button>
             </div>
 
-            {/* Employee Selector */}
+            {/* Employee Selector - Admin only allowed to change, otherwise locked to current user */}
             <div>
-              <label className="font-bold text-slate-700 block mb-1 text-xs">Target Employee</label>
-              <select
-                value={targetValeEmployeeId}
-                onChange={e => setTargetValeEmployeeId(e.target.value)}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold"
-              >
-                {employees.map(emp => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.fullName} ({emp.employeeNo || 'EMP'}) - Current Vale: ₱{(emp.currentValeBalance || 0).toLocaleString()}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center justify-between mb-1">
+                <label className="font-bold text-slate-700 text-xs">Target Employee</label>
+                {!isAdmin && (
+                  <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                    <Lock className="w-3 h-3 text-slate-500" /> Default (Logged-in User)
+                  </span>
+                )}
+              </div>
+
+              {isAdmin ? (
+                <select
+                  value={targetValeEmployeeId}
+                  onChange={e => setTargetValeEmployeeId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs font-semibold focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                >
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.fullName} ({emp.employeeNo || 'EMP'}) - Current Vale: ₱{(emp.currentValeBalance || 0).toLocaleString()}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-[10px] font-bold">
+                      {(loggedInEmployee?.fullName || currentUser?.fullName || 'U').charAt(0)}
+                    </div>
+                    <div>
+                      <span className="text-slate-900 font-bold block">{loggedInEmployee?.fullName || currentUser?.fullName}</span>
+                      <span className="text-[10px] text-slate-500 font-mono">
+                        {loggedInEmployee?.employeeNo || currentUser?.username} • Current Balance: ₱{(loggedInEmployee?.currentValeBalance || 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-900 rounded-full text-[10px] font-bold">
+                    Current User
+                  </span>
+                </div>
+              )}
+              {!isAdmin && (
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Only administrators are authorized to select and issue cash advances on behalf of other employees.
+                </p>
+              )}
             </div>
 
             {/* Advance Type Selector ⭐ Cash Advance vs Vale */}

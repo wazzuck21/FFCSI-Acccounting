@@ -107,6 +107,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateUsers = (newUsers: User[]) => {
     setAllUsers(newUsers);
     saveLocalData('afms_users', newUsers);
+    // If the currentUser is in newUsers, immediately update currentUser state to update navigation reactively
+    if (currentUser) {
+      const updatedCurrent = newUsers.find(u => u.id === currentUser.id);
+      if (updatedCurrent) {
+        const { password, ...cleaned } = updatedCurrent;
+        setCurrentUser(cleaned);
+      }
+    }
   };
 
   // Helper to reset a user's password securely with hash
@@ -375,10 +383,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!currentUser) return false;
     if (currentUser.role === 'SUPER_ADMIN') return true;
     
-    const val = currentUser.permissions[permissionKey];
+    // Check credentials permission
+    if (permissionKey === 'credentials') {
+      if (currentUser.permissions?.credentials !== undefined) {
+        return currentUser.permissions.credentials;
+      }
+      return currentUser.permissions?.clients || currentUser.permissions?.settings || currentUser.role === 'ADMINISTRATOR';
+    }
+
+    // Check payables permission
+    if (permissionKey === 'payables') {
+      if (currentUser.permissions?.payables !== undefined) {
+        return currentUser.permissions.payables;
+      }
+      return currentUser.permissions?.billing || false;
+    }
+
+    // Check companyExpenses permission
+    if (permissionKey === 'companyExpenses') {
+      if (currentUser.permissions?.companyExpenses !== undefined) {
+        return currentUser.permissions.companyExpenses;
+      }
+      return currentUser.permissions?.payables || currentUser.permissions?.billing || false;
+    }
+
+    const val = currentUser.permissions ? currentUser.permissions[permissionKey] : undefined;
     if (typeof val === 'boolean' && !val) return false;
 
-    if (clientId && currentUser.permissions.clientAccessList && currentUser.permissions.clientAccessList.length > 0) {
+    if (clientId && currentUser.permissions?.clientAccessList && currentUser.permissions.clientAccessList.length > 0) {
       if (!currentUser.permissions.clientAccessList.includes(clientId)) {
         return false;
       }

@@ -15,6 +15,7 @@ import {
   CompanyEmployee,
   LeaveRecord,
   ValeRecord,
+  ValeRepayment,
   PayrollRun,
   CompanyExpense,
   ClientService,

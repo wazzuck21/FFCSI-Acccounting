@@ -63,11 +63,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen = false,
   onMobileClose
 }) => {
-  const { hasPermission, isSuperAdmin } = useAuth();
+  const { currentUser, hasPermission, isSuperAdmin } = useAuth();
+  const isAdmin = isSuperAdmin || currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMINISTRATOR';
 
   const menuItems: { id: NavTab; label: string; icon: any; permissionKey?: any; badge?: number; highlight?: boolean }[] = [
     { id: 'dashboard', label: 'Operations Dashboard', icon: LayoutDashboard, permissionKey: 'dashboard' },
-    { id: 'profile', label: 'My Profile & Directory', icon: UserSquare2, highlight: true },
+    { id: 'profile', label: isAdmin ? 'My Profile & Directory' : 'My Profile & Workspace', icon: UserSquare2, highlight: true },
     { id: 'executive-bi', label: 'Executive BI Analytics', icon: BarChart3, permissionKey: 'reports', highlight: true },
     { id: 'my-clients', label: 'My Clients (To-Do List)', icon: Briefcase, permissionKey: 'clients' },
     { id: 'clients', label: 'Client Management', icon: Building2, permissionKey: 'clients' },
@@ -90,7 +91,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'billing', label: 'Billing & Invoices', icon: DollarSign, permissionKey: 'billing' },
     { id: 'payroll', label: 'Company Payroll & HR', icon: Banknote, permissionKey: 'payroll' },
     { id: 'company-expenses', label: 'Company Expenses & Bills', icon: CreditCard, permissionKey: 'companyExpenses' },
-    { id: 'credentials', label: 'Core Credentials Vault', icon: Key, permissionKey: 'clients' },
+    { id: 'credentials', label: 'Core Credentials Vault', icon: Key, permissionKey: 'credentials' },
     { id: 'users', label: 'User Management', icon: UserCog, permissionKey: 'userManagement' },
     { id: 'settings', label: 'System & Master Tables', icon: Settings, permissionKey: 'settings' },
     { id: 'system-integrity', label: 'Data Integrity & Sync', icon: Database, permissionKey: 'settings' },

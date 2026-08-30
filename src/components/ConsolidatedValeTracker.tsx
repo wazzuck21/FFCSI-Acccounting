@@ -38,7 +38,7 @@ interface ConsolidatedValeTrackerProps {
   onNavigateToPayroll?: () => void;
 }
 
-export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = () => {
+export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = ({ onNavigateToPayroll }) => {
   const {
     employees,
     valeRecords,
@@ -50,6 +50,21 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
   } = useData();
 
   const { currentUser, isSuperAdmin } = useAuth();
+  const isAdmin = isSuperAdmin || currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMINISTRATOR' || currentUser?.role === 'MANAGER';
+
+  // Find linked CompanyEmployee for current logged-in user
+  const loggedInEmployee: CompanyEmployee | undefined = useMemo(() => {
+    if (!currentUser) return undefined;
+    const byName = employees.find(
+      e => e.fullName.trim().toLowerCase() === currentUser.fullName.trim().toLowerCase()
+    );
+    if (byName) return byName;
+    const byNo = employees.find(
+      e => e.employeeNo?.toLowerCase() === currentUser.username.toLowerCase()
+    );
+    if (byNo) return byNo;
+    return employees[0];
+  }, [currentUser, employees]);
 
   // Active View: 'consolidated' (Per-Employee Summary) | 'vouchers' (All Individual Loans)
   const [viewMode, setViewMode] = useState<'consolidated' | 'vouchers'>('consolidated');
@@ -301,8 +316,10 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
   // Handle Issuing a New Vale Loan or Cash Advance
   const handleIssueValeSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const emp = employees.find(e => e.id === valeForm.employeeId);
-    if (!emp) return;
+    const targetEmp = isAdmin
+      ? employees.find(e => e.id === valeForm.employeeId)
+      : (loggedInEmployee || employees.find(e => e.id === valeForm.employeeId));
+    if (!targetEmp) return;
 
     const isCashAdvance = valeForm.advanceType === 'Cash Advance';
     const finalCutoffDeduction = isCashAdvance 
@@ -310,8 +327,8 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
       : Math.max(50, Number(valeForm.cutoffDeductionAmount));
 
     addValeRecord({
-      employeeId: emp.id,
-      employeeName: emp.fullName,
+      employeeId: targetEmp.id,
+      employeeName: targetEmp.fullName,
       advanceType: valeForm.advanceType,
       repaymentMode: isCashAdvance ? 'Full Next Cutoff' : 'Installment',
       amountGiven: Number(valeForm.amountGiven),
@@ -322,8 +339,8 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
     });
 
     const auditMessage = isCashAdvance
-      ? `Issued Cash Advance to ${emp.fullName} (${emp.employeeNo}): ₱${Number(valeForm.amountGiven).toLocaleString()} (Full deduction scheduled on immediate next cutoff). Purpose: ${valeForm.purpose}`
-      : `Issued Vale to ${emp.fullName} (${emp.employeeNo}): ₱${Number(valeForm.amountGiven).toLocaleString()} with monthly/cutoff deduction ₱${finalCutoffDeduction.toLocaleString()}. Purpose: ${valeForm.purpose}`;
+      ? `Issued Cash Advance to ${targetEmp.fullName} (${targetEmp.employeeNo}): ₱${Number(valeForm.amountGiven).toLocaleString()} (Full deduction scheduled on immediate next cutoff). Purpose: ${valeForm.purpose}`
+      : `Issued Vale to ${targetEmp.fullName} (${targetEmp.employeeNo}): ₱${Number(valeForm.amountGiven).toLocaleString()} with monthly/cutoff deduction ₱${finalCutoffDeduction.toLocaleString()}. Purpose: ${valeForm.purpose}`;
 
     addAuditLog(
       'VALE_ISSUANCE',
@@ -334,7 +351,7 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
 
     setShowIssueValeModal(false);
     setValeForm({
-      employeeId: employees[0]?.id || '',
+      employeeId: loggedInEmployee?.id || employees[0]?.id || '',
       advanceType: 'Vale',
       amountGiven: 3000,
       dateGiven: new Date().toISOString().split('T')[0],
@@ -469,13 +486,48 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
           {/* Issue New Vale Button */}
           <button
             type="button"
-            onClick={() => setShowIssueValeModal(true)}
+            onClick={() => {
+              if (!isAdmin && loggedInEmployee) {
+                setValeForm(prev => ({ ...prev, employeeId: loggedInEmployee.id }));
+              }
+              setShowIssueValeModal(true);
+            }}
             className="px-4 py-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition-all cursor-pointer hover:scale-[1.02] active:scale-[0.98]"
           >
             <Plus className="w-4 h-4" />
             <span>Grant Cash Advance (Vale)</span>
           </button>
         </div>
+      </div>
+
+      {/* AUTOMATIC PAYROLL SETTLEMENT LIVE NOTICE */}
+      <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-amber-50 p-4 rounded-2xl border border-blue-200/80 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+        <div className="flex items-start gap-3">
+          <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs shrink-0 mt-0.5 sm:mt-0">
+            <Sparkles className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-slate-900 text-sm">Automated Payroll Deduction & Settlement Sync</span>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                ⚡ Auto-Updated via Payroll
+              </span>
+            </div>
+            <p className="text-slate-600 mt-0.5 leading-relaxed text-[11px]">
+              Cash advance (Vale) repayment balances and payment statuses are <strong>automatically updated whenever a payroll run is approved or generated</strong>. Installments and lump-sum cash advances deduct straight from the employee's cutoff payslip without manual accounting steps.
+            </p>
+          </div>
+        </div>
+        {onNavigateToPayroll && (
+          <button
+            type="button"
+            onClick={onNavigateToPayroll}
+            className="shrink-0 px-3 py-1.5 bg-white hover:bg-blue-50 text-blue-700 border border-blue-300 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+          >
+            <span>View Payroll Runs</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* TOP CONSOLIDATED SUMMARY METRIC STRIP */}
@@ -1099,19 +1151,51 @@ export const ConsolidatedValeTracker: React.FC<ConsolidatedValeTrackerProps> = (
               
               {/* Employee Selection */}
               <div>
-                <label className="block text-slate-700 font-bold mb-1">Select Employee *</label>
-                <select
-                  required
-                  value={valeForm.employeeId}
-                  onChange={(e) => setValeForm({ ...valeForm, employeeId: e.target.value })}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
-                >
-                  {employees.map(e => (
-                    <option key={e.id} value={e.id}>
-                      {e.fullName} ({e.employeeNo || 'EMP'}) — Current Balance: ₱{(e.currentValeBalance || 0).toLocaleString()}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-700 font-bold">Select Employee *</label>
+                  {!isAdmin && (
+                    <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                      <span>🔒</span> Default (Logged-in User)
+                    </span>
+                  )}
+                </div>
+
+                {isAdmin ? (
+                  <select
+                    required
+                    value={valeForm.employeeId}
+                    onChange={(e) => setValeForm({ ...valeForm, employeeId: e.target.value })}
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
+                  >
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>
+                        {e.fullName} ({e.employeeNo || 'EMP'}) — Current Balance: ₱{(e.currentValeBalance || 0).toLocaleString()}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-600 to-orange-600 text-white font-bold flex items-center justify-center text-xs shadow-2xs">
+                        {(loggedInEmployee?.fullName || currentUser?.fullName || 'U').charAt(0)}
+                      </div>
+                      <div>
+                        <span className="text-slate-900 font-bold block">{loggedInEmployee?.fullName || currentUser?.fullName}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {loggedInEmployee?.employeeNo || currentUser?.username} • {loggedInEmployee?.position || 'Staff Member'} • Balance: ₱{(loggedInEmployee?.currentValeBalance || 0).toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold">
+                      Current User
+                    </span>
+                  </div>
+                )}
+                {!isAdmin && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Only administrators are authorized to select and issue cash advances on behalf of other employees.
+                  </p>
+                )}
               </div>
 
               {/* Advance Type Selector ⭐ Cash Advance vs Vale */}

@@ -35,11 +35,17 @@ import {
   Settings,
   Sparkles,
   KeyRound,
+  Key,
+  Banknote,
+  CreditCard,
+  CheckSquare,
   Filter,
   CheckCheck,
   PlusCircle,
   CheckCircle2,
-  RotateCcw
+  RotateCcw,
+  RefreshCw,
+  SlidersHorizontal
 } from 'lucide-react';
 
 // Comprehensive BIR Standard Master List
@@ -109,6 +115,8 @@ export const UserManagementView: React.FC = () => {
   const [permCompliance, setPermCompliance] = useState(true);
   const [permReports, setPermReports] = useState(false);
   const [permPayroll, setPermPayroll] = useState(false);
+  const [permCompanyExpenses, setPermCompanyExpenses] = useState(false);
+  const [permCredentials, setPermCredentials] = useState(false);
   const [permDocuments, setPermDocuments] = useState(true);
   const [permSettings, setPermSettings] = useState(false);
   const [permUserManagement, setPermUserManagement] = useState(false);
@@ -152,71 +160,97 @@ export const UserManagementView: React.FC = () => {
     setVisiblePasswords(prev => ({ ...prev, [userId]: !prev[userId] }));
   };
 
+  // Helper to auto-update all core navigation choices based on Role Type
+  const applyRolePermissions = (targetRole: UserRole) => {
+    const norm = normalizeUserRole(targetRole);
+    switch (norm) {
+      case 'SUPER_ADMIN':
+      case 'ADMINISTRATOR':
+        setPermDashboard(true);
+        setPermClients(true);
+        setPermBilling(true);
+        setPermPayables(true);
+        setPermCompliance(true);
+        setPermReports(true);
+        setPermPayroll(true);
+        setPermCompanyExpenses(true);
+        setPermCredentials(true);
+        setPermDocuments(true);
+        setPermSettings(true);
+        setPermUserManagement(true);
+        setPermDynamicFields(true);
+        break;
+      case 'SENIOR_ACCOUNTANT':
+      case 'BENEFITS':
+        setPermDashboard(true);
+        setPermClients(true);
+        setPermBilling(false);
+        setPermPayables(true);
+        setPermCompliance(true);
+        setPermReports(true);
+        setPermPayroll(true);
+        setPermCompanyExpenses(true);
+        setPermCredentials(false);
+        setPermDocuments(true);
+        setPermSettings(false);
+        setPermUserManagement(false);
+        setPermDynamicFields(false);
+        break;
+      case 'ACCOUNTANT':
+      case 'ACCOUNTING':
+        setPermDashboard(true);
+        setPermClients(true);
+        setPermBilling(false);
+        setPermPayables(true);
+        setPermCompliance(true);
+        setPermReports(true);
+        setPermPayroll(true);
+        setPermCompanyExpenses(false);
+        setPermCredentials(false);
+        setPermDocuments(true);
+        setPermSettings(false);
+        setPermUserManagement(false);
+        setPermDynamicFields(false);
+        break;
+      case 'BILLING_STAFF':
+      case 'BILLING':
+        setPermDashboard(true);
+        setPermClients(true);
+        setPermBilling(true);
+        setPermPayables(true);
+        setPermCompliance(false);
+        setPermReports(true);
+        setPermPayroll(false);
+        setPermCompanyExpenses(false);
+        setPermCredentials(false);
+        setPermDocuments(true);
+        setPermSettings(false);
+        setPermUserManagement(false);
+        setPermDynamicFields(false);
+        break;
+      case 'STAFF':
+      default:
+        setPermDashboard(true);
+        setPermClients(true);
+        setPermBilling(false);
+        setPermPayables(false);
+        setPermCompliance(true);
+        setPermReports(false);
+        setPermPayroll(false);
+        setPermCompanyExpenses(false);
+        setPermCredentials(false);
+        setPermDocuments(true);
+        setPermSettings(false);
+        setPermUserManagement(false);
+        setPermDynamicFields(false);
+        break;
+    }
+  };
+
   // Preset core navigation permissions based on selected Role Type
   const handleRoleChange = (newRole: UserRole) => {
     setRole(newRole);
-    if (newRole === 'SUPER_ADMIN') {
-      setPermDashboard(true);
-      setPermClients(true);
-      setPermBilling(true);
-      setPermPayables(true);
-      setPermCompliance(true);
-      setPermReports(true);
-      setPermPayroll(true);
-      setPermDocuments(true);
-      setPermSettings(true);
-      setPermUserManagement(true);
-      setPermDynamicFields(true);
-    } else if (newRole === 'BILLING') {
-      setPermDashboard(true);
-      setPermClients(true);
-      setPermBilling(true);
-      setPermPayables(true);
-      setPermCompliance(false);
-      setPermReports(true);
-      setPermPayroll(false);
-      setPermDocuments(true);
-      setPermSettings(false);
-      setPermUserManagement(false);
-      setPermDynamicFields(false);
-    } else if (newRole === 'ACCOUNTING') {
-      setPermDashboard(true);
-      setPermClients(true);
-      setPermBilling(false);
-      setPermPayables(true);
-      setPermCompliance(true);
-      setPermReports(true);
-      setPermPayroll(true);
-      setPermDocuments(true);
-      setPermSettings(false);
-      setPermUserManagement(false);
-      setPermDynamicFields(false);
-    } else if (newRole === 'BENEFITS') {
-      setPermDashboard(true);
-      setPermClients(true);
-      setPermBilling(false);
-      setPermPayables(true);
-      setPermCompliance(true);
-      setPermReports(true);
-      setPermPayroll(true);
-      setPermDocuments(true);
-      setPermSettings(false);
-      setPermUserManagement(false);
-      setPermDynamicFields(false);
-    } else {
-      // STAFF
-      setPermDashboard(true);
-      setPermClients(true);
-      setPermBilling(false);
-      setPermPayables(false);
-      setPermCompliance(true);
-      setPermReports(false);
-      setPermPayroll(false);
-      setPermDocuments(true);
-      setPermSettings(false);
-      setPermUserManagement(false);
-      setPermDynamicFields(false);
-    }
+    applyRolePermissions(newRole);
   };
 
   const handleOpenCreateUser = () => {
@@ -229,18 +263,8 @@ export const UserManagementView: React.FC = () => {
     setRole('STAFF');
     setStatus('Active');
     
-    // Default core navigation
-    setPermDashboard(true);
-    setPermClients(true);
-    setPermBilling(false);
-    setPermPayables(false);
-    setPermCompliance(true);
-    setPermReports(false);
-    setPermPayroll(false);
-    setPermDocuments(true);
-    setPermSettings(false);
-    setPermUserManagement(false);
-    setPermDynamicFields(false);
+    // Auto-update core navigation choices for Staff default
+    applyRolePermissions('STAFF');
 
     setRestrictedClients([]);
     setClientServicePerms({});
@@ -273,6 +297,8 @@ export const UserManagementView: React.FC = () => {
     setPermCompliance(p.compliance ?? true);
     setPermReports(p.reports ?? false);
     setPermPayroll(p.payroll ?? false);
+    setPermCompanyExpenses(p.companyExpenses ?? false);
+    setPermCredentials(p.credentials ?? (p.clients && (user.role === 'SUPER_ADMIN' || user.role === 'ADMINISTRATOR')));
     setPermDocuments(p.documents ?? true);
     setPermSettings(p.settings ?? false);
     setPermUserManagement(p.userManagement ?? false);
@@ -378,6 +404,8 @@ export const UserManagementView: React.FC = () => {
         compliance: permCompliance,
         reports: permReports,
         payroll: permPayroll,
+        companyExpenses: permCompanyExpenses,
+        credentials: permCredentials || role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR',
         documents: permDocuments,
         settings: permSettings || role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR',
         userManagement: permUserManagement || role === 'SUPER_ADMIN' || role === 'ADMINISTRATOR',
@@ -714,17 +742,24 @@ export const UserManagementView: React.FC = () => {
                   
                   {/* Role Type Select */}
                   <div>
-                    <label className="block text-slate-700 font-semibold mb-1">Role Type *</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-slate-700 font-semibold">Role Type *</label>
+                      <span className="text-[11px] text-indigo-600 font-medium">Auto-configures navigation</span>
+                    </div>
                     <select
                       value={role}
                       onChange={e => handleRoleChange(e.target.value as UserRole)}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-bold focus:ring-2 focus:ring-indigo-100 cursor-pointer"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-bold focus:ring-2 focus:ring-indigo-100 cursor-pointer shadow-sm"
                     >
-                      <option value="SUPER_ADMIN">Super Admin (Full Permanent Access)</option>
-                      <option value="BILLING">Billing</option>
-                      <option value="ACCOUNTING">Accounting</option>
-                      <option value="BENEFITS">Benefits</option>
-                      <option value="STAFF">Staff</option>
+                      <option value="SUPER_ADMIN">Super Admin (Full Permanent System Access)</option>
+                      <option value="ADMINISTRATOR">Administrator (Full Administrative Control)</option>
+                      <option value="SENIOR_ACCOUNTANT">Senior Accountant (Payroll, Expenses, Payables & Filing)</option>
+                      <option value="ACCOUNTANT">Accountant (Payables, Payroll, Compliance & Reports)</option>
+                      <option value="BILLING_STAFF">Billing Staff (Invoices, Client Billing & Payables)</option>
+                      <option value="STAFF">General Staff (Client Monitor & Document Access)</option>
+                      <option value="ACCOUNTING">Accounting Specialist</option>
+                      <option value="BILLING">Billing Specialist</option>
+                      <option value="BENEFITS">Benefits Specialist</option>
                     </select>
                   </div>
 
@@ -734,7 +769,7 @@ export const UserManagementView: React.FC = () => {
                     <select
                       value={status}
                       onChange={e => setStatus(e.target.value as any)}
-                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-indigo-100 cursor-pointer"
+                      className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 font-semibold focus:ring-2 focus:ring-indigo-100 cursor-pointer shadow-sm"
                     >
                       <option value="Active">Active</option>
                       <option value="Disabled">Disabled</option>
@@ -746,123 +781,295 @@ export const UserManagementView: React.FC = () => {
 
               {/* SECTION 2: Core Navigation Access Restrictions */}
               <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider flex items-center gap-1.5">
-                    <Sliders className="w-4 h-4 text-indigo-600" /> Core Navigation Access Restrictions
-                  </h4>
-                  <span className="text-[10px] text-slate-500 font-medium">Toggle allowed tabs for this user</span>
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/80 pb-2">
+                  <div className="flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-indigo-600" />
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">
+                        Core Navigation Access Restrictions
+                      </h4>
+                      <p className="text-[11px] text-slate-500 font-medium">
+                        Auto-updated when changing Role, or customize granular tab access below:
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* Preset Auto-Action Controls */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => applyRolePermissions(role)}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors shadow-xs"
+                      title="Reset navigation choices based on the currently selected Role"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Auto-Update from Role
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPermDashboard(true);
+                        setPermClients(true);
+                        setPermBilling(true);
+                        setPermPayables(true);
+                        setPermCompliance(true);
+                        setPermReports(true);
+                        setPermPayroll(true);
+                        setPermCompanyExpenses(true);
+                        setPermCredentials(true);
+                        setPermDocuments(true);
+                        setPermSettings(true);
+                        setPermUserManagement(true);
+                        setPermDynamicFields(true);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors shadow-xs"
+                    >
+                      <CheckCheck className="w-3 h-3 text-emerald-600" /> Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPermDashboard(true);
+                        setPermClients(true);
+                        setPermBilling(false);
+                        setPermPayables(false);
+                        setPermCompliance(false);
+                        setPermReports(false);
+                        setPermPayroll(false);
+                        setPermCompanyExpenses(false);
+                        setPermCredentials(false);
+                        setPermDocuments(false);
+                        setPermSettings(false);
+                        setPermUserManagement(false);
+                        setPermDynamicFields(false);
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-md hover:bg-slate-50 transition-colors shadow-xs"
+                    >
+                      <X className="w-3 h-3 text-rose-500" /> Clear
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 bg-white p-3 border border-slate-200 rounded-xl">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 bg-white p-3 border border-slate-200 rounded-xl shadow-xs">
                   
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 1. Operations Dashboard */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permDashboard ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permDashboard}
                       onChange={e => setPermDashboard(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Executive Dashboard</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <LayoutDashboard className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span>Operations Dashboard</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Overview KPI charts and quick cards</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 2. Client Management & Workspaces */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permClients ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permClients}
                       onChange={e => setPermClients(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Clients & Workspaces</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span>Client Management</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Assigned company workspaces & tasks</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
-                    <input
-                      type="checkbox"
-                      checked={permBilling}
-                      onChange={e => setPermBilling(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="font-medium text-slate-800">Billing & Invoices</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 3. BIR & Benefits Payables */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permPayables ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permPayables}
                       onChange={e => setPermPayables(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">BIR & Benefits Payables</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <Receipt className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>BIR & Benefits Payables</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Tax dues & statutory remittances</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 4. Compliance & Deadline Monitor */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permCompliance ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permCompliance}
                       onChange={e => setPermCompliance(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Compliance Monitor</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <ShieldAlert className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        <span>Deadline Monitoring</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Compliance calendars and filing alerts</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 5. Billing & Invoices */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permBilling ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
+                    <input
+                      type="checkbox"
+                      checked={permBilling}
+                      onChange={e => setPermBilling(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <DollarSign className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        <span>Billing & Invoices</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Client retainer & statement billing</span>
+                    </div>
+                  </label>
+
+                  {/* 6. Executive BI & Reports */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permReports ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permReports}
                       onChange={e => setPermReports(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Reports & Analytics</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <BarChart3 className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                        <span>Executive BI Analytics</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Reports & financial performance</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 7. Company Payroll & HR */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permPayroll ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permPayroll}
                       onChange={e => setPermPayroll(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Payroll Management</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <Banknote className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                        <span>Company Payroll & HR</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Payslips, vale ledger & leave management</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 8. Company Expenses & Bills */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permCompanyExpenses ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
+                    <input
+                      type="checkbox"
+                      checked={permCompanyExpenses}
+                      onChange={e => setPermCompanyExpenses(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <CreditCard className="w-3.5 h-3.5 text-orange-600 shrink-0" />
+                        <span>Company Expenses & Bills</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Operational disbursements & vouchers</span>
+                    </div>
+                  </label>
+
+                  {/* 9. Confidential Core Credentials Vault */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permCredentials ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
+                    <input
+                      type="checkbox"
+                      checked={permCredentials}
+                      onChange={e => setPermCredentials(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <Key className="w-3.5 h-3.5 text-cyan-600 shrink-0" />
+                        <span>Core Credentials Vault</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">PBKDF2 secured eFPS & portal logins</span>
+                    </div>
+                  </label>
+
+                  {/* 10. Document Storage & Library */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permDocuments ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permDocuments}
                       onChange={e => setPermDocuments(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Document Storage</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <FolderGit2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                        <span>Document Library</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">File repository and tax filings</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
-                    <input
-                      type="checkbox"
-                      checked={permSettings}
-                      onChange={e => setPermSettings(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                    />
-                    <span className="font-medium text-slate-800">System Settings</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 11. User Management */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permUserManagement ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permUserManagement}
                       onChange={e => setPermUserManagement(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">User Management</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <UserCog className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                        <span>User Management</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Staff roles, permissions and accounts</span>
+                    </div>
                   </label>
 
-                  <label className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                  {/* 12. System Settings & Master Tables */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permSettings ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
+                    <input
+                      type="checkbox"
+                      checked={permSettings}
+                      onChange={e => setPermSettings(e.target.checked)}
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <Settings className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+                        <span>System & Master Tables</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Tax calendars, rates & system sync</span>
+                    </div>
+                  </label>
+
+                  {/* 13. Dynamic Fields Builder */}
+                  <label className={`flex items-start gap-2.5 p-2 rounded-lg border transition-all cursor-pointer ${permDynamicFields ? 'bg-indigo-50/50 border-indigo-200 text-indigo-950' : 'bg-slate-50/60 border-slate-200 text-slate-600 hover:bg-slate-100/50'}`}>
                     <input
                       type="checkbox"
                       checked={permDynamicFields}
                       onChange={e => setPermDynamicFields(e.target.checked)}
-                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      className="mt-0.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="font-medium text-slate-800">Dynamic Fields Builder</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 font-semibold text-xs text-slate-800">
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                        <span>Dynamic Fields Builder</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 leading-tight block">Custom form builder & dynamic metadata</span>
+                    </div>
                   </label>
 
                 </div>

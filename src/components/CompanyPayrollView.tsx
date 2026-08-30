@@ -86,6 +86,21 @@ export const CompanyPayrollView: React.FC = () => {
   } = useData();
 
   const { currentUser, isSuperAdmin } = useAuth();
+  const isAdmin = isSuperAdmin || currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMINISTRATOR' || currentUser?.role === 'MANAGER';
+
+  // Find linked CompanyEmployee for current logged-in user
+  const loggedInEmployee: CompanyEmployee | undefined = useMemo(() => {
+    if (!currentUser) return undefined;
+    const byName = employees.find(
+      e => e.fullName.trim().toLowerCase() === currentUser.fullName.trim().toLowerCase()
+    );
+    if (byName) return byName;
+    const byNo = employees.find(
+      e => e.employeeNo?.toLowerCase() === currentUser.username.toLowerCase()
+    );
+    if (byNo) return byNo;
+    return employees[0];
+  }, [currentUser, employees]);
 
   const [activeTab, setActiveTab] = useState<'payroll' | 'employees' | 'leaves' | 'vale' | 'attendance' | 'calculator'>('payroll');
   const [selectedRun, setSelectedRun] = useState<PayrollRun | null>(null);
@@ -787,7 +802,9 @@ export const CompanyPayrollView: React.FC = () => {
 
   const handleSaveLeave = (e: React.FormEvent) => {
     e.preventDefault();
-    const emp = employees.find(e => e.id === leaveForm.employeeId);
+    const emp = isAdmin
+      ? employees.find(e => e.id === leaveForm.employeeId)
+      : (loggedInEmployee || employees.find(e => e.id === leaveForm.employeeId));
     if (!emp) return;
 
     addLeaveRecord({
@@ -827,7 +844,9 @@ export const CompanyPayrollView: React.FC = () => {
 
   const handleSaveVale = (e: React.FormEvent) => {
     e.preventDefault();
-    const emp = employees.find(e => e.id === valeForm.employeeId);
+    const emp = isAdmin
+      ? employees.find(e => e.id === valeForm.employeeId)
+      : (loggedInEmployee || employees.find(e => e.id === valeForm.employeeId));
     if (!emp) return;
 
     const isCA = valeForm.advanceType === 'Cash Advance';
@@ -3142,16 +3161,35 @@ export const CompanyPayrollView: React.FC = () => {
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Employee</label>
-                <select
-                  value={leaveForm.employeeId}
-                  onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                >
-                  {employees.map(e => (
-                    <option key={e.id} value={e.id}>{e.fullName} ({e.position})</option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-700 block">Employee *</label>
+                  {!isAdmin && (
+                    <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                      <span>🔒</span> Default (Logged-in User)
+                    </span>
+                  )}
+                </div>
+                {isAdmin ? (
+                  <select
+                    value={leaveForm.employeeId}
+                    onChange={e => setLeaveForm({ ...leaveForm, employeeId: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  >
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.fullName} ({e.position})</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 flex items-center justify-between">
+                    <span>{loggedInEmployee?.fullName || currentUser?.fullName} ({loggedInEmployee?.position || 'Staff Member'})</span>
+                    <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-full text-[10px] font-bold">Current User</span>
+                  </div>
+                )}
+                {!isAdmin && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Only administrators are authorized to select and file leave on behalf of other team members.
+                  </p>
+                )}
               </div>
 
               {/* Live Leave Balance Preview ⭐ */}
@@ -3349,16 +3387,35 @@ export const CompanyPayrollView: React.FC = () => {
 
             <div className="space-y-3 text-xs">
               <div>
-                <label className="font-bold text-slate-700 block mb-1">Employee</label>
-                <select
-                  value={valeForm.employeeId}
-                  onChange={e => setValeForm({ ...valeForm, employeeId: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
-                >
-                  {employees.map(e => (
-                    <option key={e.id} value={e.id}>{e.fullName} ({e.position})</option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-700 block">Employee *</label>
+                  {!isAdmin && (
+                    <span className="text-[10px] text-slate-500 font-semibold flex items-center gap-1 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                      <span>🔒</span> Default (Logged-in User)
+                    </span>
+                  )}
+                </div>
+                {isAdmin ? (
+                  <select
+                    value={valeForm.employeeId}
+                    onChange={e => setValeForm({ ...valeForm, employeeId: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs"
+                  >
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>{e.fullName} ({e.position})</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 flex items-center justify-between">
+                    <span>{loggedInEmployee?.fullName || currentUser?.fullName} ({loggedInEmployee?.position || 'Staff Member'})</span>
+                    <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-bold">Current User</span>
+                  </div>
+                )}
+                {!isAdmin && (
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Only administrators are authorized to select and issue cash advances on behalf of other team members.
+                  </p>
+                )}
               </div>
 
               <div>
