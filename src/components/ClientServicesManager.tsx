@@ -438,7 +438,9 @@ export const ClientServicesManager: React.FC<ClientServicesManagerProps> = ({ cl
                     <td className="p-3.5">
                       <div className="flex items-center gap-1 text-slate-700">
                         <User className="w-3.5 h-3.5 text-slate-400" />
-                        <span>{svc.assignedStaffName || 'Unassigned'}</span>
+                        <span className={!svc.assignedStaffName || svc.assignedStaffName === 'Unassigned' ? 'text-amber-700 italic text-[11px]' : 'font-medium'}>
+                          {svc.assignedStaffName && svc.assignedStaffName !== 'Unassigned' ? svc.assignedStaffName : 'Not yet assigned'}
+                        </span>
                       </div>
                     </td>
 

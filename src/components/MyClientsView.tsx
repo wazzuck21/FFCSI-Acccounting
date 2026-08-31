@@ -4,6 +4,7 @@ import { useData } from '../context/DataContext';
 import { ClientProfile, PayableCategory, CustomDeadlineRule, PaymentBehavior, FilingRequired, SubmissionMethod, ComplianceCategory } from '../types';
 import { MONTHS_LIST, MONTH_FULL_NAMES, MONTH_INDEX } from '../data/masterTables';
 import { calculateClientDeadline, isPayableObligation, getPaymentBehavior, getComplianceCategory, getSubmissionMethod, getFilingRequired } from '../utils/deadlineEngine';
+import { isStaffAssignedToClient, getFormattedStaffAssignment, getAssignedUsersForClient } from '../utils/staffAssignmentHelper';
 import { CurrencyInput } from './CurrencyInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { TablePagination } from './TablePagination';
@@ -125,6 +126,23 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
   const targetPeriodInfo = getTargetPeriodForMonth(selectedMonth, selectedYear);
   const currentPeriodCode = targetPeriodInfo.code; // e.g. "07-2026" for August 2026 deadline
 
+  // Helper to check if a client is assigned to the selected staff member
+  const isClientAssignedToStaff = (client: ClientProfile, staffName: string): boolean => {
+    if (staffName === 'ALL_STAFF') return true;
+    if (staffName === 'UNASSIGNED') {
+      const assigned = getAssignedUsersForClient(client, allUsers, 'ALL');
+      return assigned.length === 0;
+    }
+    const selectedUserObj = allUsers.find(u => u.fullName === staffName);
+    if (!selectedUserObj) return false;
+    return isStaffAssignedToClient(selectedUserObj, client, 'ALL');
+  };
+
+  // Helper to get formatted display name of assigned staff for an item or client
+  const getStaffDisplayName = (client: ClientProfile, category?: 'BIR' | 'BENEFITS', specificCode?: string) => {
+    return getFormattedStaffAssignment(client, allUsers, category, specificCode);
+  };
+
   // Filter clients assigned to selected staff member (excluding Archived clients from active operational checklist)
   const myAssignedClients = clients
     .filter(client => client.status !== 'Archived')
@@ -133,32 +151,20 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
       if (clientStatusFilter === 'For Compliance') return client.status === 'For Compliance';
       return true;
     })
+    .filter(client => isClientAssignedToStaff(client, selectedStaffName))
     .filter(client => {
-      if (selectedStaffName === 'ALL_STAFF') return true;
-      const selectedUserObj = allUsers.find(u => u.fullName === selectedStaffName);
-      const match = client.assignedStaffName === selectedStaffName || 
-                    (selectedUserObj && client.assignedStaffId === selectedUserObj.id) ||
-                    (client.assignedStaffName && client.assignedStaffName.toLowerCase().includes(selectedStaffName.toLowerCase()));
-      return match;
-    }).filter(client => {
-    if (!(searchQuery || '').trim()) return true;
-    const q = (searchQuery || '').toLowerCase();
-    return (client.companyName || '').toLowerCase().includes(q) ||
-           (client.tinNumber || '').includes(q) ||
-           (client.birTaxServices || []).some(t => t.toLowerCase().includes(q)) ||
-           (client.benefitsServices || []).some(b => b.toLowerCase().includes(q));
-  });
+      if (!(searchQuery || '').trim()) return true;
+      const q = (searchQuery || '').toLowerCase();
+      return (client.companyName || '').toLowerCase().includes(q) ||
+             (client.tinNumber || '').includes(q) ||
+             (client.birTaxServices || []).some(t => t.toLowerCase().includes(q)) ||
+             (client.benefitsServices || []).some(b => b.toLowerCase().includes(q));
+    });
 
   // Client counts for status filter options
   const assignedBaseClients = clients
     .filter(client => client.status !== 'Archived')
-    .filter(client => {
-      if (selectedStaffName === 'ALL_STAFF') return true;
-      const selectedUserObj = allUsers.find(u => u.fullName === selectedStaffName);
-      return client.assignedStaffName === selectedStaffName || 
-             (selectedUserObj && client.assignedStaffId === selectedUserObj.id) ||
-             (client.assignedStaffName && client.assignedStaffName.toLowerCase().includes(selectedStaffName.toLowerCase()));
-    });
+    .filter(client => isClientAssignedToStaff(client, selectedStaffName));
   const activeClientsCount = assignedBaseClients.filter(c => c.status === 'Active').length;
   const forComplianceClientsCount = assignedBaseClients.filter(c => c.status === 'For Compliance').length;
 
@@ -227,6 +233,29 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
         if (isBirAssigned || isBenAssigned) {
           const dInfo = getDeadlineInfo(rule, client);
           if (!dInfo) return; // Skip if N/A or not required for this month
+
+          // If filtering by specific staff or unassigned, verify permission for this specific obligation
+          if (selectedStaffName !== 'ALL_STAFF') {
+            if (selectedStaffName === 'UNASSIGNED') {
+              const assigned = getAssignedUsersForClient(
+                client,
+                allUsers,
+                rule.category === 'BIR' ? 'BIR' : 'BENEFITS',
+                rule.code
+              );
+              if (assigned.length > 0) return;
+            } else {
+              const selectedUserObj = allUsers.find(u => u.fullName === selectedStaffName);
+              if (!selectedUserObj) return;
+              const isPermittedForRule = isStaffAssignedToClient(
+                selectedUserObj,
+                client,
+                rule.category === 'BIR' ? 'BIR' : 'BENEFITS',
+                rule.code
+              );
+              if (!isPermittedForRule) return;
+            }
+          }
 
           // Check if payable already recorded
           const matchingPayable = payables.find(p => 
@@ -752,6 +781,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer"
             >
               {isSuperAdmin && <option value="ALL_STAFF">-- All Staff Members --</option>}
+              {isSuperAdmin && <option value="UNASSIGNED">Not yet assigned</option>}
               {allUsers.map(u => (
                 <option key={u.id} value={u.fullName}>
                   {u.fullName} ({u.position})
@@ -874,7 +904,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto" />
               <h3 className="text-base font-bold text-slate-800">No Pending To-Do Deadlines Found</h3>
               <p className="text-xs text-slate-500 max-w-md mx-auto">
-                No active deadlines found for <strong className="text-slate-800">{MONTH_FULL_NAMES[selectedMonth]} {selectedYear}</strong> assigned to {selectedStaffName}.
+                No active deadlines found for <strong className="text-slate-800">{MONTH_FULL_NAMES[selectedMonth]} {selectedYear}</strong> {selectedStaffName === 'ALL_STAFF' ? 'across all staff members' : selectedStaffName === 'UNASSIGNED' ? 'under unassigned clients' : `assigned to ${selectedStaffName}`}.
               </p>
             </div>
           ) : (
@@ -957,7 +987,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                             <p className="text-[11px] text-slate-500 mt-1">
                               {item.formTitle} • TIN: <span className="font-mono font-bold text-slate-800">{item.client.tinNumber}</span>
                               {item.client.parentClientName && <span className="text-purple-700 font-medium"> • HQ: {item.client.parentClientName}</span>}
-                              <span> • Staff: {item.client.assignedStaffName}</span>
+                              <span> • Staff: <strong className={getStaffDisplayName(item.client, item.category, item.formCode) === 'Not yet assigned' ? 'text-amber-700 font-semibold' : 'text-slate-800 font-semibold'}>{getStaffDisplayName(item.client, item.category, item.formCode)}</strong></span>
                             </p>
                           </div>
                         </div>
@@ -1083,7 +1113,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
               <Clock className="w-12 h-12 text-slate-300 mx-auto" />
               <h3 className="text-base font-bold text-slate-800">No Done Filings Yet</h3>
               <p className="text-xs text-slate-500 max-w-md mx-auto">
-                No completed or actioned filings recorded for <strong className="text-slate-800">{MONTH_FULL_NAMES[selectedMonth]} {selectedYear}</strong> assigned to {selectedStaffName}. Set actions on items in the Monthly To-Do List to move them here.
+                No completed or actioned filings recorded for <strong className="text-slate-800">{MONTH_FULL_NAMES[selectedMonth]} {selectedYear}</strong> {selectedStaffName === 'ALL_STAFF' ? 'across all staff members' : selectedStaffName === 'UNASSIGNED' ? 'under unassigned clients' : `assigned to ${selectedStaffName}`}. Set actions on items in the Monthly To-Do List to move them here.
               </p>
             </div>
           ) : (
@@ -1153,7 +1183,7 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
                           <p className="text-[11px] text-slate-500 mt-1">
                             {item.formTitle} • TIN: <span className="font-mono font-bold text-slate-800">{item.client.tinNumber}</span>
                             {item.client.parentClientName && <span className="text-purple-700 font-medium"> • HQ: {item.client.parentClientName}</span>}
-                            <span> • Staff: {item.client.assignedStaffName}</span>
+                            <span> • Staff: <strong className={getStaffDisplayName(item.client, item.category, item.formCode) === 'Not yet assigned' ? 'text-amber-700 font-semibold' : 'text-slate-800 font-semibold'}>{getStaffDisplayName(item.client, item.category, item.formCode)}</strong></span>
                           </p>
                         </div>
                       </div>

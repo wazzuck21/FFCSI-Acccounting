@@ -5,6 +5,7 @@ import { ClientProfile } from '../types';
 import { ClientRegistrationModal } from './ClientRegistrationModal';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
+import { getFormattedStaffAssignment, isStaffAssignedToClient, getAssignedUsersForClient } from '../utils/staffAssignmentHelper';
 import { 
   Building2, 
   Plus, 
@@ -52,6 +53,11 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
   // Restore Confirmation Modal State
   const [clientToRestore, setClientToRestore] = useState<ClientProfile | null>(null);
 
+  // Helper to get formatted display name of assigned staff for client directory
+  const getClientStaffDisplay = (client: ClientProfile) => {
+    return getFormattedStaffAssignment(client, allUsers, 'ALL');
+  };
+
   // Filter clients
   const filteredClients = clients.filter(c => {
     // Search query
@@ -75,7 +81,21 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
     const matchTax = taxFilter === 'ALL' || c.birTaxServices.includes(taxFilter);
 
     // Staff filter
-    const matchStaff = staffFilter === 'ALL' || c.assignedStaffName === staffFilter;
+    let matchStaff = true;
+    if (staffFilter === 'ALL') {
+      matchStaff = true;
+    } else if (staffFilter === 'UNASSIGNED') {
+      const assigned = getAssignedUsersForClient(c, allUsers, 'ALL');
+      matchStaff = assigned.length === 0;
+    } else {
+      const selectedUser = allUsers.find(u => u.fullName === staffFilter);
+      if (selectedUser) {
+        matchStaff = isStaffAssignedToClient(selectedUser, c, 'ALL');
+      } else {
+        const staffDisplay = getClientStaffDisplay(c);
+        matchStaff = staffDisplay.includes(staffFilter);
+      }
+    }
 
     return matchSearch && matchStatus && matchTax && matchStaff;
   });
@@ -231,6 +251,7 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
             className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 focus:bg-white focus:ring-2 focus:ring-blue-100"
           >
             <option value="ALL">All Staff Members</option>
+            <option value="UNASSIGNED">Not yet assigned</option>
             {allUsers.map(u => (
               <option key={u.id} value={u.fullName}>
                 {u.fullName} ({u.position})
@@ -355,8 +376,14 @@ export const ClientManagementView: React.FC<Props> = ({ onSelectClientWorkspace 
                     )}
 
                     {/* Assigned Staff */}
-                    <td className="py-3.5 px-4 text-slate-700 font-medium">
-                      {client.assignedStaffName}
+                    <td className="py-3.5 px-4 font-medium">
+                      {getClientStaffDisplay(client) === 'Not yet assigned' ? (
+                        <span className="text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-amber-200/80 inline-block">
+                          Not yet assigned
+                        </span>
+                      ) : (
+                        <span className="text-slate-800 font-semibold">{getClientStaffDisplay(client)}</span>
+                      )}
                     </td>
 
                     {/* Actions */}

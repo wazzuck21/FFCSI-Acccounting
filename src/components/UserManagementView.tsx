@@ -7,6 +7,7 @@ import { ROLE_LABELS, normalizeUserRole } from '../lib/rbac';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { DEFAULT_BIR_TAX_OPTIONS, DEFAULT_BENEFITS_OPTIONS } from '../data/masterTables';
+import { ClientStaffAssignmentMatrix } from './ClientStaffAssignmentMatrix';
 import { 
   UserCog, 
   Plus, 
@@ -87,10 +88,17 @@ const ALL_STANDARD_BENEFITS_OPTIONS: { code: string; name: string }[] = [
   { code: 'EC Contribution', name: "Employees' Compensation Program Contribution" }
 ];
 
-export const UserManagementView: React.FC = () => {
-  const { allUsers, currentUser, isSuperAdmin, updateUsers, resetUserPassword } = useAuth();
-  const { clients, masterChoices, addAuditLog } = useData();
+interface UserManagementViewProps {
+  onSelectClientWorkspace?: (clientId: string) => void;
+}
 
+export const UserManagementView: React.FC<UserManagementViewProps> = ({
+  onSelectClientWorkspace
+}) => {
+  const { allUsers, currentUser, isSuperAdmin, updateUsers, resetUserPassword } = useAuth();
+  const { clients, masterChoices, addAuditLog, updateClient } = useData();
+
+  const [activeViewTab, setActiveViewTab] = useState<'USERS' | 'STAFF_DISPATCH'>('USERS');
   const [searchQuery, setSearchQuery] = useState('');
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
@@ -439,6 +447,50 @@ export const UserManagementView: React.FC = () => {
       );
     }
 
+    // Synchronize client staff assignments across all registered clients
+    clients.forEach(c => {
+      const isClientAssigned = restrictedClients.includes(c.id);
+      const perm = clientServicePerms[c.id];
+
+      const userBirAllowed = isClientAssigned && Boolean(perm && (perm.allowAllBIR || (perm.allowedBIR && perm.allowedBIR.length > 0)));
+      const userBenAllowed = isClientAssigned && Boolean(perm && (perm.allowAllBenefits || (perm.allowedBenefits && perm.allowedBenefits.length > 0)));
+
+      // Clean existing references
+      const currentBirIds = (c.birAssignedStaffIds || []).filter(id => id !== userData.id);
+      const currentBirNames = (c.birAssignedStaffNames || []).filter(n => n !== userData.fullName && n !== editingUser?.fullName);
+
+      const currentBenIds = (c.benefitsAssignedStaffIds || []).filter(id => id !== userData.id);
+      const currentBenNames = (c.benefitsAssignedStaffNames || []).filter(n => n !== userData.fullName && n !== editingUser?.fullName);
+
+      if (userBirAllowed) {
+        currentBirIds.push(userData.id);
+        currentBirNames.push(userData.fullName);
+      }
+      if (userBenAllowed) {
+        currentBenIds.push(userData.id);
+        currentBenNames.push(userData.fullName);
+      }
+
+      const allIds = Array.from(new Set([...currentBirIds, ...currentBenIds]));
+      const allNames = Array.from(new Set([...currentBirNames, ...currentBenNames]));
+
+      // Check if update is needed
+      const birChanged = (c.birAssignedStaffNames || []).join(',') !== currentBirNames.join(',');
+      const benChanged = (c.benefitsAssignedStaffNames || []).join(',') !== currentBenNames.join(',');
+      const singleChanged = (c.assignedStaffName || '') !== (allNames.join(', ') || 'Unassigned');
+
+      if (birChanged || benChanged || singleChanged) {
+        updateClient(c.id, {
+          birAssignedStaffIds: currentBirIds,
+          birAssignedStaffNames: currentBirNames,
+          benefitsAssignedStaffIds: currentBenIds,
+          benefitsAssignedStaffNames: currentBenNames,
+          assignedStaffId: allIds[0] || '',
+          assignedStaffName: allNames.length > 0 ? allNames.join(', ') : 'Unassigned'
+        });
+      }
+    });
+
     setShowUserModal(false);
   };
 
@@ -469,34 +521,79 @@ export const UserManagementView: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <UserCog className="w-5 h-5 text-indigo-600" />
-            User Management & Role-Based Access Control
+            User Management &amp; Role-Based Access Control
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Manage employee credentials, role types, core navigation restrictions, and company-specific BIR & Benefits filing access.
+            Manage employee credentials, role types, core navigation restrictions, and multi-staff BIR &amp; Benefits client assignments.
           </p>
         </div>
 
-        {isSuperAdmin && (
-          <button
-            onClick={handleOpenCreateUser}
-            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-2xs text-xs flex items-center gap-2 transition-all shrink-0"
-          >
-            <Plus className="w-4 h-4" /> Create User Account
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {isSuperAdmin && activeViewTab === 'USERS' && (
+            <button
+              onClick={handleOpenCreateUser}
+              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-2xs text-xs flex items-center gap-2 transition-all shrink-0 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> Create User Account
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative max-w-md">
-        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
-        <input
-          type="text"
-          placeholder="Search users by name or username..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          className="w-full pl-9 pr-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 text-xs"
-        />
+      {/* Primary Navigation Tabs */}
+      <div className="flex border-b border-slate-200 bg-white px-4 rounded-2xl border shadow-xs gap-2">
+        <button
+          type="button"
+          onClick={() => setActiveViewTab('USERS')}
+          className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+            activeViewTab === 'USERS'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>User Accounts &amp; Access Controls</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+            {allUsers.length}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveViewTab('STAFF_DISPATCH')}
+          className={`py-3.5 px-4 text-xs font-bold border-b-2 transition-all flex items-center gap-2 cursor-pointer ${
+            activeViewTab === 'STAFF_DISPATCH'
+              ? 'border-indigo-600 text-indigo-600'
+              : 'border-transparent text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>Staff-to-Client Assignment Matrix (BIR &amp; Benefits)</span>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+            1+ Staff per Client
+          </span>
+        </button>
       </div>
+
+      {/* TAB CONTENT: Client Staff Assignment Matrix */}
+      {activeViewTab === 'STAFF_DISPATCH' && (
+        <ClientStaffAssignmentMatrix onSelectClientWorkspace={onSelectClientWorkspace} />
+      )}
+
+      {/* TAB CONTENT: Users Accounts Table */}
+      {activeViewTab === 'USERS' && (
+        <>
+          {/* Search Bar */}
+          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm relative max-w-md">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3.5" />
+            <input
+              type="text"
+              placeholder="Search users by name or username..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-100 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-blue-100 text-xs"
+            />
+          </div>
 
       {/* Users Table */}
       <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden text-xs">
@@ -633,6 +730,8 @@ export const UserManagementView: React.FC = () => {
           itemLabel="users"
         />
       </div>
+      </>
+      )}
 
       {/* MODAL: Create / Edit User & Granular Restrictions */}
       {showUserModal && (
@@ -1381,18 +1480,39 @@ export const UserManagementView: React.FC = () => {
                               {/* 1. BIR Tax Returns Access */}
                               <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2.5 shadow-2xs">
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                                  <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                                    <FileText className="w-4 h-4 text-amber-600" /> BIR Tax Returns Access
-                                  </span>
-                                  {!cPerm.allowAllBIR && (
-                                    <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
-                                      {(cPerm.allowedBIR || []).length} of {allBirCodes.length} BIR forms selected
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                      <FileText className="w-4 h-4 text-amber-600" /> BIR Tax Returns Access
                                     </span>
-                                  )}
+                                    {(!cPerm.allowAllBIR && (!cPerm.allowedBIR || cPerm.allowedBIR.length === 0)) ? (
+                                      <span className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md">
+                                        No BIR Access (Unchecked)
+                                      </span>
+                                    ) : cPerm.allowAllBIR ? (
+                                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                                        All BIR Filings Enabled
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                                        {(cPerm.allowedBIR || []).length} of {allBirCodes.length} BIR forms selected
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-4 text-xs bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                                <div className="flex flex-wrap items-center gap-3 text-xs bg-slate-50 p-2 rounded-lg border border-slate-200">
+                                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 hover:text-red-700">
+                                    <input
+                                      type="radio"
+                                      name={`bir_option_${client.id}`}
+                                      checked={!cPerm.allowAllBIR && (!cPerm.allowedBIR || cPerm.allowedBIR.length === 0)}
+                                      onChange={() => handleUpdateCompanyServicePerm(client.id, { allowAllBIR: false, allowedBIR: [] })}
+                                      className="text-red-600 focus:ring-red-500 h-4 w-4"
+                                    />
+                                    <span>No BIR Access (Uncheck)</span>
+                                  </label>
+
+                                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-800 hover:text-amber-700">
                                     <input
                                       type="radio"
                                       name={`bir_option_${client.id}`}
@@ -1403,11 +1523,11 @@ export const UserManagementView: React.FC = () => {
                                     <span>Allow ALL BIR Filings</span>
                                   </label>
 
-                                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-800 hover:text-amber-700">
                                     <input
                                       type="radio"
                                       name={`bir_option_${client.id}`}
-                                      checked={!cPerm.allowAllBIR}
+                                      checked={!cPerm.allowAllBIR && (cPerm.allowedBIR || []).length > 0}
                                       onChange={() => {
                                         // Default to client's active registered forms if current selection is empty
                                         const initial = (cPerm.allowedBIR && cPerm.allowedBIR.length > 0)
@@ -1422,7 +1542,7 @@ export const UserManagementView: React.FC = () => {
                                 </div>
 
                                 {/* Granular BIR Selection UI */}
-                                {!cPerm.allowAllBIR && (
+                                {!cPerm.allowAllBIR && (cPerm.allowedBIR || []).length > 0 && (
                                   <div className="space-y-2 pt-1">
                                     {/* BIR Search & Quick Actions */}
                                     <div className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center">
@@ -1559,18 +1679,39 @@ export const UserManagementView: React.FC = () => {
                               {/* 2. Statutory Benefits Remittance Access */}
                               <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2.5 shadow-2xs">
                                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                                  <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                                    <ShieldCheck className="w-4 h-4 text-emerald-600" /> Statutory Benefits Remittance Access
-                                  </span>
-                                  {!cPerm.allowAllBenefits && (
-                                    <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
-                                      {(cPerm.allowedBenefits || []).length} of {allBenefitNames.length} Benefits selected
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                                      <ShieldCheck className="w-4 h-4 text-emerald-600" /> Statutory Benefits Remittance Access
                                     </span>
-                                  )}
+                                    {(!cPerm.allowAllBenefits && (!cPerm.allowedBenefits || cPerm.allowedBenefits.length === 0)) ? (
+                                      <span className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-md">
+                                        No Benefits Access (Unchecked)
+                                      </span>
+                                    ) : cPerm.allowAllBenefits ? (
+                                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                        All Benefits Enabled
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                        {(cPerm.allowedBenefits || []).length} of {allBenefitNames.length} Benefits selected
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
 
-                                <div className="flex flex-wrap items-center gap-4 text-xs bg-slate-50 p-2 rounded-lg border border-slate-200">
-                                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                                <div className="flex flex-wrap items-center gap-3 text-xs bg-slate-50 p-2 rounded-lg border border-slate-200">
+                                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 hover:text-red-700">
+                                    <input
+                                      type="radio"
+                                      name={`ben_option_${client.id}`}
+                                      checked={!cPerm.allowAllBenefits && (!cPerm.allowedBenefits || cPerm.allowedBenefits.length === 0)}
+                                      onChange={() => handleUpdateCompanyServicePerm(client.id, { allowAllBenefits: false, allowedBenefits: [] })}
+                                      className="text-red-600 focus:ring-red-500 h-4 w-4"
+                                    />
+                                    <span>No Benefits Access (Uncheck)</span>
+                                  </label>
+
+                                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-800 hover:text-emerald-700">
                                     <input
                                       type="radio"
                                       name={`ben_option_${client.id}`}
@@ -1581,11 +1722,11 @@ export const UserManagementView: React.FC = () => {
                                     <span>Allow ALL Statutory Benefits</span>
                                   </label>
 
-                                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800">
+                                  <label className="flex items-center gap-1.5 cursor-pointer font-bold text-slate-800 hover:text-emerald-700">
                                     <input
                                       type="radio"
                                       name={`ben_option_${client.id}`}
-                                      checked={!cPerm.allowAllBenefits}
+                                      checked={!cPerm.allowAllBenefits && (cPerm.allowedBenefits || []).length > 0}
                                       onChange={() => {
                                         // Default to client's active registered benefits if current selection is empty
                                         const initial = (cPerm.allowedBenefits && cPerm.allowedBenefits.length > 0)
@@ -1600,7 +1741,7 @@ export const UserManagementView: React.FC = () => {
                                 </div>
 
                                 {/* Granular Benefits Selection UI */}
-                                {!cPerm.allowAllBenefits && (
+                                {!cPerm.allowAllBenefits && (cPerm.allowedBenefits || []).length > 0 && (
                                   <div className="space-y-2 pt-1">
                                     {/* Benefits Search & Quick Actions */}
                                     <div className="flex flex-col sm:flex-row gap-2 justify-between items-stretch sm:items-center">

@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { ClientProfile, EntityType, CustomDeadlineRule } from '../types';
 import { extractBaseTin, formatFullTin } from '../utils/tinBranchUtils';
 import { CurrencyInput } from './CurrencyInput';
-import { X, Plus, Search, Check, ShieldAlert, Sparkles, Building2, GitFork, Link, MapPin, AlertCircle } from 'lucide-react';
+import { X, Plus, Search, Check, ShieldAlert, Sparkles, Building2, GitFork, Link, MapPin, AlertCircle, UserCheck } from 'lucide-react';
 import { 
   getProvinces, 
   getCitiesByProvince, 
@@ -581,7 +581,6 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
     if (selectedBenefits.length === 0) unfilled.push('Employee Benefits & Loans Remittances (at least 1 benefit required)');
     if (!status) unfilled.push('Client Status (Active, Inactive, or For Compliance)');
     if (isSuperAdmin && (retainersFee === '' || Number(retainersFee) <= 0)) unfilled.push('Monthly Retainers Fee');
-    if (!assignedStaffId) unfilled.push('Assigned Accountant / Staff');
 
     if (unfilled.length > 0) {
       setUnfilledFields(unfilled);
@@ -1584,32 +1583,19 @@ export const ClientRegistrationModal: React.FC<ModalProps> = ({ isOpen, onClose,
                 </div>
               )}
 
-              <div>
-                <label className="block text-slate-400 font-medium mb-1">
-                  Assigned Accountant *
-                </label>
-                <select
-                  value={assignedStaffId}
-                  onChange={e => {
-                    const val = e.target.value;
-                    const selectedUser = allUsers.find(u => u.id === val);
-                    if (selectedUser) {
-                      setAssignedStaffId(selectedUser.id);
-                      setAssignedStaffName(selectedUser.fullName);
-                    } else {
-                      setAssignedStaffId('');
-                      setAssignedStaffName('');
-                    }
-                  }}
-                  className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-medium focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">-- Select Assigned Staff * --</option>
-                  {allUsers.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.fullName} ({u.position}) - {u.role.replace('_', ' ')}
-                    </option>
-                  ))}
-                </select>
+              <div className="p-3.5 bg-slate-900 border border-slate-800 rounded-xl space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-slate-300 font-bold text-xs flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5 text-indigo-400" />
+                    Staff Assignment (BIR &amp; Benefits)
+                  </label>
+                  <span className="text-[10px] font-semibold text-indigo-300 bg-indigo-950/80 border border-indigo-800 px-2 py-0.5 rounded-full">
+                    Configured in User Management
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  Staff for <strong>BIR Tax Services</strong> and <strong>Statutory Benefits</strong> can be assigned to <strong>1 or more accountants</strong> in <span className="text-indigo-300 font-medium">User Management &amp; Role-Based Access Control</span>.
+                </p>
               </div>
             </div>
 

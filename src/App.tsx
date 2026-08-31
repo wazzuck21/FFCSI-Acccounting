@@ -166,7 +166,12 @@ const MainAppContent: React.FC = () => {
           )}
 
           {activeTab === 'users' && (
-            <UserManagementView />
+            <UserManagementView 
+              onSelectClientWorkspace={(clientId) => {
+                setSelectedClientId(clientId);
+                handleTabChange('workspaces');
+              }}
+            />
           )}
 
           {/* Task & Workflow View */}

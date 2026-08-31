@@ -8,6 +8,7 @@ import {
   MONTH_INDEX 
 } from '../data/masterTables';
 import { calculateClientDeadline, formatDeadlinePretty, isPayableObligation, getPaymentBehavior, getComplianceCategory, getSubmissionMethod, getFilingRequired } from '../utils/deadlineEngine';
+import { getFormattedStaffAssignment } from '../utils/staffAssignmentHelper';
 import { TablePagination } from './TablePagination';
 import { usePagination } from '../utils/usePagination';
 import { 
@@ -52,7 +53,7 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
   previousTabName
 }) => {
   const { complianceItems, payables, clients, masterChoices, updateComplianceStatus, addComplianceItem, cancelPayablePayment, deletePayable, resetPayableAssessment } = useData();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, allUsers } = useAuth();
 
   // Get current calendar month (e.g. 'Aug') and year
   const currentMonthCode = (MONTHS_LIST[new Date().getMonth()] || 'Aug') as ('Jan' | 'Feb' | 'Mar' | 'Apr' | 'May' | 'Jun' | 'Jul' | 'Aug' | 'Sep' | 'Oct' | 'Nov' | 'Dec');
@@ -347,7 +348,7 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
             status: calculatedStatus,
             assessmentTag,
             isUnenrolledForm,
-            assignedStaffName: client.assignedStaffName || 'Unassigned',
+            assignedStaffName: getFormattedStaffAssignment(client, allUsers, rule.category === 'BIR' ? 'BIR' : 'BENEFITS', rule.code),
             isBranch: client.isBranch,
             branchCode: client.branchCode,
             parentClientName: client.parentClientName,
@@ -377,7 +378,7 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
     });
   });
 
-  // 1. Initial filter by search query (client name, form code, rule name, date)
+  // 1. Initial filter by search query (client name, form code, rule name, date, staff)
   const searchFilteredDeadlines = compiledDeadlines.filter(item => {
     if (!(searchQuery || '').trim()) return true;
     const q = (searchQuery || '').toLowerCase();
@@ -385,7 +386,8 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
       (item.clientName || '').toLowerCase().includes(q) ||
       (item.ruleCode || '').toLowerCase().includes(q) ||
       (item.ruleName || '').toLowerCase().includes(q) ||
-      (item.formattedDateStr || '').toLowerCase().includes(q)
+      (item.formattedDateStr || '').toLowerCase().includes(q) ||
+      (item.assignedStaffName || '').toLowerCase().includes(q)
     );
   });
 
@@ -1213,7 +1215,7 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
                         {/* Details & Status */}
                         <div className="pt-2 border-t border-slate-200/60 flex items-center justify-between text-xs gap-2">
                           <div className="text-[11px] text-slate-500 font-medium">
-                            Staff: <strong className="text-slate-800">{item.assignedStaffName}</strong>
+                            Staff: <strong className={item.assignedStaffName === 'Not yet assigned' ? 'text-amber-700 font-semibold' : 'text-slate-800'}>{item.assignedStaffName || 'Not yet assigned'}</strong>
                           </div>
 
                           <div className="flex items-center gap-1.5">

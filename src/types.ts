@@ -170,8 +170,12 @@ export interface ClientProfile {
   telephoneNumber?: string;
   emailAddress: string;
   contactPersons?: ContactPerson[];
-  assignedStaffId: string;
-  assignedStaffName: string;
+  assignedStaffId?: string;
+  assignedStaffName?: string;
+  birAssignedStaffIds?: string[];
+  birAssignedStaffNames?: string[];
+  benefitsAssignedStaffIds?: string[];
+  benefitsAssignedStaffNames?: string[];
   notes?: string;
   tags?: string[];
   

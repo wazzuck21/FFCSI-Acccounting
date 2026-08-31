@@ -8,6 +8,7 @@ import { ClientServicesManager } from './ClientServicesManager';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { exportSOAExcel } from '../utils/excelExportUtils';
 import { generateClientStatementOfAccountPDF } from '../utils/soaPdfGenerator';
+import { getFormattedStaffAssignment } from '../utils/staffAssignmentHelper';
 import { 
   Building2, 
   FileText, 
@@ -58,7 +59,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
   onBack
 }) => {
   const { clients, clientServices, dynamicSections, payables, complianceItems, documents, invoices, payments, tasks, masterChoices, updateClient } = useData();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, allUsers } = useAuth();
 
   // Selected client state
   const [internalSelectedId, setInternalSelectedId] = useState<string | null>(
@@ -85,6 +86,11 @@ export const ClientWorkspaceView: React.FC<Props> = ({
 
   // Currently active client profile
   const client = clients.find(c => c.id === activeClientId);
+
+  const getStaffDisplay = (cl?: ClientProfile | null) => {
+    if (!cl) return 'Not yet assigned';
+    return getFormattedStaffAssignment(cl, allUsers, 'ALL');
+  };
 
   // Registered branches for active Head / Main Office
   const activeBaseTin = client ? (client.baseTin || extractBaseTin(client.tinNumber)) : '';
@@ -256,9 +262,9 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                         <span className="text-slate-500">Period:</span>
                         <span className="font-bold text-slate-800">{c.accountingPeriod || 'Calendar'} Year</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="flex justify-between items-center">
                         <span className="text-slate-500">Assigned Staff:</span>
-                        <span className="font-bold text-indigo-700">{c.assignedStaffName}</span>
+                        <span className={getStaffDisplay(c) === 'Not yet assigned' ? 'text-amber-700 font-semibold text-[11px]' : 'font-bold text-indigo-700'}>{getStaffDisplay(c)}</span>
                       </div>
                       {isSuperAdmin && (
                         <div className="flex justify-between pt-1 border-t border-slate-200">
@@ -349,7 +355,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                       </>
                     )}
                     <span>•</span>
-                    <span>Assigned: <strong className="text-indigo-700 font-bold">{client.assignedStaffName}</strong></span>
+                    <span>Assigned: <strong className={getStaffDisplay(client) === 'Not yet assigned' ? 'text-amber-700 font-semibold' : 'text-indigo-700 font-bold'}>{getStaffDisplay(client)}</strong></span>
                   </div>
                 </div>
               </div>
@@ -580,7 +586,7 @@ export const ClientWorkspaceView: React.FC<Props> = ({
 
                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
                   <span className="text-slate-400 font-bold uppercase text-[10px]">Assigned Senior Accountant</span>
-                  <p className="font-bold text-indigo-700">{client.assignedStaffName}</p>
+                  <p className={getStaffDisplay(client) === 'Not yet assigned' ? 'text-amber-700 font-semibold text-xs' : 'font-bold text-indigo-700'}>{getStaffDisplay(client)}</p>
                 </div>
               </div>
             </div>
@@ -709,9 +715,9 @@ export const ClientWorkspaceView: React.FC<Props> = ({
                             <span className="text-slate-500">Address:</span>
                             <span className="text-slate-700 font-medium truncate max-w-[200px]">{br.address || 'N/A'}</span>
                           </div>
-                          <div className="flex justify-between">
+                          <div className="flex justify-between items-center">
                             <span className="text-slate-500">Assigned Staff:</span>
-                            <span className="font-bold text-indigo-700">{br.assignedStaffName}</span>
+                            <span className={getStaffDisplay(br) === 'Not yet assigned' ? 'text-amber-700 font-semibold text-[11px]' : 'font-bold text-indigo-700'}>{getStaffDisplay(br)}</span>
                           </div>
                         </div>
                       </div>
