@@ -322,6 +322,223 @@ export function numberToPhilippineWords(amount: number): string {
   }
 }
 
+// Helper to get saved calibration from localStorage
+export const getSavedHardcopyConfig = (): HardcopyAlignmentConfig => {
+  try {
+    const saved = localStorage.getItem('ffcsi_cr_hardcopy_calibration');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      return {
+        ...DEFAULT_HARDCOPY_PRESETS.ffcsi_standard_booklet,
+        ...parsed,
+        totalAmountPosX_mm: parsed.totalAmountPosX_mm ?? parsed.amountColX_mm ?? 126,
+        paymentDetailsPosX_mm: parsed.paymentDetailsPosX_mm ?? parsed.descColX_mm ?? 14,
+      };
+    }
+  } catch {
+    // fallback
+  }
+  return { ...DEFAULT_HARDCOPY_PRESETS.ffcsi_standard_booklet };
+};
+
+// Generate jsPDF matching exact millimeter calibration
+export const generateCalibratedHardcopyCrPDF = (
+  invoice: InvoiceItem,
+  config: HardcopyAlignmentConfig
+): jsPDF => {
+  const doc = new jsPDF({
+    orientation: config.orientation,
+    unit: 'mm',
+    format: [config.paperWidthMm, config.paperHeightMm]
+  });
+
+  const offX = config.masterOffsetX_mm;
+  const offY = config.masterOffsetY_mm;
+
+  // Clean data values
+  const crNo = invoice.collectionReceiptNumber || invoice.collectionNumber || invoice.officialReceiptNumber || invoice.invoiceNumber || '1001';
+  const cleanCrNo = crNo.replace(/^(C\.?R\.?|CR|NO\.?)\s*#?\s*-?\s*/i, '').trim() || crNo;
+  const displayDate = invoice.paymentDate || invoice.issueDate || new Date().toISOString().substring(0, 10);
+  const formattedDate = new Date(displayDate).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  const clientName = invoice.clientName || 'Client Name';
+  const clientAddress = (invoice as any).clientAddress || 'Metro Manila, Philippines';
+  const totalAmount = invoice.totalAmount || 0;
+  const preparedBy = (invoice as any).preparedBy || 'Maricris';
+  const paymentMethod = invoice.paymentMethod || 'Cash';
+  const checkNo = (invoice as any).chequeNumber || (invoice as any).checkNo || '';
+  const bankName = (invoice as any).bankName || '';
+
+  const lineItems = (invoice.services && invoice.services.length > 0) 
+    ? invoice.services 
+    : [{ description: 'Professional Accounting Retainer Fee', monthYear: invoice.billingPeriod || '', amount: totalAmount }];
+
+  // 1. If Full Document Mode, render the letterhead, boxes, and table borders
+  if (config.printMode === 'full_document') {
+    doc.setFont('times', 'italic');
+    doc.setFontSize(14);
+    doc.setTextColor(185, 28, 28);
+    doc.text('Family Friends Consultancy Services Inc.', config.paperWidthMm / 2, 16 + offY, { align: 'center' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7.5);
+    doc.setTextColor(51, 65, 85);
+    doc.text('# 50-M Aguilar Street, Brgy. Bungad, Quezon City | Tel: (632) 8713-1412', config.paperWidthMm / 2, 21 + offY, { align: 'center' });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
+    doc.setTextColor(15, 23, 42);
+    doc.text('COLLECTION RECEIPT', config.paperWidthMm / 2, 28 + offY, { align: 'center' });
+
+    // Labels
+    doc.setFontSize(8.5);
+    doc.text('DATE:', (config.datePosX_mm - 14) + offX, config.datePosY_mm + offY);
+    doc.text('C.R. NO.:', (config.crNoPosX_mm - 16) + offX, config.crNoPosY_mm + offY);
+    doc.text('RECEIVED FROM:', 14 + offX, config.clientNamePosY_mm + offY);
+    doc.text('ADDRESS:', 14 + offX, config.addressPosY_mm + offY);
+
+    // Table Box
+    doc.setDrawColor(15, 23, 42);
+    doc.setLineWidth(0.3);
+    doc.rect(12 + offX, config.tableStartY_mm - 6 + offY, config.paperWidthMm - 24, 6, 'S');
+    doc.setFontSize(8);
+    doc.text('PARTICULARS / DESCRIPTION', config.descColX_mm + offX, config.tableStartY_mm - 2 + offY);
+    doc.text('PERIOD', config.periodColX_mm + offX, config.tableStartY_mm - 2 + offY);
+    doc.text('AMOUNT (PHP)', config.amountColX_mm + offX, config.tableStartY_mm - 2 + offY, { align: 'right' });
+  }
+
+  // 2. If Calibration Grid Mode, render millimeter ticks & measurement boxes
+  if (config.printMode === 'calibration_grid') {
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.15);
+
+    // 10mm grid lines
+    for (let x = 0; x <= config.paperWidthMm; x += 10) {
+      doc.line(x, 0, x, config.paperHeightMm);
+      doc.setFontSize(6);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`${x}mm`, x + 0.5, 4);
+    }
+    for (let y = 0; y <= config.paperHeightMm; y += 10) {
+      doc.line(0, y, config.paperWidthMm, y);
+      doc.setFontSize(6);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`${y}mm`, 1, y - 0.5);
+    }
+
+    // Calibration Crosshair in center
+    doc.setDrawColor(239, 68, 68);
+    doc.setLineWidth(0.4);
+    doc.line(config.paperWidthMm / 2 - 10, config.paperHeightMm / 2, config.paperWidthMm / 2 + 10, config.paperHeightMm / 2);
+    doc.line(config.paperWidthMm / 2, config.paperHeightMm / 2 - 10, config.paperWidthMm / 2, config.paperHeightMm / 2 + 10);
+    doc.setFontSize(8);
+    doc.setTextColor(239, 68, 68);
+    doc.text('CENTER ALIGNMENT CROSSHAIR (50% X / 50% Y)', config.paperWidthMm / 2, config.paperHeightMm / 2 + 14, { align: 'center' });
+  }
+
+  // 3. Render Calibrated Text Elements (Always active in all modes)
+  doc.setFont(config.fontFamily.toLowerCase(), config.fontWeight);
+  doc.setFontSize(config.fontSize_pt);
+  doc.setTextColor(config.fontColor);
+
+  // Date
+  doc.text(formattedDate, config.datePosX_mm + offX, config.datePosY_mm + offY);
+
+  // Collection Receipt Number
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(185, 28, 28);
+  doc.text(`#${cleanCrNo}`, config.crNoPosX_mm + offX, config.crNoPosY_mm + offY);
+
+  // Client Info
+  doc.setFont(config.fontFamily.toLowerCase(), config.fontWeight);
+  doc.setTextColor(config.fontColor);
+  doc.text(clientName, config.clientNamePosX_mm + offX, config.clientNamePosY_mm + offY);
+  doc.text(clientAddress, config.addressPosX_mm + offX, config.addressPosY_mm + offY);
+
+  // Particulars Table Rows
+  doc.setFontSize(config.fontSize_pt);
+  let curY = config.tableStartY_mm + offY;
+  const itemsToPrint = lineItems.slice(0, config.maxTableLines);
+
+  itemsToPrint.forEach((item) => {
+    // Description
+    doc.text(item.description || '', config.descColX_mm + offX, curY);
+    // Period
+    if (item.monthYear) {
+      doc.text(item.monthYear, config.periodColX_mm + offX, curY);
+    }
+    // Amount (right aligned)
+    const amtStr = (item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    doc.text(amtStr, config.amountColX_mm + offX, curY, { align: 'right' });
+
+    curY += config.rowPitch_mm;
+  });
+
+  // Total Amount
+  doc.setFont('helvetica', 'bold');
+  const totalAmountX = (config.totalAmountPosX_mm ?? config.amountColX_mm) + offX;
+  doc.text(
+    `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    totalAmountX,
+    config.totalAmountPosY_mm + offY,
+    { align: 'right' }
+  );
+
+  // Payment Info
+  doc.setFont(config.fontFamily.toLowerCase(), 'normal');
+  doc.setFontSize(config.fontSize_pt * 0.9);
+  const payStr = paymentMethod === 'Cheque' 
+    ? `Cheque Payment: ${bankName} #${checkNo}` 
+    : `Cash Payment - Received in Full`;
+  const payX = (config.paymentDetailsPosX_mm ?? config.descColX_mm) + offX;
+  doc.text(payStr, payX, config.paymentDetailsPosY_mm + offY);
+
+  // Signatory
+  doc.setFont('helvetica', 'bold');
+  doc.text(preparedBy, config.signatoryPosX_mm + offX, config.signatoryPosY_mm + offY, { align: 'center' });
+
+  return doc;
+};
+
+// Standalone direct print function for Pre-Printed Booklet Overlay
+export const printHardcopyCrOverlay = (
+  invoice: InvoiceItem,
+  customConfig?: Partial<HardcopyAlignmentConfig>
+) => {
+  const baseConfig = getSavedHardcopyConfig();
+  const config: HardcopyAlignmentConfig = {
+    ...baseConfig,
+    ...customConfig,
+    printMode: 'preprinted_overlay'
+  };
+
+  const doc = generateCalibratedHardcopyCrPDF(invoice, config);
+  const blob = doc.output('blob');
+  const blobUrl = URL.createObjectURL(blob);
+
+  let iframe = document.getElementById('ffcsi_hardcopy_cr_print_iframe') as HTMLIFrameElement | null;
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.id = 'ffcsi_hardcopy_cr_print_iframe';
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+  }
+
+  iframe.src = blobUrl;
+  iframe.onload = () => {
+    try {
+      iframe?.contentWindow?.focus();
+      iframe?.contentWindow?.print();
+    } catch {
+      window.open(blobUrl, '_blank');
+    }
+  };
+};
+
 interface Props {
   invoice: InvoiceItem;
   invoices?: InvoiceItem[];
@@ -336,23 +553,7 @@ export const HardcopyCrPrintEngineModal: React.FC<Props> = ({ invoice, invoices,
     setActiveInvoice(invoice);
   }, [invoice]);
 
-  const [config, setConfig] = useState<HardcopyAlignmentConfig>(() => {
-    try {
-      const saved = localStorage.getItem('ffcsi_cr_hardcopy_calibration');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...DEFAULT_HARDCOPY_PRESETS.ffcsi_standard_booklet,
-          ...parsed,
-          totalAmountPosX_mm: parsed.totalAmountPosX_mm ?? parsed.amountColX_mm ?? 126,
-          paymentDetailsPosX_mm: parsed.paymentDetailsPosX_mm ?? parsed.descColX_mm ?? 14,
-        };
-      }
-    } catch {
-      // fallback
-    }
-    return DEFAULT_HARDCOPY_PRESETS.ffcsi_standard_booklet;
-  });
+  const [config, setConfig] = useState<HardcopyAlignmentConfig>(() => getSavedHardcopyConfig());
 
   const [activeTab, setActiveTab] = useState<'positioning' | 'typography' | 'canvas_view' | 'presets'>('positioning');
   const [zoomScale, setZoomScale] = useState<number>(1.0);
@@ -396,141 +597,7 @@ export const HardcopyCrPrintEngineModal: React.FC<Props> = ({ invoice, invoices,
 
   // Generate jsPDF matching exact millimeter calibration
   const generateCalibratedPDF = (forPrint = false): jsPDF => {
-    const doc = new jsPDF({
-      orientation: config.orientation,
-      unit: 'mm',
-      format: [config.paperWidthMm, config.paperHeightMm]
-    });
-
-    const offX = config.masterOffsetX_mm;
-    const offY = config.masterOffsetY_mm;
-
-    // 1. If Full Document Mode, render the letterhead, boxes, and table borders
-    if (config.printMode === 'full_document') {
-      // Background / Header
-      doc.setFont('times', 'italic');
-      doc.setFontSize(14);
-      doc.setTextColor(185, 28, 28);
-      doc.text('Family Friends Consultancy Services Inc.', config.paperWidthMm / 2, 16 + offY, { align: 'center' });
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(7.5);
-      doc.setTextColor(51, 65, 85);
-      doc.text('# 50-M Aguilar Street, Brgy. Bungad, Quezon City | Tel: (632) 8713-1412', config.paperWidthMm / 2, 21 + offY, { align: 'center' });
-
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12);
-      doc.setTextColor(15, 23, 42);
-      doc.text('COLLECTION RECEIPT', config.paperWidthMm / 2, 28 + offY, { align: 'center' });
-
-      // Labels
-      doc.setFontSize(8.5);
-      doc.text('DATE:', (config.datePosX_mm - 14) + offX, config.datePosY_mm + offY);
-      doc.text('C.R. NO.:', (config.crNoPosX_mm - 16) + offX, config.crNoPosY_mm + offY);
-      doc.text('RECEIVED FROM:', 14 + offX, config.clientNamePosY_mm + offY);
-      doc.text('ADDRESS:', 14 + offX, config.addressPosY_mm + offY);
-
-      // Table Box
-      doc.setDrawColor(15, 23, 42);
-      doc.setLineWidth(0.3);
-      doc.rect(12 + offX, config.tableStartY_mm - 6 + offY, config.paperWidthMm - 24, 6, 'S');
-      doc.setFontSize(8);
-      doc.text('PARTICULARS / DESCRIPTION', config.descColX_mm + offX, config.tableStartY_mm - 2 + offY);
-      doc.text('PERIOD', config.periodColX_mm + offX, config.tableStartY_mm - 2 + offY);
-      doc.text('AMOUNT (PHP)', config.amountColX_mm + offX, config.tableStartY_mm - 2 + offY, { align: 'right' });
-    }
-
-    // 2. If Calibration Grid Mode, render millimeter ticks & measurement boxes
-    if (config.printMode === 'calibration_grid') {
-      doc.setDrawColor(203, 213, 225);
-      doc.setLineWidth(0.15);
-
-      // 10mm grid lines
-      for (let x = 0; x <= config.paperWidthMm; x += 10) {
-        doc.line(x, 0, x, config.paperHeightMm);
-        doc.setFontSize(6);
-        doc.setTextColor(100, 116, 139);
-        doc.text(`${x}mm`, x + 0.5, 4);
-      }
-      for (let y = 0; y <= config.paperHeightMm; y += 10) {
-        doc.line(0, y, config.paperWidthMm, y);
-        doc.setFontSize(6);
-        doc.setTextColor(100, 116, 139);
-        doc.text(`${y}mm`, 1, y - 0.5);
-      }
-
-      // Calibration Crosshair in center
-      doc.setDrawColor(239, 68, 68);
-      doc.setLineWidth(0.4);
-      doc.line(config.paperWidthMm / 2 - 10, config.paperHeightMm / 2, config.paperWidthMm / 2 + 10, config.paperHeightMm / 2);
-      doc.line(config.paperWidthMm / 2, config.paperHeightMm / 2 - 10, config.paperWidthMm / 2, config.paperHeightMm / 2 + 10);
-      doc.setFontSize(8);
-      doc.setTextColor(239, 68, 68);
-      doc.text('CENTER ALIGNMENT CROSSHAIR (50% X / 50% Y)', config.paperWidthMm / 2, config.paperHeightMm / 2 + 14, { align: 'center' });
-    }
-
-    // 3. Render Calibrated Text Elements (Always active in all modes)
-    doc.setFont(config.fontFamily.toLowerCase(), config.fontWeight);
-    doc.setFontSize(config.fontSize_pt);
-    doc.setTextColor(config.fontColor);
-
-    // Date
-    doc.text(formattedDate, config.datePosX_mm + offX, config.datePosY_mm + offY);
-
-    // Collection Receipt Number (in bold red for contrast or standard)
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(185, 28, 28);
-    doc.text(`#${cleanCrNo}`, config.crNoPosX_mm + offX, config.crNoPosY_mm + offY);
-
-    // Client Info
-    doc.setFont(config.fontFamily.toLowerCase(), config.fontWeight);
-    doc.setTextColor(config.fontColor);
-    doc.text(clientName, config.clientNamePosX_mm + offX, config.clientNamePosY_mm + offY);
-    doc.text(clientAddress, config.addressPosX_mm + offX, config.addressPosY_mm + offY);
-
-    // Particulars Table Rows
-    doc.setFontSize(config.fontSize_pt);
-    let curY = config.tableStartY_mm + offY;
-    const itemsToPrint = lineItems.slice(0, config.maxTableLines);
-
-    itemsToPrint.forEach((item) => {
-      // Description
-      doc.text(item.description || '', config.descColX_mm + offX, curY);
-      // Period
-      if (item.monthYear) {
-        doc.text(item.monthYear, config.periodColX_mm + offX, curY);
-      }
-      // Amount (right aligned)
-      const amtStr = (item.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      doc.text(amtStr, config.amountColX_mm + offX, curY, { align: 'right' });
-
-      curY += config.rowPitch_mm;
-    });
-
-    // Total Amount
-    doc.setFont('helvetica', 'bold');
-    const totalAmountX = (config.totalAmountPosX_mm ?? config.amountColX_mm) + offX;
-    doc.text(
-      `PHP ${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      totalAmountX,
-      config.totalAmountPosY_mm + offY,
-      { align: 'right' }
-    );
-
-    // Payment Info
-    doc.setFont(config.fontFamily.toLowerCase(), 'normal');
-    doc.setFontSize(config.fontSize_pt * 0.9);
-    const payStr = paymentMethod === 'Cheque' 
-      ? `Cheque Payment: ${bankName} #${checkNo}` 
-      : `Cash Payment - Received in Full`;
-    const payX = (config.paymentDetailsPosX_mm ?? config.descColX_mm) + offX;
-    doc.text(payStr, payX, config.paymentDetailsPosY_mm + offY);
-
-    // Signatory
-    doc.setFont('helvetica', 'bold');
-    doc.text(preparedBy, config.signatoryPosX_mm + offX, config.signatoryPosY_mm + offY, { align: 'center' });
-
-    return doc;
+    return generateCalibratedHardcopyCrPDF(activeInvoice, config);
   };
 
   // Trigger Direct Print

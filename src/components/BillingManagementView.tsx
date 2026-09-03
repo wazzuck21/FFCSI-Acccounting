@@ -8,7 +8,7 @@ import { SmartPeriodInput } from './SmartPeriodInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
 import { MonthYearCoverageModal } from './MonthYearCoverageModal';
-import { HardcopyCrPrintEngineModal } from './HardcopyCrPrintEngineModal';
+import { HardcopyCrPrintEngineModal, printHardcopyCrOverlay } from './HardcopyCrPrintEngineModal';
 import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, generatePaymentCollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { 
@@ -5941,10 +5941,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </button>
             </div>
 
-            {/* Unified 6-Button Action Bar for Controls (Default Receipt, Payment, Edit, Hardcopy Print Engine, Download PDF, Print) - All Same Size ⭐ */}
+            {/* Action Bar for Controls (Default Tab, Payment, Edit, Download PDF, Print based on Pre-Printed Booklet Overlay) */}
             {!isCrPaymentMode ? (
               <div className={`grid gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 ${
-                isSuperAdmin ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-6' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5'
+                isSuperAdmin ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5' : 'grid-cols-2 sm:grid-cols-2 md:grid-cols-4'
               }`}>
                 {/* Button 1: Default Tab */}
                 <button
@@ -6000,21 +6000,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   </button>
                 )}
 
-                {/* Button 4: Hardcopy Alignment & Print Engine ⭐ */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setHardcopyPrintEngineInvoice(selectedInvoice);
-                    setShowHardcopyPrintEngineModal(true);
-                  }}
-                  className="h-9 px-2.5 py-1.5 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-2xs cursor-pointer transition-colors w-full text-center"
-                  title="Hardcopy Collection Receipt Alignment & Print Engine: Calibrate millimeter X-Y offsets for pre-printed BIR receipt booklets or continuous dot-matrix forms"
-                >
-                  <Crosshair className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">Hardcopy Engine</span>
-                </button>
-
-                {/* Button 5: Download PDF */}
+                {/* Button 4: Download PDF */}
                 <button
                   type="button"
                   onClick={() => {
@@ -6031,12 +6017,12 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   <span className="truncate">Download PDF</span>
                 </button>
 
-                {/* Button 6: Print */}
+                {/* Button 5: Print (Pre-Printed Carbonless Booklet Overlay) */}
                 <button
                   type="button"
-                  onClick={() => window.print()}
+                  onClick={() => printHardcopyCrOverlay(selectedInvoice)}
                   className="h-9 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs cursor-pointer shadow-2xs transition-colors w-full text-center"
-                  title="Print Collection Receipt"
+                  title="Print Collection Receipt based on Hardcopy Collection Receipt Alignment & Print Engine - Pre-Printed Booklet Overlay"
                 >
                   <Printer className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">Print</span>
@@ -6049,17 +6035,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   Payment Remittance Mode
                 </span>
                 <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setHardcopyPrintEngineInvoice(selectedInvoice);
-                      setShowHardcopyPrintEngineModal(true);
-                    }}
-                    className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs text-xs"
-                    title="Hardcopy Collection Receipt Alignment & Print Engine"
-                  >
-                    <Crosshair className="w-3.5 h-3.5" /> Hardcopy Print Engine
-                  </button>
                   <button
                     type="button"
                     onClick={() => setIsCrPaymentMode(false)}
@@ -6696,26 +6671,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     </button>
                   </>
                 ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHardcopyPrintEngineInvoice(selectedInvoice);
-                        setShowHardcopyPrintEngineModal(true);
-                      }}
-                      className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-xl font-bold flex items-center gap-1.5 cursor-pointer shadow-xs text-xs"
-                      title="Open Hardcopy Collection Receipt Alignment & Print Engine"
-                    >
-                      <Crosshair className="w-4 h-4" /> Hardcopy Print Engine
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowCrModal(false)}
-                      className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
-                    >
-                      Close
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => setShowCrModal(false)}
+                    className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
+                  >
+                    Close
+                  </button>
                 )}
               </div>
             </div>
