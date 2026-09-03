@@ -8,6 +8,7 @@ import { SmartPeriodInput } from './SmartPeriodInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
 import { MonthYearCoverageModal } from './MonthYearCoverageModal';
+import { HardcopyCrPrintEngineModal } from './HardcopyCrPrintEngineModal';
 import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, generatePaymentCollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { 
@@ -76,7 +77,8 @@ import {
   Tag,
   PlusCircle,
   Zap,
-  Stamp
+  Stamp,
+  Crosshair
 } from 'lucide-react';
 
 interface CrItemPaymentConfig {
@@ -269,6 +271,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showCustomizerModal, setShowCustomizerModal] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
+  const [showHardcopyPrintEngineModal, setShowHardcopyPrintEngineModal] = useState(false);
+  const [hardcopyPrintEngineInvoice, setHardcopyPrintEngineInvoice] = useState<InvoiceItem | null>(null);
 
   // Reusable System Alert & Notification Modal ⭐
   const [alertModal, setAlertModal] = useState<{
@@ -2568,6 +2572,26 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             <FileDown className="w-4 h-4 text-slate-600" /> PDF Report
           </button>
           <button
+            onClick={() => {
+              const targetInv = selectedInvoice || invoices.find(i => i.status === 'Paid' || i.status === 'Partially Paid') || invoices[0] || null;
+              if (targetInv) {
+                setHardcopyPrintEngineInvoice(targetInv);
+                setShowHardcopyPrintEngineModal(true);
+              } else {
+                setAlertModal({
+                  isOpen: true,
+                  title: 'No Invoices Available',
+                  message: 'Please generate or select an invoice first before calibrating the Hardcopy CR Print Engine.',
+                  type: 'info'
+                });
+              }
+            }}
+            title="Hardcopy Collection Receipt Alignment & Print Engine: Calibrate millimeter X-Y offsets for pre-printed BIR receipt booklets or continuous dot-matrix forms"
+            className="px-3.5 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
+          >
+            <Crosshair className="w-4 h-4 text-blue-600" /> Hardcopy CR Engine
+          </button>
+          <button
             onClick={() => setShowCreateModal(true)}
             className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-2xs text-xs flex items-center gap-2 transition-all shrink-0 cursor-pointer"
           >
@@ -2898,18 +2922,30 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           )}
 
                           {(inv.status === 'Paid' || inv.status === 'Partially Paid' || (inv.paidAmount || 0) > 0) && (
-                            <button
-                              onClick={() => {
-                                setSelectedInvoice(inv);
-                                setIsCrPaymentMode(false);
-                                setShowCrModal(true);
-                              }}
-                              title={`View Receipt (${inv.collectionReceiptNumber || inv.officialReceiptNumber || 'Paid'})`}
-                              className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
-                            >
-                              <Receipt className="w-3.5 h-3.5 text-emerald-700" />
-                              View Receipt
-                            </button>
+                            <>
+                              <button
+                                onClick={() => {
+                                  setSelectedInvoice(inv);
+                                  setIsCrPaymentMode(false);
+                                  setShowCrModal(true);
+                                }}
+                                title={`View Receipt (${inv.collectionReceiptNumber || inv.officialReceiptNumber || 'Paid'})`}
+                                className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold rounded-lg text-[10px] flex items-center gap-1 transition-colors shrink-0 cursor-pointer"
+                              >
+                                <Receipt className="w-3.5 h-3.5 text-emerald-700" />
+                                View Receipt
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setHardcopyPrintEngineInvoice(inv);
+                                  setShowHardcopyPrintEngineModal(true);
+                                }}
+                                title="Hardcopy CR Alignment & Print Engine"
+                                className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-800 border border-blue-200 rounded-lg transition-colors shrink-0 cursor-pointer"
+                              >
+                                <Crosshair className="w-3.5 h-3.5 text-blue-700" />
+                              </button>
+                            </>
                           )}
 
                           {isSuperAdmin && (
@@ -5905,10 +5941,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               </button>
             </div>
 
-            {/* Unified 5-Button Action Bar for Controls (Default Receipt, Payment, Edit, Download PDF, Print) - All Same Size ⭐ */}
+            {/* Unified 6-Button Action Bar for Controls (Default Receipt, Payment, Edit, Hardcopy Print Engine, Download PDF, Print) - All Same Size ⭐ */}
             {!isCrPaymentMode ? (
               <div className={`grid gap-2 bg-slate-50 p-2.5 rounded-xl border border-slate-200 ${
-                isSuperAdmin ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'
+                isSuperAdmin ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-6' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-5'
               }`}>
                 {/* Button 1: Default Tab */}
                 <button
@@ -5964,7 +6000,21 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   </button>
                 )}
 
-                {/* Button 4: Download PDF */}
+                {/* Button 4: Hardcopy Alignment & Print Engine ⭐ */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHardcopyPrintEngineInvoice(selectedInvoice);
+                    setShowHardcopyPrintEngineModal(true);
+                  }}
+                  className="h-9 px-2.5 py-1.5 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded-xl flex items-center justify-center gap-1.5 text-xs shadow-2xs cursor-pointer transition-colors w-full text-center"
+                  title="Hardcopy Collection Receipt Alignment & Print Engine: Calibrate millimeter X-Y offsets for pre-printed BIR receipt booklets or continuous dot-matrix forms"
+                >
+                  <Crosshair className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Hardcopy Engine</span>
+                </button>
+
+                {/* Button 5: Download PDF */}
                 <button
                   type="button"
                   onClick={() => {
@@ -5981,7 +6031,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                   <span className="truncate">Download PDF</span>
                 </button>
 
-                {/* Button 5: Print */}
+                {/* Button 6: Print */}
                 <button
                   type="button"
                   onClick={() => window.print()}
@@ -5993,18 +6043,31 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 </button>
               </div>
             ) : (
-              <div className="flex items-center justify-between bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
                 <span className="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
                   <CreditCard className="w-4 h-4 text-emerald-700" />
                   Payment Remittance Mode
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsCrPaymentMode(false)}
-                  className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs text-xs"
-                >
-                  <Eye className="w-3.5 h-3.5" /> Close Remittance Editor
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHardcopyPrintEngineInvoice(selectedInvoice);
+                      setShowHardcopyPrintEngineModal(true);
+                    }}
+                    className="px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white font-bold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs text-xs"
+                    title="Hardcopy Collection Receipt Alignment & Print Engine"
+                  >
+                    <Crosshair className="w-3.5 h-3.5" /> Hardcopy Print Engine
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsCrPaymentMode(false)}
+                    className="px-3 py-1.5 bg-white hover:bg-emerald-100 text-emerald-800 border border-emerald-300 font-bold rounded-lg flex items-center gap-1.5 cursor-pointer shadow-2xs text-xs"
+                  >
+                    <Eye className="w-3.5 h-3.5" /> Close Remittance Editor
+                  </button>
+                </div>
               </div>
             )}
 
@@ -6633,13 +6696,26 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     </button>
                   </>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowCrModal(false)}
-                    className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
-                  >
-                    Close
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHardcopyPrintEngineInvoice(selectedInvoice);
+                        setShowHardcopyPrintEngineModal(true);
+                      }}
+                      className="px-4 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-xl font-bold flex items-center gap-1.5 cursor-pointer shadow-xs text-xs"
+                      title="Open Hardcopy Collection Receipt Alignment & Print Engine"
+                    >
+                      <Crosshair className="w-4 h-4" /> Hardcopy Print Engine
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCrModal(false)}
+                      className="px-5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -7992,6 +8068,19 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
               }
             }
             setLineCoverageModal(null);
+          }}
+        />
+      )}
+
+      {/* Hardcopy Collection Receipt Alignment & Print Engine Modal ⭐ */}
+      {showHardcopyPrintEngineModal && hardcopyPrintEngineInvoice && (
+        <HardcopyCrPrintEngineModal
+          invoice={hardcopyPrintEngineInvoice}
+          invoices={invoices}
+          isOpen={showHardcopyPrintEngineModal}
+          onClose={() => {
+            setShowHardcopyPrintEngineModal(false);
+            setHardcopyPrintEngineInvoice(null);
           }}
         />
       )}
