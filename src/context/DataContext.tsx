@@ -991,11 +991,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addPayable = (data: Omit<PayableRecord, 'id' | 'createdAt'>): PayableRecord => {
     const nowTimestamp = new Date().toISOString().replace('T', ' ').substring(0, 19);
     
-    // Check if an existing payable exists for this client, item, and month/year
+    // Check if an existing payable exists for this client, item, and specific month/period
     const existingIndex = payables.findIndex(p => 
       p.clientId === data.clientId && 
       p.itemName.trim().toLowerCase() === data.itemName.trim().toLowerCase() && 
-      (p.month === data.month || p.year === data.year)
+      (
+        p.month === data.month ||
+        (p.month && data.month && p.month.toLowerCase().trim() === data.month.toLowerCase().trim())
+      )
     );
 
     let resultPayable: PayableRecord;
@@ -1045,7 +1048,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (data.status === 'Unpaid') {
       const existingComp = complianceItems.find(c => 
         c.clientId === data.clientId && 
-        c.title.includes(data.itemName)
+        c.title.toLowerCase().includes(data.itemName.toLowerCase()) &&
+        (c.title.includes(data.month) || (c.dueDate && c.dueDate.startsWith(data.month)))
       );
 
       if (existingComp) {

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
-import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile, CustomDeadlineRule } from '../types';
+import { InvoiceItem, InvoiceServiceLine, Payment, CollectionStatus, ServiceBillingFrequency, CollectionLog, AuditLog, ClientProfile, CustomDeadlineRule, PayableRecord } from '../types';
 import { CurrencyInput } from './CurrencyInput';
 import { SmartServiceInput } from './SmartServiceInput';
 import { SmartPeriodInput } from './SmartPeriodInput';
 import { SearchableClientSelect } from './SearchableClientSelect';
 import { BillingTemplateCustomizerModal } from './BillingTemplateCustomizerModal';
-import { PeriodCoverageModal } from './PeriodCoverageModal';
+import { MonthYearCoverageModal } from './MonthYearCoverageModal';
 import { generateCustomizedInvoicePDF, generateFFCSICollectionReceiptPDF, generatePaymentCollectionReceiptPDF, getBillingTemplateConfig } from '../utils/billingTemplateUtils';
 import { buildClientSoaLedger } from '../utils/soaCalculator';
 import { 
@@ -397,6 +397,9 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
   // Previous Billing Toggle state in SOA Generator ⭐
   const [showPreviousBilling, setShowPreviousBilling] = useState<boolean>(false);
 
+  // Billing For This Month Only Toggle state in SOA Generator (Default: OFF to show all unpaid, toggle ON to restrict auto-load to this month only) ⭐
+  const [billingForThisMonthOnly, setBillingForThisMonthOnly] = useState<boolean>(false);
+
   // Duplicate Item Already Billed Warning Modal state ⭐
   const [duplicateWarningModal, setDuplicateWarningModal] = useState<{
     isOpen: boolean;
@@ -408,6 +411,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     existingIndex?: number;
     overlappingPeriod?: string;
   } | null>(null);
+  const [allowedDuplicates, setAllowedDuplicates] = useState<Set<string>>(new Set());
 
   // Confirm Amount Change from Previous Billing Modal state ⭐
   const [applyPreviousAmountModal, setApplyPreviousAmountModal] = useState<{
@@ -419,17 +423,17 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     currentAmount: number;
   } | null>(null);
 
-  // Multi-Month & Period Coverage Builder Modal State ⭐
-  const [periodCoverageModal, setPeriodCoverageModal] = useState<{
+  // Month & Year Multi-Month Coverage Builder State ⭐
+  const [isMonthYearCoverageModalOpen, setIsMonthYearCoverageModalOpen] = useState(false);
+  const [lineCoverageModal, setLineCoverageModal] = useState<{
     isOpen: boolean;
     itemIndex: number;
-    itemDescription: string;
     currentPeriod: string;
-    currentAmount: number;
-    defaultMonthlyRate?: number;
-    initialDivideToMonths?: boolean;
-    targetList?: 'create' | 'edit' | 'custom' | 'edit-custom';
+    initialAmount?: number;
+    initialMonthlyBreakdown?: Record<string, number>;
+    target: 'line' | 'custom' | 'edit-line' | 'edit-custom';
   } | null>(null);
+  const [customCoveragePeriod, setCustomCoveragePeriod] = useState<string>('');
 
   // Phase 5: Financial Reports Sub-Tab State ⭐
   const [reportCategory, setReportCategory] = useState<'aging' | 'outstanding' | 'payments' | 'collections' | 'service_revenue' | 'client_revenue' | 'monthly_revenue'>('aging');
@@ -709,10 +713,21 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (currentMIdx < 0) currentMIdx = 7; // default August (index 7)
     let currentYear = billingYear || 2026;
 
-    // 1. If explicit target period code is already formatted (e.g. "Jul-26", "Jul-2026", "2Q-2026", "2025")
+    // 1. If explicit target period code is already formatted or provided (e.g. "July 2026", "2026-07", "Jul-26", "2Q-2026", "2025")
     if (existingPeriod && existingPeriod.trim()) {
       const epTrim = existingPeriod.trim();
       
+      // Full Month name with 4 digit year: e.g. "July 2026", "August 2026", "June 2025"
+      const fullMonthMatch = epTrim.match(/^([A-Za-z]+)\s+(\d{4})$/);
+      if (fullMonthMatch) {
+        const mKey = fullMonthMatch[1].toLowerCase();
+        const foundMonth = monthsList.find(m => m.toLowerCase() === mKey);
+        if (foundMonth) {
+          return `${foundMonth} ${fullMonthMatch[2]}`;
+        }
+        return epTrim;
+      }
+
       // Explicit 3-letter month with 2 or 4 digit year: e.g. "Jul-26" or "Jul-2026"
       const shortMatch = epTrim.match(/^([A-Za-z]{3})[- ](\d{2,4})$/);
       if (shortMatch) {
@@ -737,14 +752,34 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
         return epTrim;
       }
 
-      // If existingPeriod is stored as ISO "YYYY-MM" (which is the filing month in To-Do list), extract it as the filing context
+      // If existingPeriod is stored as ISO "YYYY-MM" (e.g. "2026-07", "2026-08", "2026-06", "2025-12")
       if (/^\d{4}-\d{2}$/.test(epTrim)) {
         const [y, m] = epTrim.split('-');
-        currentYear = parseInt(y, 10) || currentYear;
+        const parsedYear = parseInt(y, 10) || currentYear;
         const parsedM = parseInt(m, 10) - 1;
         if (parsedM >= 0 && parsedM <= 11) {
-          currentMIdx = parsedM;
+          // If quarterly form
+          if (['1601EQ', '2550Q', '2551Q', '1701Q', '1702Q', 'SAWT', 'QAP', 'SLSP'].some(q => codeUpper.includes(q))) {
+            if (parsedM <= 2) return `4Q-${parsedYear - 1}`;
+            if (parsedM <= 5) return `1Q-${parsedYear}`;
+            if (parsedM <= 8) return `2Q-${parsedYear}`;
+            return `3Q-${parsedYear}`;
+          }
+          // If annual form
+          if (codeUpper === 'ITR' || (codeUpper.includes('1701') && !codeUpper.includes('1701Q')) || (codeUpper.includes('1702') && !codeUpper.includes('1702Q')) || codeUpper === '1604C' || codeUpper === '1604E') {
+            return `${parsedYear - 1}`;
+          }
+          // For monthly forms or general payables, "YYYY-MM" (e.g. "2026-07") directly maps to its month name: "July 2026"
+          return `${monthsList[parsedM]} ${parsedYear}`;
         }
+      }
+
+      // Fallback match for string containing a known month name
+      const monthFound = monthsList.find(m => epTrim.toLowerCase().includes(m.toLowerCase()));
+      if (monthFound) {
+        const yearFound = epTrim.match(/\b(20\d\d)\b/);
+        const yr = yearFound ? yearFound[1] : `${currentYear}`;
+        return `${monthFound} ${yr}`;
       }
     }
 
@@ -786,17 +821,18 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     if (!clientId || !desc) return false;
     const cleanD = desc.trim().toLowerCase();
     const cleanP = (period || '').trim();
-    const candidateMonths = parsePeriodToMonths(cleanP);
+    if (!cleanP) return false;
+    const candidateMonths = parsePeriodToMonths(cleanP, selectedYear);
 
     return invoices.some(inv => {
       if (inv.clientId !== clientId || inv.status === 'Cancelled') return false;
       return inv.services.some(s => {
         const sClean = s.description.trim().toLowerCase();
         
-        // Check if both refer to retainer / bookkeeping
+        // Check if both refer to retainer / bookkeeping / accounting
         const isBothRetainer = 
-          (cleanD.includes('retainer') || cleanD.includes('bookkeeping')) &&
-          (sClean.includes('retainer') || sClean.includes('bookkeeping'));
+          (cleanD.includes('retainer') || cleanD.includes('bookkeeping') || cleanD.includes('accounting')) &&
+          (sClean.includes('retainer') || sClean.includes('bookkeeping') || sClean.includes('accounting'));
 
         // Check if both refer to standard tax/benefit codes
         const codeTokens = ['0619e', '1601c', '1601eq', '1701q', '1702q', '2550q', '2551q', '1604c', '1604e', 'sss', 'philhealth', 'hdmf', 'pag-ibig', 'pagibig'];
@@ -819,22 +855,24 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     desc: string, 
     period: string, 
     amount: number,
-    coveredMonths?: string[]
+    coveredMonths?: string[],
+    excludeInvoiceId?: string
   ): { isBilled: boolean; billingNumber?: string; overlappingInfo?: string } => {
     if (!clientId || !desc) return { isBilled: false };
     const cleanD = desc.trim().toLowerCase();
     const cleanP = (period || '').trim();
+    if (!cleanP) return { isBilled: false };
     const candidateMonths = (coveredMonths && coveredMonths.length > 0) 
       ? coveredMonths 
-      : parsePeriodToMonths(cleanP);
+      : parsePeriodToMonths(cleanP, selectedYear);
 
     for (const inv of invoices) {
-      if (inv.clientId === clientId && inv.status !== 'Cancelled') {
+      if (inv.clientId === clientId && inv.status !== 'Cancelled' && inv.id !== excludeInvoiceId) {
         for (const s of inv.services) {
           const sClean = s.description.trim().toLowerCase();
           const isBothRetainer = 
-            (cleanD.includes('retainer') || cleanD.includes('bookkeeping')) &&
-            (sClean.includes('retainer') || sClean.includes('bookkeeping'));
+            (cleanD.includes('retainer') || cleanD.includes('bookkeeping') || cleanD.includes('accounting')) &&
+            (sClean.includes('retainer') || sClean.includes('bookkeeping') || sClean.includes('accounting'));
 
           const codeTokens = ['0619e', '1601c', '1601eq', '1701q', '1702q', '2550q', '2551q', '1604c', '1604e', 'sss', 'philhealth', 'hdmf', 'pag-ibig', 'pagibig'];
           const matchedToken = codeTokens.find(token => cleanD.includes(token) && sClean.includes(token));
@@ -846,9 +884,10 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             const overlap = checkMonthPeriodOverlap(cleanP, s.monthYear || '', candidateMonths, billedMonths);
             
             if (overlap.hasOverlap) {
+              const billingNum = inv.collectionNumber ? `Collection #: ${inv.collectionNumber}` : (inv.invoiceNumber ? `Invoice #: ${inv.invoiceNumber}` : inv.id);
               return {
                 isBilled: true,
-                billingNumber: inv.collectionNumber || inv.invoiceNumber || inv.id,
+                billingNumber: billingNum,
                 overlappingInfo: overlap.overlappingMonths.join(', ')
               };
             }
@@ -1139,15 +1178,51 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     });
   };
 
-  // Handle Client Change in Create Modal: Only show items if there is an actual payable or fee/amount > 0 and NOT already invoiced
-  const handleClientChange = (clientId: string) => {
-    setSelectedClientId(clientId);
-    setLineSetActionStatus({});
-    const client = clients.find(c => c.id === clientId);
-    if (!client) {
-      setServices([]);
-      return;
+  // Helper: Check if a payable belongs to the current billing month/period
+  const isPayableBelongsToBillingMonth = (p: PayableRecord, selMonth: string, selYear: string): boolean => {
+    const mIdx = monthsList.indexOf(selMonth);
+    const targetYearNum = parseInt(selYear, 10) || 2026;
+    const isoMonth = mIdx >= 0 ? `${targetYearNum}-${String(mIdx + 1).padStart(2, '0')}` : '';
+    const shortMonth = mIdx >= 0 ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][mIdx] : '';
+
+    const pMonthStr = (p.month || '').trim();
+    const pYear = p.year || (pMonthStr.match(/\b(20\d\d)\b/) ? parseInt(pMonthStr.match(/\b(20\d\d)\b/)![1], 10) : targetYearNum);
+
+    // 1. Direct ISO match (e.g. "2026-08")
+    if (isoMonth && pMonthStr === isoMonth) return true;
+
+    // 2. Direct Month Name or Abbreviation with year (e.g. "August 2026", "Aug-26", "Aug")
+    if (pYear === targetYearNum) {
+      if (pMonthStr.toLowerCase() === selMonth.toLowerCase()) return true;
+      if (shortMonth && pMonthStr.toLowerCase() === shortMonth.toLowerCase()) return true;
+      if (pMonthStr.toLowerCase().includes(selMonth.toLowerCase())) return true;
+      if (shortMonth && pMonthStr.toLowerCase().startsWith(shortMonth.toLowerCase())) return true;
     }
+
+    // 3. Check if mapped period matches current month/year
+    let cleanItemName = p.itemName;
+    if (cleanItemName.toLowerCase().startsWith('bir form ')) {
+      cleanItemName = cleanItemName.substring(9).trim();
+    }
+    const mappedPeriod = getPeriodForForm(cleanItemName, selMonth, targetYearNum, undefined, p.month);
+    if (mappedPeriod) {
+      if (mappedPeriod.toLowerCase().includes(selMonth.toLowerCase()) && mappedPeriod.includes(selYear)) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  // Reusable loader for client engagements, retainer fees, and unpaid payables
+  const loadServicesForClient = (
+    clientId: string, 
+    thisMonthOnly: boolean = billingForThisMonthOnly, 
+    month: string = selectedMonth, 
+    year: string = selectedYear
+  ): InvoiceServiceLine[] => {
+    const client = clients.find(c => c.id === clientId);
+    if (!client) return [];
 
     const loadedLines: InvoiceServiceLine[] = [];
 
@@ -1156,9 +1231,8 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     activeEngagements.forEach(s => {
       const isBookkeeping = s.serviceCode === 'BOOKKEEPING' || s.serviceName.toLowerCase().includes('bookkeeping') || s.serviceName.toLowerCase().includes('monthly retainer');
       const cleanDesc = isBookkeeping ? 'Retainers Fee' : `${s.serviceName} (${s.serviceCode})`;
-      const period = isBookkeeping ? `${selectedMonth} ${selectedYear}` : getPeriodForForm(s.serviceCode, selectedMonth, parseInt(selectedYear, 10), client);
+      const period = isBookkeeping ? `${month} ${year}` : getPeriodForForm(s.serviceCode, month, parseInt(year, 10), client);
 
-      // Only auto-include if not already billed in an existing invoice for this client & period
       if (!isItemAlreadyBilled(client.id, cleanDesc, period)) {
         loadedLines.push({
           clientServiceId: s.id,
@@ -1177,7 +1251,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
 
     // 2. Client Retainer fee if no registered active ClientService engagements exist AND retainersFee > 0
     if (loadedLines.length === 0 && client.retainersFee > 0) {
-      const period = `${selectedMonth} ${selectedYear}`;
+      const period = `${month} ${year}`;
       if (!isItemAlreadyBilled(client.id, 'Retainers Fee', period)) {
         loadedLines.push({
           description: `Retainers Fee`,
@@ -1190,29 +1264,48 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       }
     }
 
-    // 3. Unpaid Payables for this client with payableAmount > 0 (exclude if already billed)
-    const activePayables = payables.filter(p => p.clientId === client.id && p.status === 'Unpaid' && p.payableAmount > 0);
+    // 3. Unpaid Payables for this client with payableAmount > 0
+    let activePayables = payables.filter(p => p.clientId === client.id && p.status === 'Unpaid' && Math.abs(p.payableAmount || 0) > 0);
+    
+    // If "Billing For this Month only" is toggled ON, filter to only payables belonging to the selected billing month
+    if (thisMonthOnly) {
+      activePayables = activePayables.filter(p => isPayableBelongsToBillingMonth(p, month, year));
+    }
+
     activePayables.forEach(p => {
       let cleanItemName = p.itemName;
       if (cleanItemName.toLowerCase().startsWith('bir form ')) {
         cleanItemName = cleanItemName.substring(9).trim();
       }
       const cleanDesc = getCleanBirDescription(cleanItemName, p.remarks || p.itemName);
-      const period = getPeriodForForm(cleanItemName, selectedMonth, parseInt(selectedYear, 10), client, p.month);
+      const period = getPeriodForForm(cleanItemName, month, parseInt(year, 10), client, p.month);
 
       if (!isItemAlreadyBilled(client.id, cleanDesc, period)) {
         loadedLines.push({
           description: cleanDesc,
           monthYear: period,
-          unitPrice: p.payableAmount,
+          unitPrice: Math.abs(p.payableAmount),
           quantity: 1,
-          amount: p.payableAmount,
+          amount: Math.abs(p.payableAmount),
           itemType: 'One-Time'
         });
       }
     });
 
-    // Do not show item if there is no payable, fee, or if already billed!
+    return loadedLines;
+  };
+
+  // Handle Client Change in Create Modal: Only show items if there is an actual payable or fee/amount > 0 and NOT already invoiced
+  const handleClientChange = (clientId: string) => {
+    setSelectedClientId(clientId);
+    setLineSetActionStatus({});
+    const client = clients.find(c => c.id === clientId);
+    if (!client) {
+      setServices([]);
+      return;
+    }
+
+    const loadedLines = loadServicesForClient(clientId, billingForThisMonthOnly, selectedMonth, selectedYear);
     setServices(loadedLines);
   };
 
@@ -1233,66 +1326,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       return;
     }
 
-    const loadedLines: InvoiceServiceLine[] = [];
-
-    // 1. Active ClientServices with fee > 0
-    const activeEngagements = clientServices.filter(s => s.clientId === selectedClient.id && s.status === 'Active' && s.billable && (s.fee || 0) > 0);
-    activeEngagements.forEach(s => {
-      const isBookkeeping = s.serviceCode === 'BOOKKEEPING' || s.serviceName.toLowerCase().includes('bookkeeping') || s.serviceName.toLowerCase().includes('monthly retainer');
-      const cleanDesc = isBookkeeping ? 'Retainers Fee' : `${s.serviceName} (${s.serviceCode})`;
-      const period = isBookkeeping ? `${selectedMonth} ${selectedYear}` : getPeriodForForm(s.serviceCode, selectedMonth, parseInt(selectedYear, 10), selectedClient);
-
-      if (!isItemAlreadyBilled(selectedClient.id, cleanDesc, period)) {
-        loadedLines.push({
-          clientServiceId: s.id,
-          serviceCode: s.serviceCode,
-          serviceCategory: s.category,
-          description: cleanDesc,
-          monthYear: period,
-          unitPrice: s.fee || 0,
-          quantity: 1,
-          amount: s.fee || 0,
-          itemType: 'Service'
-        });
-      }
-    });
-
-    // 2. Retainer line if no ClientServices and retainer > 0
-    if (activeEngagements.length === 0 && selectedClient.retainersFee > 0) {
-      const period = `${selectedMonth} ${selectedYear}`;
-      if (!isItemAlreadyBilled(selectedClient.id, 'Retainers Fee', period)) {
-        loadedLines.push({
-          description: `Retainers Fee`,
-          monthYear: period,
-          unitPrice: selectedClient.retainersFee,
-          quantity: 1,
-          amount: selectedClient.retainersFee,
-          itemType: 'Service'
-        });
-      }
-    }
-
-    // 3. Unpaid Payables with amount > 0 (exclude if already billed)
-    const activePayables = payables.filter(p => p.clientId === selectedClient.id && p.status === 'Unpaid' && p.payableAmount > 0);
-    activePayables.forEach(p => {
-      let cleanItemName = p.itemName;
-      if (cleanItemName.toLowerCase().startsWith('bir form ')) {
-        cleanItemName = cleanItemName.substring(9).trim();
-      }
-      const cleanDesc = getCleanBirDescription(cleanItemName, p.remarks || p.itemName);
-      const period = getPeriodForForm(cleanItemName, selectedMonth, parseInt(selectedYear, 10), selectedClient, p.month);
-      
-      if (!isItemAlreadyBilled(selectedClient.id, cleanDesc, period)) {
-        loadedLines.push({
-          description: cleanDesc,
-          monthYear: period,
-          unitPrice: p.payableAmount,
-          quantity: 1,
-          amount: p.payableAmount,
-          itemType: 'One-Time'
-        });
-      }
-    });
+    const loadedLines = loadServicesForClient(selectedClient.id, billingForThisMonthOnly, selectedMonth, selectedYear);
 
     if (loadedLines.length > 0) {
       setServices(loadedLines);
@@ -1300,7 +1334,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
       setAlertModal({
         isOpen: true,
         title: 'No Unbilled Payables Found',
-        message: `No unbilled active payables or retainer fees found for ${selectedClient.companyName} in ${billingPeriod}.`,
+        message: `No unbilled active payables or retainer fees found for ${selectedClient.companyName} in ${billingPeriod}${billingForThisMonthOnly ? ' (Billing For this Month only is ON)' : ''}.`,
         type: 'info'
       });
     }
@@ -1786,6 +1820,32 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
     setDescriptionErrors({});
     setMonthYearErrors({});
     setAmountErrors({});
+
+    // Check for duplicate billing across all lines before confirmation
+    for (let idx = 0; idx < services.length; idx++) {
+      const item = services[idx];
+      const dup = findAlreadyBilledInvoice(
+        selectedClientId, 
+        item.description, 
+        item.monthYear, 
+        Number(item.amount) || 0,
+        item.coveredMonths
+      );
+      const dupKey = `${idx}-${item.description.trim().toLowerCase()}-${String(item.monthYear).trim().toLowerCase()}`;
+      if (dup.isBilled && !allowedDuplicates.has(dupKey)) {
+        setDuplicateWarningModal({
+          isOpen: true,
+          itemName: item.description,
+          monthYear: item.monthYear,
+          overlappingPeriod: dup.overlappingInfo,
+          amount: Number(item.amount) || 0,
+          billingNumber: dup.billingNumber || 'N/A',
+          pendingLine: item,
+          existingIndex: idx
+        });
+        return;
+      }
+    }
 
     // Open confirmation dialog before finalizing creation
     setConfirmGenerateModal({
@@ -4718,11 +4778,30 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 </div>
 
                 <div>
-                  <label className="block text-slate-600 mb-1 font-semibold">Billing Period (Month & Year) *</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-600 font-semibold">Billing Period (Month & Year) *</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsMonthYearCoverageModalOpen(true)}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-md text-[11px] font-bold transition-colors cursor-pointer shadow-2xs"
+                      title="Open Multi-Month Coverage Builder"
+                    >
+                      <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Multi-Month Builder</span>
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
                     <select
                       value={selectedMonth}
-                      onChange={e => setSelectedMonth(e.target.value)}
+                      onChange={e => {
+                        const newMonth = e.target.value;
+                        setSelectedMonth(newMonth);
+                        setCustomCoveragePeriod('');
+                        if (selectedClientId && billingForThisMonthOnly) {
+                          const reloaded = loadServicesForClient(selectedClientId, true, newMonth, selectedYear);
+                          setServices(reloaded);
+                        }
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
                     >
                       {monthsList.map(m => (
@@ -4731,7 +4810,15 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                     </select>
                     <select
                       value={selectedYear}
-                      onChange={e => setSelectedYear(e.target.value)}
+                      onChange={e => {
+                        const newYear = e.target.value;
+                        setSelectedYear(newYear);
+                        setCustomCoveragePeriod('');
+                        if (selectedClientId && billingForThisMonthOnly) {
+                          const reloaded = loadServicesForClient(selectedClientId, true, selectedMonth, newYear);
+                          setServices(reloaded);
+                        }
+                      }}
                       className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-900 font-medium focus:bg-white focus:ring-2 focus:ring-emerald-100"
                     >
                       {yearsList.map(y => (
@@ -4739,6 +4826,14 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       ))}
                     </select>
                   </div>
+                  {customCoveragePeriod && (
+                    <div className="mt-1.5 px-2.5 py-1 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center justify-between text-xs text-emerald-900 font-medium">
+                      <span><strong>Active Coverage:</strong> {customCoveragePeriod}</span>
+                      <button type="button" onClick={() => setCustomCoveragePeriod('')} className="text-emerald-700 hover:text-emerald-900 font-bold ml-2 hover:underline cursor-pointer">
+                        Reset
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -5034,35 +5129,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                   />
                                 </div>
                                 <div className="grid grid-cols-2 gap-1.5">
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="text"
-                                      placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
-                                      value={customItemPeriod}
-                                      onChange={e => setCustomItemPeriod(e.target.value)}
-                                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const client = clients.find(c => c.id === selectedClientId);
-                                        const defaultRate = client?.monthlyRetainerFee || 0;
-                                        setPeriodCoverageModal({
-                                          isOpen: true,
-                                          itemIndex: -1,
-                                          itemDescription: customItemName || 'Custom Item',
-                                          currentPeriod: customItemPeriod || '',
-                                          currentAmount: customItemAmount || 0,
-                                          defaultMonthlyRate: defaultRate,
-                                          targetList: 'custom',
-                                        });
-                                      }}
-                                      className="p-1 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
-                                      title="Open Multi-Month / Period Coverage Builder"
-                                    >
-                                      <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
-                                    </button>
-                                  </div>
+                                  <input
+                                    type="text"
+                                    placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
+                                    value={customItemPeriod}
+                                    onChange={e => setCustomItemPeriod(e.target.value)}
+                                    className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
                                   <CurrencyInput
                                     placeholder="Amount (₱)"
                                     value={customItemAmount}
@@ -5106,6 +5179,26 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       <span>+ Blank Line</span>
                     </button>
 
+                    {/* Previous Billing Toggle Button */}
+                    <button
+                      type="button"
+                      onClick={() => setShowPreviousBilling(prev => !prev)}
+                      className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border shadow-2xs ${
+                        showPreviousBilling 
+                          ? 'bg-amber-500 text-white border-amber-600' 
+                          : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                      }`}
+                      title="Toggle to view the last billed period and amount for each item"
+                    >
+                      <History className={`w-3.5 h-3.5 ${showPreviousBilling ? 'text-white' : 'text-slate-500'}`} />
+                      <span>Previous Billing</span>
+                      <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wider ${
+                        showPreviousBilling ? 'bg-amber-700 text-white' : 'bg-slate-100 text-slate-600'
+                      }`}>
+                        {showPreviousBilling ? 'ON' : 'OFF'}
+                      </span>
+                    </button>
+
                     {/* Add Notes Box Toggle Button ⭐ */}
                     <button
                       type="button"
@@ -5134,23 +5227,30 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                       </span>
                     </button>
 
-                    {/* Previous Billing Toggle Button */}
+                    {/* Billing For this Month only Toggle Button ⭐ */}
                     <button
                       type="button"
-                      onClick={() => setShowPreviousBilling(prev => !prev)}
+                      onClick={() => {
+                        const nextVal = !billingForThisMonthOnly;
+                        setBillingForThisMonthOnly(nextVal);
+                        if (selectedClientId) {
+                          const reloaded = loadServicesForClient(selectedClientId, nextVal, selectedMonth, selectedYear);
+                          setServices(reloaded);
+                        }
+                      }}
                       className={`px-3 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border shadow-2xs ${
-                        showPreviousBilling 
-                          ? 'bg-amber-500 text-white border-amber-600' 
+                        billingForThisMonthOnly 
+                          ? 'bg-blue-600 text-white border-blue-700 ring-2 ring-blue-200' 
                           : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
                       }`}
-                      title="Toggle to view the last billed period and amount for each item"
+                      title="Toggle ON to only show unpaid payables for this month, or OFF to include unpaid payables from previous months. Manual addition of previous months is always allowed."
                     >
-                      <History className={`w-3.5 h-3.5 ${showPreviousBilling ? 'text-white' : 'text-slate-500'}`} />
-                      <span>Previous Billing</span>
+                      <CalendarRange className={`w-3.5 h-3.5 ${billingForThisMonthOnly ? 'text-white' : 'text-blue-600'}`} />
+                      <span>Billing For this Month only</span>
                       <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-extrabold uppercase tracking-wider ${
-                        showPreviousBilling ? 'bg-amber-700 text-white' : 'bg-slate-100 text-slate-600'
+                        billingForThisMonthOnly ? 'bg-blue-800 text-white' : 'bg-slate-100 text-slate-600'
                       }`}>
-                        {showPreviousBilling ? 'ON' : 'OFF'}
+                        {billingForThisMonthOnly ? 'ON' : 'OFF'}
                       </span>
                     </button>
 
@@ -5206,51 +5306,35 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                 </div>
                               )}
                             </div>
-                            <div className="col-span-3 flex items-center gap-1 relative">
-                              <div className="w-full relative">
-                                <SmartPeriodInput
-                                  placeholder="e.g. July 2026, Q2 2026"
-                                  value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
-                                  selectedYear={selectedYear}
-                                  onChange={val => {
-                                    handleServiceChange(idx, 'monthYear', val);
-                                    if (monthYearErrors[idx]) {
-                                      setMonthYearErrors(prev => {
-                                        const next = { ...prev };
-                                        delete next[idx];
-                                        return next;
-                                      });
-                                    }
-                                  }}
-                                  hasError={!!monthYearErrors[idx]}
-                                />
-                                {monthYearErrors[idx] && (
-                                  <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
-                                    <AlertCircle className="w-3 h-3 shrink-0" />
-                                    <span>{monthYearErrors[idx]}</span>
-                                  </div>
-                                )}
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const client = clients.find(c => c.id === selectedClientId);
-                                  const defaultRate = client?.monthlyRetainerFee || 0;
-                                  setPeriodCoverageModal({
+                            <div className="col-span-3 relative">
+                              <div className="relative w-full">
+                                <input
+                                  type="text"
+                                  readOnly
+                                  onClick={() => setLineCoverageModal({
                                     isOpen: true,
                                     itemIndex: idx,
-                                    itemDescription: item.description || 'Line Item',
-                                    currentPeriod: item.monthYear || '',
-                                    currentAmount: item.amount || 0,
-                                    defaultMonthlyRate: defaultRate,
-                                    initialDivideToMonths: item.divideToMonths !== undefined ? item.divideToMonths : true,
-                                  });
-                                }}
-                                className="p-1.5 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
-                                title="Open Multi-Month & Period Coverage Builder (Range, Discrete Months, Quarterly, Annual)"
-                              >
-                                <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
-                              </button>
+                                    currentPeriod: item.monthYear || `${selectedMonth} ${selectedYear}`,
+                                    initialAmount: Number(item.amount) || 0,
+                                    initialMonthlyBreakdown: item.monthlyBreakdown,
+                                    target: 'line'
+                                  })}
+                                  value={item.monthYear !== undefined && item.monthYear !== null ? item.monthYear : ''}
+                                  placeholder="Click to select month/period..."
+                                  className={`w-full pl-2.5 pr-8 py-1.5 bg-slate-50 hover:bg-emerald-50/50 focus:bg-emerald-50/50 border rounded-lg text-slate-900 text-xs font-semibold cursor-pointer transition-all ${
+                                    monthYearErrors[idx]
+                                      ? 'border-rose-500 ring-2 ring-rose-300 bg-rose-50/70 text-rose-950 placeholder-rose-400'
+                                      : 'border-slate-200 hover:border-emerald-400 focus:border-emerald-500'
+                                  }`}
+                                />
+                                <CalendarRange className="w-3.5 h-3.5 text-emerald-600 absolute right-2.5 top-2 pointer-events-none" />
+                              </div>
+                              {monthYearErrors[idx] && (
+                                <div className="absolute left-0 -bottom-6 z-30 bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg whitespace-nowrap flex items-center gap-1 animate-in fade-in slide-in-from-top-1">
+                                  <AlertCircle className="w-3 h-3 shrink-0" />
+                                  <span>{monthYearErrors[idx]}</span>
+                                </div>
+                              )}
                             </div>
                             <div className="col-span-3 flex items-center gap-1.5 relative">
                               <div className="w-full relative">
@@ -5338,41 +5422,36 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             </div>
                           )}
 
-                          {/* ⚡ Set Action Triggered in To-Do List Badge */}
-                          {lineSetActionStatus[idx] && (
-                            <div className="flex items-center justify-between text-[10px] text-amber-950 bg-amber-50/95 border border-amber-300 px-2.5 py-1.5 rounded-lg animate-in fade-in slide-in-from-top-1 shadow-2xs">
-                              <div className="flex items-center gap-1.5 font-medium truncate">
-                                <Zap className="w-3.5 h-3.5 text-amber-600 shrink-0 fill-amber-500 animate-pulse" />
-                                <span>
-                                  ⚡ <strong>Set Action Triggered:</strong> <strong className="text-amber-950 font-bold">{lineSetActionStatus[idx].ruleCode}</strong> ({lineSetActionStatus[idx].periodLabel}) updated to <strong>Payable Logged</strong> (₱{Number(lineSetActionStatus[idx].amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}) in To-Do List
-                                </span>
-                              </div>
-                              <span className="text-[9px] font-bold text-amber-800 bg-amber-100/90 px-1.5 py-0.5 rounded border border-amber-300 shrink-0 ml-2">
-                                To-Do List Synced ✓
-                              </span>
-                            </div>
-                          )}
-
                           {/* Multi-Month Breakdown indicator */}
                           {(() => {
                             const months = getLineCoveredMonths(item);
-                            if (months.length > 1) {
+                            const hasCustomBreakdown = item.monthlyBreakdown && Object.keys(item.monthlyBreakdown).length > 0;
+                            if (months.length > 1 || hasCustomBreakdown) {
                               const isDivided = item.divideToMonths !== false;
-                              const perMo = (Number(item.amount) || 0) / months.length;
+                              const perMo = (Number(item.amount) || 0) / (months.length || 1);
                               return (
-                                <div className={`flex items-center justify-between text-[10px] px-2 py-0.5 rounded-md border ${
+                                <div className={`flex items-center justify-between text-[10px] px-2.5 py-1 rounded-md border ${
                                   isDivided 
                                     ? 'text-emerald-900 bg-emerald-50/80 border-emerald-200/80' 
                                     : 'text-indigo-900 bg-indigo-50/80 border-indigo-200/80'
                                 }`}>
-                                  <span className="font-semibold flex items-center gap-1">
+                                  <div className="flex items-center gap-1 font-semibold flex-wrap">
                                     <CalendarRange className={`w-3 h-3 shrink-0 ${isDivided ? 'text-emerald-600' : 'text-indigo-600'}`} />
-                                    Covers {months.length} Months ({months.join(', ')}):
-                                  </span>
-                                  <span className={`font-mono font-bold ${isDivided ? 'text-emerald-800' : 'text-indigo-800'}`}>
-                                    {isDivided 
-                                      ? `₱${perMo.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / month in records`
-                                      : `₱${(Number(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Single lump-sum)`
+                                    <span>Covers {months.length || Object.keys(item.monthlyBreakdown || {}).length} Months:</span>
+                                    {hasCustomBreakdown ? (
+                                      <span className="font-mono text-emerald-950 font-semibold">
+                                        {Object.entries(item.monthlyBreakdown!).map(([m, amt]) => `${m}: ₱${Number(amt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`).join(' • ')}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-600 font-normal">({months.join(', ')})</span>
+                                    )}
+                                  </div>
+                                  <span className={`font-mono font-bold shrink-0 ml-2 ${isDivided ? 'text-emerald-800' : 'text-indigo-800'}`}>
+                                    {hasCustomBreakdown 
+                                      ? `Total: ₱${(Number(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                      : (isDivided 
+                                          ? `₱${perMo.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / month in records`
+                                          : `₱${(Number(item.amount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (Single lump-sum)`)
                                     }
                                   </span>
                                 </div>
@@ -6861,35 +6940,13 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                                   />
                                 </div>
                                 <div className="grid grid-cols-2 gap-1.5">
-                                  <div className="flex items-center gap-1">
-                                    <input
-                                      type="text"
-                                      placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
-                                      value={editCustomItemPeriod}
-                                      onChange={e => setEditCustomItemPeriod(e.target.value)}
-                                      className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const client = clients.find(c => c.id === selectedInvoice?.clientId);
-                                        const defaultRate = client?.monthlyRetainerFee || 0;
-                                        setPeriodCoverageModal({
-                                          isOpen: true,
-                                          itemIndex: -1,
-                                          itemDescription: editCustomItemName || 'Custom Item',
-                                          currentPeriod: editCustomItemPeriod || '',
-                                          currentAmount: editCustomItemAmount || 0,
-                                          defaultMonthlyRate: defaultRate,
-                                          targetList: 'edit-custom',
-                                        });
-                                      }}
-                                      className="p-1 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
-                                      title="Open Multi-Month / Period Coverage Builder"
-                                    >
-                                      <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
-                                    </button>
-                                  </div>
+                                  <input
+                                    type="text"
+                                    placeholder={`Period (e.g. ${selectedMonth} ${selectedYear})`}
+                                    value={editCustomItemPeriod}
+                                    onChange={e => setEditCustomItemPeriod(e.target.value)}
+                                    className="w-full px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-900 focus:bg-white focus:ring-2 focus:ring-emerald-200"
+                                  />
                                   <CurrencyInput
                                     placeholder="Amount (₱)"
                                     value={editCustomItemAmount}
@@ -6952,7 +7009,7 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                           }}
                         />
                       </div>
-                      <div className="col-span-4 flex items-center gap-1">
+                      <div className="col-span-4">
                         <SmartPeriodInput
                           placeholder="e.g. August 2026, Q3 2026"
                           value={s.monthYear !== undefined && s.monthYear !== null ? s.monthYear : ''}
@@ -6963,27 +7020,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                             setEditServices(updated);
                           }}
                         />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const client = clients.find(c => c.id === selectedInvoice?.clientId);
-                            const defaultRate = client?.monthlyRetainerFee || 0;
-                            setPeriodCoverageModal({
-                              isOpen: true,
-                              itemIndex: idx,
-                              itemDescription: s.description || 'Service Line',
-                              currentPeriod: s.monthYear || '',
-                              currentAmount: s.amount || 0,
-                              defaultMonthlyRate: defaultRate,
-                              initialDivideToMonths: s.divideToMonths !== undefined ? s.divideToMonths : true,
-                              targetList: 'edit',
-                            });
-                          }}
-                          className="p-1.5 text-slate-500 hover:text-emerald-700 bg-white hover:bg-emerald-50 border border-slate-200 rounded-lg shrink-0 cursor-pointer transition-colors"
-                          title="Open Multi-Month / Period Coverage Builder"
-                        >
-                          <CalendarRange className="w-3.5 h-3.5 text-emerald-600" />
-                        </button>
                       </div>
                       <div className="col-span-3 flex items-center gap-1">
                         <CurrencyInput
@@ -7493,12 +7529,17 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
                 type="button"
                 onClick={() => {
                   if (duplicateWarningModal.existingIndex !== undefined) {
+                    const dupKey = `${duplicateWarningModal.existingIndex}-${duplicateWarningModal.itemName.trim().toLowerCase()}-${String(duplicateWarningModal.monthYear).trim().toLowerCase()}`;
+                    setAllowedDuplicates(prev => new Set(prev).add(dupKey));
                     const updated = [...services];
                     if (updated[duplicateWarningModal.existingIndex]) {
                       updated[duplicateWarningModal.existingIndex] = duplicateWarningModal.pendingLine;
                       setServices(updated);
                     }
                   } else {
+                    const nextIdx = services.length;
+                    const dupKey = `${nextIdx}-${duplicateWarningModal.itemName.trim().toLowerCase()}-${String(duplicateWarningModal.monthYear).trim().toLowerCase()}`;
+                    setAllowedDuplicates(prev => new Set(prev).add(dupKey));
                     setServices(prev => [...prev, duplicateWarningModal.pendingLine]);
                   }
                   setDuplicateWarningModal(null);
@@ -7557,92 +7598,6 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             </div>
           </div>
         </div>
-      )}
-
-      {/* MODAL: Multi-Month & Period Coverage Builder */}
-      {periodCoverageModal && periodCoverageModal.isOpen && (
-        <PeriodCoverageModal
-          isOpen={periodCoverageModal.isOpen}
-          onClose={() => setPeriodCoverageModal(null)}
-          itemDescription={periodCoverageModal.itemDescription}
-          currentPeriod={periodCoverageModal.currentPeriod}
-          currentAmount={periodCoverageModal.currentAmount}
-          defaultMonthlyRate={periodCoverageModal.defaultMonthlyRate}
-          initialDivideToMonths={periodCoverageModal.initialDivideToMonths}
-          onApply={(periodText, newAmount, coveredMonths, monthlyRate, divideToMonths) => {
-            if (periodCoverageModal.targetList === 'custom') {
-              setCustomItemPeriod(periodText);
-              if (newAmount !== undefined) {
-                setCustomItemAmount(newAmount);
-              }
-            } else if (periodCoverageModal.targetList === 'edit-custom') {
-              setEditCustomItemPeriod(periodText);
-              if (newAmount !== undefined) {
-                setEditCustomItemAmount(newAmount);
-              }
-            } else if (periodCoverageModal.targetList === 'edit') {
-              const updated = [...editServices];
-              if (updated[periodCoverageModal.itemIndex]) {
-                updated[periodCoverageModal.itemIndex] = {
-                  ...updated[periodCoverageModal.itemIndex],
-                  monthYear: periodText,
-                  amount: newAmount !== undefined ? newAmount : updated[periodCoverageModal.itemIndex].amount,
-                  coveredMonths: coveredMonths,
-                  monthlyRate: monthlyRate,
-                  divideToMonths: divideToMonths
-                };
-                setEditServices(updated);
-              }
-            } else {
-              const idx = periodCoverageModal.itemIndex;
-              const updated = [...services];
-              if (updated[idx]) {
-                const finalAmt = newAmount !== undefined ? newAmount : (updated[idx].amount || 0);
-                const pendingLine: InvoiceServiceLine = {
-                  ...updated[idx],
-                  monthYear: periodText,
-                  amount: finalAmt,
-                  unitPrice: finalAmt,
-                  coveredMonths: coveredMonths,
-                  monthlyRate: monthlyRate,
-                  divideToMonths: divideToMonths
-                };
-
-                // Duplicate Check on Apply
-                if (selectedClientId) {
-                  const cleanDesc = pendingLine.description || periodCoverageModal.itemDescription;
-                  const duplicateCheck = findAlreadyBilledInvoice(selectedClientId, cleanDesc, periodText, finalAmt, coveredMonths);
-                  if (duplicateCheck.isBilled) {
-                    setDuplicateWarningModal({
-                      isOpen: true,
-                      itemName: cleanDesc,
-                      monthYear: periodText,
-                      amount: finalAmt,
-                      billingNumber: duplicateCheck.billingNumber || 'N/A',
-                      overlappingPeriod: duplicateCheck.overlappingInfo,
-                      pendingLine: pendingLine,
-                      existingIndex: idx
-                    });
-                    return;
-                  }
-                }
-
-                updated[idx] = pendingLine;
-                setServices(updated);
-                setMonthYearErrors(prev => {
-                  const next = { ...prev };
-                  delete next[idx];
-                  return next;
-                });
-                setAmountErrors(prev => {
-                  const next = { ...prev };
-                  delete next[idx];
-                  return next;
-                });
-              }
-            }
-          }}
-        />
       )}
 
       {/* MODAL: Delete Invoice Confirmation */}
@@ -7910,6 +7865,135 @@ export const BillingManagementView: React.FC<{ onNavigateToClient?: (clientId: s
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL: Main Statement of Account Month & Year Multi-Month Coverage Builder */}
+      {isMonthYearCoverageModalOpen && (
+        <MonthYearCoverageModal
+          isOpen={isMonthYearCoverageModalOpen}
+          onClose={() => setIsMonthYearCoverageModalOpen(false)}
+          currentPeriod={customCoveragePeriod || `${selectedMonth} ${selectedYear}`}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          initialAmount={selectedClient?.retainersFee || 0}
+          onApply={(coverageText, monthCodes, targetYear, monthlyBreakdown, totalAmount) => {
+            setCustomCoveragePeriod(coverageText);
+            const effYear = targetYear || selectedYear;
+            if (targetYear) setSelectedYear(targetYear);
+            if (monthCodes && monthCodes.length > 0) {
+              setSelectedMonth(monthCodes[0]);
+            }
+
+            // Also update any Retainer lines in the form to reflect this coverage period
+            setServices(prev => {
+              const updated = prev.map(s => {
+                const sClean = s.description.trim().toLowerCase();
+                const isRetainer = sClean.includes('retainer') || sClean.includes('bookkeeping');
+                if (isRetainer) {
+                  const amt = totalAmount !== undefined ? totalAmount : s.amount;
+                  return {
+                    ...s,
+                    monthYear: coverageText,
+                    amount: amt,
+                    unitPrice: amt,
+                    monthlyBreakdown: monthlyBreakdown,
+                    coveredMonths: monthCodes && monthCodes.length > 0 ? monthCodes.map(m => `${m} ${effYear}`) : undefined
+                  };
+                }
+                return s;
+              });
+              return updated;
+            });
+
+            // Perform duplicate check if client selected
+            if (selectedClientId) {
+              const checkAmt = totalAmount !== undefined ? totalAmount : (selectedClient?.retainersFee || 0);
+              const dup = findAlreadyBilledInvoice(selectedClientId, 'Retainers Fee', coverageText, checkAmt, monthCodes && monthCodes.length > 0 ? monthCodes.map(m => `${m} ${effYear}`) : undefined);
+              if (dup.isBilled) {
+                setDuplicateWarningModal({
+                  isOpen: true,
+                  itemName: 'Retainers Fee',
+                  monthYear: coverageText,
+                  overlappingPeriod: dup.overlappingInfo,
+                  amount: checkAmt,
+                  billingNumber: dup.billingNumber || 'N/A',
+                  pendingLine: {
+                    description: 'Retainers Fee',
+                    monthYear: coverageText,
+                    unitPrice: checkAmt,
+                    quantity: 1,
+                    amount: checkAmt,
+                    monthlyBreakdown: monthlyBreakdown,
+                    coveredMonths: monthCodes && monthCodes.length > 0 ? monthCodes.map(m => `${m} ${effYear}`) : undefined,
+                    itemType: 'Service'
+                  }
+                });
+              }
+            }
+          }}
+        />
+      )}
+
+      {/* MODAL: Service Line Item Multi-Month Coverage Builder */}
+      {lineCoverageModal && lineCoverageModal.isOpen && (
+        <MonthYearCoverageModal
+          isOpen={lineCoverageModal.isOpen}
+          onClose={() => setLineCoverageModal(null)}
+          currentPeriod={lineCoverageModal.currentPeriod}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          initialAmount={lineCoverageModal.initialAmount}
+          initialMonthlyBreakdown={lineCoverageModal.initialMonthlyBreakdown}
+          onApply={(coverageText, monthCodes, targetYear, monthlyBreakdown, totalAmount) => {
+            const effYear = targetYear || selectedYear;
+            const targetIdx = lineCoverageModal.itemIndex;
+            if (lineCoverageModal.target === 'line' && targetIdx >= 0) {
+              const currentLine = services[targetIdx];
+              const descToUse = currentLine?.description || 'Retainers Fee';
+              const amtToUse = totalAmount !== undefined ? totalAmount : (Number(currentLine?.amount) || (selectedClient?.retainersFee || 0));
+
+              setServices(prev => {
+                const next = [...prev];
+                if (next[targetIdx]) {
+                  next[targetIdx] = {
+                    ...next[targetIdx],
+                    monthYear: coverageText,
+                    amount: amtToUse,
+                    unitPrice: amtToUse,
+                    monthlyBreakdown: monthlyBreakdown,
+                    coveredMonths: monthCodes && monthCodes.length > 0 ? monthCodes.map(m => `${m} ${effYear}`) : undefined
+                  };
+                }
+                return next;
+              });
+
+              if (selectedClientId && descToUse) {
+                const dup = findAlreadyBilledInvoice(selectedClientId, descToUse, coverageText, amtToUse, monthCodes && monthCodes.length > 0 ? monthCodes.map(m => `${m} ${effYear}`) : undefined);
+                if (dup.isBilled) {
+                  setDuplicateWarningModal({
+                    isOpen: true,
+                    itemName: descToUse,
+                    monthYear: coverageText,
+                    overlappingPeriod: dup.overlappingInfo,
+                    amount: amtToUse,
+                    billingNumber: dup.billingNumber || 'N/A',
+                    pendingLine: {
+                      ...currentLine,
+                      description: descToUse,
+                      monthYear: coverageText,
+                      amount: amtToUse,
+                      unitPrice: amtToUse,
+                      monthlyBreakdown: monthlyBreakdown,
+                      coveredMonths: monthCodes && monthCodes.length > 0 ? monthCodes.map(m => `${m} ${effYear}`) : undefined
+                    },
+                    existingIndex: targetIdx
+                  });
+                }
+              }
+            }
+            setLineCoverageModal(null);
+          }}
+        />
       )}
 
       {/* Reusable AppModal for System Alerts & Messages */}

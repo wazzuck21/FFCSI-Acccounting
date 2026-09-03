@@ -478,19 +478,20 @@ export const MyClientsView: React.FC<Props> = ({ onSelectClientWorkspace }) => {
     e.preventDefault();
     if (!actionClient) return;
 
+    const monthStr = `${selectedYear}-${monthNumStr}`;
+    const cleanNotes = actionNotes.trim();
+
     // Check if modifying a Filed & Completed item
     const existingPayable = payables.find(p => 
       p.clientId === actionClient.id && 
-      p.itemName.toLowerCase() === actionFormCode.toLowerCase()
+      p.itemName.toLowerCase() === actionFormCode.toLowerCase() &&
+      (p.month === monthStr || p.month === currentPeriodCode || (p.month && p.month.toLowerCase().includes(selectedMonth.toLowerCase())))
     );
     if (existingPayable?.status === 'Paid' && !isSuperAdmin) {
       showToast('Only Admin users are allowed to modify items tagged as Filed & Completed.');
       setActionModalOpen(false);
       return;
     }
-
-    const monthStr = `${selectedYear}-${monthNumStr}`;
-    const cleanNotes = actionNotes.trim();
 
     if (actionChoice === 'PAYABLE') {
       const amount = Number(payableAmountInput);

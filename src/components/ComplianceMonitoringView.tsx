@@ -273,12 +273,15 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
         });
 
         // Check if there is a matching payable record created/tagged in BIR/Benefits Payables
+        const monthNumStr = String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0');
+        const monthCodeStr = `${selectedYear}-${monthNumStr}`;
         const matchedPayable = payables.find(p => {
           if (p.clientId !== client.id) return false;
           const cleanItemName = p.itemName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
           const isNameMatch = cleanItemName.includes(cleanRuleCode) || cleanRuleCode.includes(cleanItemName) || p.itemName.toLowerCase() === rule.code.toLowerCase();
-          const isMonthMatch = p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || 
-                               p.month.includes(`${selectedYear}`) ||
+          const isMonthMatch = p.month === monthCodeStr ||
+                               p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || 
+                               (p.month.startsWith(`${selectedYear}-`) && p.month === `${selectedYear}-${monthNumStr}`) ||
                                (deadlineInfo.taxablePeriod && (p.month === deadlineInfo.taxablePeriod || p.notes?.includes(deadlineInfo.taxablePeriod) || p.remarks?.includes(deadlineInfo.taxablePeriod) || deadlineInfo.taxablePeriod.includes(p.month))) ||
                                (deadlineInfo.finalDeadline && p.month.includes(deadlineInfo.finalDeadline.slice(0, 7)));
           return isNameMatch && isMonthMatch;
@@ -507,11 +510,15 @@ export const ComplianceMonitoringView: React.FC<ComplianceMonitoringViewProps> =
               return isNameMatch && isDateMatch;
             });
 
+            const mNumStr = String(MONTH_INDEX[selectedMonth] + 1).padStart(2, '0');
+            const mCodeStr = `${selectedYear}-${mNumStr}`;
             const matchedPayable = payables.find(p => {
               if (p.clientId !== client.id) return false;
               const cleanItemName = p.itemName.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
               const isNameMatch = cleanItemName.includes(cleanRuleCode) || cleanRuleCode.includes(cleanItemName);
-              const isMonthMatch = p.month.toLowerCase().includes(selectedMonth.toLowerCase()) || p.month.includes(`${selectedYear}`);
+              const isMonthMatch = p.month === mCodeStr ||
+                                   p.month.toLowerCase().includes(selectedMonth.toLowerCase()) ||
+                                   (p.month.startsWith(`${selectedYear}-`) && p.month === mCodeStr);
               return isNameMatch && isMonthMatch;
             });
 

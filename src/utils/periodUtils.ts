@@ -11,36 +11,38 @@ export const MONTH_SHORT_NAMES = [
   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
 ];
 
-const MONTH_NAME_TO_INDEX: { [key: string]: number } = {
-  january: 0, jan: 0,
-  february: 1, feb: 1,
-  march: 2, mar: 2,
-  april: 3, apr: 3,
-  may: 4,
-  june: 5, jun: 5,
-  july: 6, jul: 6,
-  august: 7, aug: 7,
-  september: 8, sep: 8, sept: 8,
-  october: 9, oct: 9,
-  november: 10, nov: 10,
-  december: 11, dec: 11
+export const MONTH_NAME_TO_INDEX: { [key: string]: number } = {
+  january: 0, jan: 0, '01': 0, '1': 0,
+  february: 1, feb: 1, '02': 1, '2': 1,
+  march: 2, mar: 2, '03': 2, '3': 2,
+  april: 3, apr: 3, '04': 3, '4': 3,
+  may: 4, '05': 4, '5': 4,
+  june: 5, jun: 5, '06': 5, '6': 5,
+  july: 6, jul: 6, '07': 6, '7': 6,
+  august: 7, aug: 7, '08': 7, '8': 7,
+  september: 8, sep: 8, sept: 8, '09': 8, '9': 8,
+  october: 9, oct: 9, '10': 9,
+  november: 10, nov: 10, '11': 10,
+  december: 11, dec: 11, '12': 11
 };
 
 /**
  * Parses any billing period string into an array of discrete standardized months ("Month Year", e.g., "July 2026").
  * Handles:
- * - Single Month: "July 2026", "Jul 2026"
- * - Month Range: "July – September 2026", "July - September 2026 (3 Mos)", "Nov 2025 – Feb 2026"
- * - Quarter: "2Q 2026", "2Q-2026", "Q2 2026", "1Q – 3Q 2026"
+ * - Single Month: "July 2026", "Jul 2026", "Sept 2026", "September"
+ * - Month Range: "July – September 2026", "Jul - Sep 2026", "July - September 2026 (3 Mos)", "Nov 2025 – Feb 2026"
+ * - Quarter: "2Q 2026", "2Q-2026", "Q2 2026", "Q3 2026", "1Q – 3Q 2026"
  * - Discrete Months: "Jan, Mar, Nov 2026 (3 Mos)", "January, March 2026"
  * - Annual / Multi-Year: "Annual 2026", "2024 – 2026 (3 Yrs)"
  */
-export function parsePeriodToMonths(periodStr?: string | null): string[] {
+export function parsePeriodToMonths(periodStr?: string | null, fallbackYear?: number | string): string[] {
   if (!periodStr) return [];
-  const raw = periodStr.trim();
+  const raw = periodStr.trim().replace(/\s+/g, ' ');
   if (!raw) return [];
 
-  // 1. Check for Annual / Year patterns
+  const defaultY = fallbackYear ? parseInt(String(fallbackYear), 10) : new Date().getFullYear();
+
+  // 1. Check for Annual / Year patterns (e.g. "Annual 2026", "2026")
   const annualSingleMatch = raw.match(/^(?:annual\s*)?(\d{4})$/i);
   if (annualSingleMatch) {
     const year = parseInt(annualSingleMatch[1], 10);
@@ -62,12 +64,12 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
     return result;
   }
 
-  // 2. Check for Quarterly patterns (e.g. "1Q 2026", "2Q-2026", "1Q – 3Q 2026", "Q1 2026", "1Q, 2Q 2026")
-  const quarterRangeMatch = raw.match(/([1-4])\s*Q\s*(?:–|-|to)\s*([1-4])\s*Q\s*(\d{4})/i);
+  // 2. Check for Quarterly patterns (e.g. "1Q 2026", "2Q-2026", "1Q – 3Q 2026", "Q3 2026", "3Q 2026")
+  const quarterRangeMatch = raw.match(/([1-4])\s*Q\s*(?:–|-|to)\s*([1-4])\s*Q\s*(\d{4})?/i);
   if (quarterRangeMatch) {
     const startQ = parseInt(quarterRangeMatch[1], 10);
     const endQ = parseInt(quarterRangeMatch[2], 10);
-    const year = parseInt(quarterRangeMatch[3], 10);
+    const year = quarterRangeMatch[3] ? parseInt(quarterRangeMatch[3], 10) : defaultY;
     const result: string[] = [];
     const qMonths: Record<number, number[]> = {
       1: [0, 1, 2],
@@ -85,10 +87,10 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
     return result;
   }
 
-  const singleQuarterMatch = raw.match(/(?:([1-4])\s*Q|Q\s*([1-4]))\s*[-–]?\s*(\d{4})/i);
+  const singleQuarterMatch = raw.match(/(?:([1-4])\s*Q|Q\s*([1-4]))(?:\s*[-–]?\s*(\d{4}))?/i);
   if (singleQuarterMatch) {
     const q = parseInt(singleQuarterMatch[1] || singleQuarterMatch[2], 10);
-    const year = parseInt(singleQuarterMatch[3], 10);
+    const year = singleQuarterMatch[3] ? parseInt(singleQuarterMatch[3], 10) : defaultY;
     const qMonths: Record<number, number[]> = {
       1: [0, 1, 2],
       2: [3, 4, 5],
@@ -101,7 +103,7 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
   }
 
   // 3. Check for Month Range across different years (e.g., "November 2025 – February 2026")
-  const multiYearRangeMatch = raw.match(/([A-Za-z]+)\s*(\d{4})\s*(?:–|-|to)\s*([A-Za-z]+)\s*(\d{4})/i);
+  const multiYearRangeMatch = raw.match(/([A-Za-z]+)\.?\s*(\d{4})\s*(?:–|-|to)\s*([A-Za-z]+)\.?\s*(\d{4})/i);
   if (multiYearRangeMatch) {
     const mStartKey = multiYearRangeMatch[1].toLowerCase();
     const yStart = parseInt(multiYearRangeMatch[2], 10);
@@ -126,12 +128,12 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
     }
   }
 
-  // 4. Check for Month Range in the same year (e.g., "July – September 2026 (3 Mos)", "May-July 2026")
-  const sameYearRangeMatch = raw.match(/([A-Za-z]+)\s*(?:–|-|to)\s*([A-Za-z]+)\s*(\d{4})/i);
+  // 4. Check for Month Range in the same year (e.g., "July – September 2026", "Jul - Sep 2026", "Jul-Sep 2026", "July - September 2026 (3 Mos)")
+  const sameYearRangeMatch = raw.match(/([A-Za-z]+)\.?\s*(?:–|-|to)\s*([A-Za-z]+)\.?\s*(\d{4})?/i);
   if (sameYearRangeMatch) {
     const mStartKey = sameYearRangeMatch[1].toLowerCase();
     const mEndKey = sameYearRangeMatch[2].toLowerCase();
-    const year = parseInt(sameYearRangeMatch[3], 10);
+    const year = sameYearRangeMatch[3] ? parseInt(sameYearRangeMatch[3], 10) : defaultY;
 
     if (MONTH_NAME_TO_INDEX[mStartKey] !== undefined && MONTH_NAME_TO_INDEX[mEndKey] !== undefined) {
       const startIdx = MONTH_NAME_TO_INDEX[mStartKey];
@@ -142,7 +144,7 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
           result.push(`${ALL_MONTH_NAMES[i]} ${year}`);
         }
       } else {
-        // Wrap around year if any
+        // Wrap around year if any (e.g., Nov - Feb)
         for (let i = startIdx; i < 12; i++) result.push(`${ALL_MONTH_NAMES[i]} ${year}`);
         for (let i = 0; i <= endIdx; i++) result.push(`${ALL_MONTH_NAMES[i]} ${year + 1}`);
       }
@@ -150,11 +152,11 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
     }
   }
 
-  // 5. Check for Discrete Comma-Separated Months (e.g., "Jan, Mar, Nov 2026 (3 Mos)")
-  const commaMatch = raw.match(/((?:[A-Za-z]+(?:\s*,\s*|\s+and\s+)?)+)\s*(\d{4})/i);
+  // 5. Check for Discrete Comma-Separated Months (e.g., "Jan, Mar, Nov 2026 (3 Mos)", "Jul, Aug, Sep")
+  const commaMatch = raw.match(/((?:[A-Za-z]+(?:\.|\s*,\s*|\s+and\s+)?)+)(?:\s*(\d{4}))?/i);
   if (commaMatch && commaMatch[1].includes(',')) {
-    const monthTokens = commaMatch[1].split(/,|\band\b/i).map(t => t.trim().toLowerCase()).filter(Boolean);
-    const year = parseInt(commaMatch[2], 10);
+    const monthTokens = commaMatch[1].split(/,|\band\b/i).map(t => t.trim().replace(/\./g, '').toLowerCase()).filter(Boolean);
+    const year = commaMatch[2] ? parseInt(commaMatch[2], 10) : defaultY;
     const result: string[] = [];
     for (const token of monthTokens) {
       if (MONTH_NAME_TO_INDEX[token] !== undefined) {
@@ -164,13 +166,22 @@ export function parsePeriodToMonths(periodStr?: string | null): string[] {
     if (result.length > 0) return result;
   }
 
-  // 6. Standard Single Month (e.g., "August 2026", "Aug 2026")
-  const singleMonthMatch = raw.match(/([A-Za-z]+)\s*(\d{4})/i);
+  // 6. Standard Single Month with Year (e.g., "August 2026", "Aug 2026", "Sept 2026", "09/2026")
+  const singleMonthMatch = raw.match(/([A-Za-z]+)\.?\s*[-/,]?\s*(\d{4})/i);
   if (singleMonthMatch) {
     const token = singleMonthMatch[1].toLowerCase();
     const year = parseInt(singleMonthMatch[2], 10);
     if (MONTH_NAME_TO_INDEX[token] !== undefined) {
       return [`${ALL_MONTH_NAMES[MONTH_NAME_TO_INDEX[token]]} ${year}`];
+    }
+  }
+
+  // 7. Single Month without Year (e.g., "September", "Sept", "Jul", "August")
+  const singleMonthOnlyMatch = raw.match(/^([A-Za-z]+)\.?$/i);
+  if (singleMonthOnlyMatch) {
+    const token = singleMonthOnlyMatch[1].toLowerCase();
+    if (MONTH_NAME_TO_INDEX[token] !== undefined) {
+      return [`${ALL_MONTH_NAMES[MONTH_NAME_TO_INDEX[token]]} ${defaultY}`];
     }
   }
 
@@ -232,6 +243,24 @@ export function getMonthlyBreakdown(line: InvoiceServiceLine): Array<{ month: st
 }
 
 /**
+ * Normalized token extractor for comparing months across formats.
+ */
+function extractMonthToken(mStr: string): { monthIndex: number; year?: number } {
+  const clean = mStr.trim().toLowerCase().replace(/\./g, '');
+  const yearMatch = clean.match(/\b(20\d{2})\b/);
+  const year = yearMatch ? parseInt(yearMatch[1], 10) : undefined;
+
+  for (const [key, idx] of Object.entries(MONTH_NAME_TO_INDEX)) {
+    // Exact word or prefix match
+    const regex = new RegExp(`\\b${key}\\b`, 'i');
+    if (regex.test(clean)) {
+      return { monthIndex: idx, year };
+    }
+  }
+  return { monthIndex: -1, year };
+}
+
+/**
  * Checks if two period strings / line items overlap for duplicate detection.
  */
 export function checkMonthPeriodOverlap(
@@ -240,16 +269,35 @@ export function checkMonthPeriodOverlap(
   coveredMonthsA?: string[],
   coveredMonthsB?: string[]
 ): { hasOverlap: boolean; overlappingMonths: string[] } {
-  const monthsA = (coveredMonthsA && coveredMonthsA.length > 0) ? coveredMonthsA : parsePeriodToMonths(periodA);
-  const monthsB = (coveredMonthsB && coveredMonthsB.length > 0) ? coveredMonthsB : parsePeriodToMonths(periodB);
+  const rawMonthsA = (coveredMonthsA && coveredMonthsA.length > 0) ? coveredMonthsA : parsePeriodToMonths(periodA);
+  const rawMonthsB = (coveredMonthsB && coveredMonthsB.length > 0) ? coveredMonthsB : parsePeriodToMonths(periodB);
 
-  const normalize = (m: string) => m.trim().toLowerCase();
-  const setA = new Set(monthsA.map(normalize));
+  const parsedA = rawMonthsA.map(m => ({ raw: m, ...extractMonthToken(m) }));
+  const parsedB = rawMonthsB.map(m => ({ raw: m, ...extractMonthToken(m) }));
+
   const overlaps: string[] = [];
+  const overlapSet = new Set<string>();
 
-  for (const mb of monthsB) {
-    if (setA.has(normalize(mb))) {
-      overlaps.push(mb);
+  for (const itemB of parsedB) {
+    for (const itemA of parsedA) {
+      let isMatch = false;
+      if (itemA.monthIndex >= 0 && itemB.monthIndex >= 0) {
+        if (itemA.monthIndex === itemB.monthIndex) {
+          if (!itemA.year || !itemB.year || itemA.year === itemB.year) {
+            isMatch = true;
+          }
+        }
+      } else if (itemA.raw.trim().toLowerCase() === itemB.raw.trim().toLowerCase()) {
+        isMatch = true;
+      }
+
+      if (isMatch) {
+        const display = itemB.raw || itemA.raw;
+        if (!overlapSet.has(display.toLowerCase())) {
+          overlapSet.add(display.toLowerCase());
+          overlaps.push(display);
+        }
+      }
     }
   }
 

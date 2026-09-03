@@ -502,6 +502,7 @@ export interface InvoiceServiceLine {
   coveredMonths?: string[]; // e.g. ["July 2026", "August 2026", "September 2026"] ⭐
   divideToMonths?: boolean; // Whether the payable is divided equally across the covered months (true) or billed as a single lump-sum / per-month full payable (false) ⭐
   monthlyRate?: number; // e.g. 1000 per month ⭐
+  monthlyBreakdown?: Record<string, number>; // e.g. { "Jan": 1000, "Feb": 2000, "Mar": 4000 } ⭐
   unitPrice?: number;
   quantity?: number;
   discount?: number;
